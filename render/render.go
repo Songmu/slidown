@@ -243,6 +243,28 @@ func bodyParagraphs(s *deck.Slide) []*pptx.Paragraph {
 	for _, b := range s.Bodies {
 		out = append(out, convertBody(b)...)
 	}
+
+	for _, bq := range s.BlockQuotes {
+		out = append(out, convertBlockQuote(bq)...)
+	}
+	return out
+}
+
+// convertBlockQuote renders a block quote as italic, indented paragraphs so it
+// is visually distinct within the body placeholder.
+func convertBlockQuote(bq *deck.BlockQuote) []*pptx.Paragraph {
+	if bq == nil {
+		return nil
+	}
+	var out []*pptx.Paragraph
+	for _, para := range bq.Paragraphs {
+		p := convertParagraph(para)
+		p.Level += bq.Nesting + 1
+		for _, r := range p.Runs {
+			r.Italic = true
+		}
+		out = append(out, p)
+	}
 	return out
 }
 
