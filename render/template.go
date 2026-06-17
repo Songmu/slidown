@@ -78,6 +78,7 @@ func renderSlideWithLayout(p *pptx.Presentation, s *slidown.Slide, tmpl *pptx.Te
 	renderTablesAt(sl, s.Tables, rx, ry, rw, hasBody || len(s.Images) > 0)
 
 	sl.Note = s.SpeakerNote
+	sl.Fingerprint = s.Fingerprint()
 }
 
 // resolveLayout selects a template layout for the slide: by explicit name if it

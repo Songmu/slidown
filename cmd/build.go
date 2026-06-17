@@ -125,10 +125,12 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, 
 	// parts of slides that should keep their existing content: slides whose
 	// source did not change (so manual edits survive) and slides explicitly
 	// frozen via configuration (which are pinned regardless of source changes).
+	// Change detection compares each slide's embedded source fingerprint against
+	// the freshly computed one, which is exact and avoids lossy reverse parsing.
 	if allowNoOp {
-		if existingSlides, _, err := slidown.ReadSlidesFromPPTX(out); err == nil &&
-			len(existingSlides) == len(sourceSlides) {
-			reuse := reusableSlideNums(sourceSlides, existingSlides)
+		if existingFPs, err := pptx.ReadSlideFingerprints(out); err == nil &&
+			len(existingFPs) == len(sourceSlides) {
+			reuse := reusableSlideNums(sourceSlides, existingFPs)
 			switch {
 			case len(reuse) == len(sourceSlides):
 				// Nothing to regenerate: keep the existing file untouched.
@@ -157,13 +159,26 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, 
 }
 
 // reusableSlideNums returns the 1-based positions whose existing slide should be
-// kept verbatim: either the source slide is frozen (pinned regardless of source
-// changes) or it matches the slide reconstructed from the existing presentation.
-// The two slices must have the same length.
-func reusableSlideNums(source, existing slidown.Slides) []int {
+// kept verbatim during an incremental rebuild. A position qualifies when the
+// source slide is frozen (pinned regardless of source changes), or when its
+// source matches the fingerprint embedded in the existing slide.
+//
+// Matching is delegated to Slide.MatchesFingerprint, which compares non-image
+// content exactly but images perceptually and order-independently. This means a
+// slide whose only difference is an image being recompressed, reordered or
+// repositioned is treated as unchanged, so its existing slide part (including
+// any manual tweaks made in PowerPoint) is preserved instead of regenerated.
+//
+// The two slices must have the same length. An empty existing fingerprint (for
+// example one stripped by another editor) never matches, forcing a safe
+// regenerate of that slide.
+func reusableSlideNums(source slidown.Slides, existingFPs []string) []int {
 	var nums []int
 	for i := range source {
-		if (source[i] != nil && source[i].Freeze) || slideEquivalentForUpdate(source[i], existing[i]) {
+		if source[i] == nil {
+			continue
+		}
+		if source[i].Freeze || source[i].MatchesFingerprint(existingFPs[i]) {
 			nums = append(nums, i+1)
 		}
 	}
@@ -179,21 +194,6 @@ func pathExists(path string) (bool, error) {
 		return false, nil
 	}
 	return false, err
-}
-
-// slideEquivalentForUpdate reports whether a source slide (derived from
-// markdown) matches a slide reconstructed from an existing presentation. A
-// source slide with no explicit layout is considered equivalent regardless of
-// the concrete default layout the existing slide resolved to.
-func slideEquivalentForUpdate(source, generated *slidown.Slide) bool {
-	if source == nil || generated == nil {
-		return source == generated
-	}
-	cp := *generated
-	if source.Layout == "" {
-		cp.Layout = ""
-	}
-	return source.Equal(&cp)
 }
 
 // defaultOutputPath derives the output .pptx path from the input markdown path.

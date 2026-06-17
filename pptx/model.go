@@ -42,6 +42,10 @@ type Slide struct {
 	LayoutName string
 	// Note is the speaker note text for the slide.
 	Note string
+	// Fingerprint, when set, is embedded in the slide XML as a slidown
+	// extension so an incremental rebuild can detect whether the source
+	// content for this slide changed. Empty omits it.
+	Fingerprint string
 }
 
 // AddShape appends a shape to the slide and returns it.

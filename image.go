@@ -148,40 +148,6 @@ func (i *Image) SetLink(link string) {
 	i.link = link
 }
 
-func (i *Image) Equivalent(ii *Image) bool {
-	if i == nil || ii == nil {
-		return false
-	}
-	if i.mimeType != ii.mimeType {
-		return false
-	}
-	if i.link != ii.link {
-		return false
-	}
-	if i.Checksum() == ii.Checksum() {
-		return true
-	}
-
-	// Re-encoding (e.g. JPEG re-compression) can change the bytes without
-	// changing the visible image, so fall back to perceptual hashing.
-	aHash, err := i.PHash()
-	if err != nil {
-		return false
-	}
-	bHash, err := ii.PHash()
-	if err != nil {
-		return false
-	}
-	distance, err := aHash.Distance(bHash)
-	if err != nil {
-		return false
-	}
-	if distance < 5 { // threshold for similarity
-		return true
-	}
-	return false
-}
-
 func (i *Image) Checksum() uint32 {
 	if i == nil {
 		return 0

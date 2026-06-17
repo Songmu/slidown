@@ -54,6 +54,7 @@ func renderSlide(p *pptx.Presentation, s *slidown.Slide) {
 	renderTablesAt(sl, s.Tables, contentX, contentY, contentW, len(body) > 0 || len(s.Images) > 0)
 
 	sl.Note = s.SpeakerNote
+	sl.Fingerprint = s.Fingerprint()
 }
 
 // renderTablesAt maps internal tables to pptx tables placed within the given

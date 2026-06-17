@@ -10,21 +10,20 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/config"
 	"github.com/Songmu/slidown/md"
 	"github.com/Songmu/slidown/pptx"
 	"github.com/Songmu/slidown/render"
 )
 
-func TestSlidesEquivalentForUpdateIgnoresDefaultLayout(t *testing.T) {
+func TestSlideFingerprintRoundTrip(t *testing.T) {
 	cfg, err := config.Load("")
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
 
 	mdPath := filepath.Join(t.TempDir(), "roundtrip.md")
-	if err := os.WriteFile(mdPath, []byte("# Title\n\nbody\n"), 0o600); err != nil {
+	if err := os.WriteFile(mdPath, []byte("# Title\n\nbody\n\n---\n\n# Two\n\n- a\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -37,27 +36,21 @@ func TestSlidesEquivalentForUpdateIgnoresDefaultLayout(t *testing.T) {
 		t.Fatalf("ToSlides: %v", err)
 	}
 
-	tmp, err := os.CreateTemp(t.TempDir(), "*.pptx")
-	if err != nil {
-		t.Fatalf("CreateTemp: %v", err)
-	}
-	if _, err := render.ToPresentation(slides).WriteTo(tmp); err != nil {
-		t.Fatalf("WriteTo: %v", err)
-	}
-	if err := tmp.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
+	out := filepath.Join(t.TempDir(), "deck.pptx")
+	if err := render.ToPresentation(slides).WriteFile(out); err != nil {
+		t.Fatalf("WriteFile: %v", err)
 	}
 
-	readSlides, _, err := slidown.ReadSlidesFromPPTX(tmp.Name())
+	fps, err := pptx.ReadSlideFingerprints(out)
 	if err != nil {
-		t.Fatalf("ReadSlidesFromPPTX: %v", err)
+		t.Fatalf("ReadSlideFingerprints: %v", err)
 	}
-	if len(slides) != len(readSlides) {
-		t.Fatalf("slide count mismatch: %d vs %d", len(slides), len(readSlides))
+	if len(fps) != len(slides) {
+		t.Fatalf("fingerprint count mismatch: %d vs %d", len(fps), len(slides))
 	}
 	for i := range slides {
-		if !slideEquivalentForUpdate(slides[i], readSlides[i]) {
-			t.Fatalf("slide %d not equivalent after round-trip", i+1)
+		if want := slides[i].Fingerprint(); fps[i] != want {
+			t.Errorf("slide %d fingerprint mismatch: embedded %q, source %q", i+1, fps[i], want)
 		}
 	}
 }
@@ -138,13 +131,41 @@ func TestWritePresentationUpdatesExistingFile(t *testing.T) {
 	if !updated {
 		t.Fatalf("expected changed deck to update existing file")
 	}
-	readSlides, _, err := slidown.ReadSlidesFromPPTX(out)
+	fps, err := pptx.ReadSlideFingerprints(out)
 	if err != nil {
-		t.Fatalf("ReadSlidesFromPPTX updated deck: %v", err)
+		t.Fatalf("ReadSlideFingerprints updated deck: %v", err)
 	}
-	if len(readSlides) != 1 || len(readSlides[0].Titles) != 1 || readSlides[0].Titles[0] != "Changed" {
-		t.Fatalf("unexpected updated slides: %#v", readSlides)
+	if len(fps) != 1 || fps[0] != slides2[0].Fingerprint() {
+		t.Fatalf("updated slide fingerprint not embedded: %v", fps)
 	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	parts, _ := zipPartsForTest(t, data)
+	if !strings.Contains(parts["ppt/slides/slide1.xml"], "Changed") {
+		t.Fatalf("updated slide does not contain new title")
+	}
+}
+
+// zipPartsForTest returns the text parts of a .pptx given its bytes.
+func zipPartsForTest(t *testing.T, data []byte) (map[string]string, error) {
+	t.Helper()
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, err
+	}
+	parts := map[string]string{}
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			return nil, err
+		}
+		b, _ := io.ReadAll(rc)
+		rc.Close()
+		parts[f.Name] = string(b)
+	}
+	return parts, nil
 }
 
 // buildToFileForTest mirrors the build command's template selection: a
