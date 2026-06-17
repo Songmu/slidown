@@ -26,8 +26,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strings"
 	"time"
 
 	"github.com/Songmu/slidown/config"
@@ -36,69 +34,37 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const setupInstructionMessage = "Run 'deck doctor' to check your setup or see https://github.com/Songmu/slidown?tab=readme-ov-file#setup for setup instructions"
-
 var profile string
 
 var rootCmd = &cobra.Command{
-	Use:          "deck",
-	Short:        "deck is a tool for creating deck using Markdown and Google Slides",
-	Long:         `deck is a tool for creating deck using Markdown and Google Slides.`,
+	Use:          "slidown",
+	Short:        "slidown is a tool for creating PowerPoint presentations from Markdown",
+	Long:         `slidown is a tool for creating PowerPoint (.pptx) presentations from Markdown.`,
 	SilenceUsage: true,
 	Version:      fmt.Sprintf("%s (rev:%s)", version.Version, version.Revision),
 }
 
 type errorData struct {
-	LatestLogs  []any     `json:"latest_logs"`
 	StackTraces any       `json:"stack_traces"`
 	CreatedAt   time.Time `json:"created_at"`
 	Version     string    `json:"version"`
 	Revision    string    `json:"revision"`
 }
 
-var (
-	// https://slides.googleapis.com/v1/presentations/xxxxxx
-	// https://www.googleapis.com/drive/v3/files/xxxxxx
-	googleAPIURLRe = regexp.MustCompile(
-		`(https://(?:slides.googleapis.com/v1/presentations|www.googleapis.com/drive/v3/files)/)([^\?"]+)`)
-	titleMaskRe = regexp.MustCompile(`"titles":\[".*?"\]`)
-)
-
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		// Write stack trace log to state directory
-		var latestLogs []any
-		for _, line := range tb.Lines() {
-			if strings.Contains(line, `"level":"DEBUG"`) && strings.Contains(line, `"request":`) {
-				// Skip debug logs that contain request details
-				continue
-			}
-
-			// replace Google API URL last key with a placeholder
-			line = googleAPIURLRe.ReplaceAllString(line, "${1}**********************")
-			line = titleMaskRe.ReplaceAllString(line, `"titles":["**********"]`)
-
-			var m map[string]any
-			if err := json.Unmarshal([]byte(line), &m); err != nil {
-				latestLogs = append(latestLogs, line)
-			} else {
-				latestLogs = append(latestLogs, m)
-			}
-		}
+		rootCmd.PrintErrln(err)
+		// Write a stack trace dump to the state directory for debugging.
 		d := &errorData{
-			LatestLogs:  latestLogs,
 			StackTraces: errors.StackTraces(err),
 			CreatedAt:   time.Now(),
 			Version:     version.Version,
 			Revision:    version.Revision,
 		}
-		b, err := json.Marshal(d)
-		if err != nil {
-			rootCmd.Printf("%v\n", err)
-		} else {
+		if b, merr := json.Marshal(d); merr == nil {
 			dumpPath := filepath.Join(config.StateHomePath(), "error.json")
-			if err := os.WriteFile(dumpPath, b, 0o600); err != nil {
-				rootCmd.Printf("failed to write error.json to %s: %v\n", dumpPath, err)
+			if werr := os.WriteFile(dumpPath, b, 0o600); werr != nil {
+				rootCmd.Printf("failed to write error.json to %s: %v\n", dumpPath, werr)
 			}
 		}
 		os.Exit(1)

@@ -66,6 +66,13 @@ type TableCell struct {
 // Bullet represents the type of bullet point for a paragraph.
 type Bullet string
 
+// StyleName constants for inline-syntax styles shared with the markdown parser.
+const (
+	// StyleDel is the style name applied to GFM strikethrough (`~~`) and the
+	// HTML <del> element.
+	StyleDel = "del"
+)
+
 // Bullet constants for different bullet point types.
 const (
 	BulletNone     Bullet = ""
