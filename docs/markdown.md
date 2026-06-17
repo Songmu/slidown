@@ -1,10 +1,10 @@
-# Markdown Support in deck
+# Markdown Support in slidown
 
-`deck` supports a comprehensive set of Markdown features for creating presentations in Google Slides.
+`slidown` supports a comprehensive set of Markdown features for creating presentations in PowerPoint.
 
 ## CommonMark Support
 
-`deck` almost fully supports the [CommonMark specification](https://spec.commonmark.org/) with the following clarifications and limitations:
+`slidown` almost fully supports the [CommonMark specification](https://spec.commonmark.org/) with the following clarifications and limitations:
 
 ### Supported CommonMark Features
 
@@ -29,7 +29,7 @@
 ### Raw HTML Support
 
 #### Inline HTML Elements (Supported)
-`deck` supports raw inline HTML elements for text-level semantics and edits:
+`slidown` supports raw inline HTML elements for text-level semantics and edits:
 
 - **[Text-level semantics elements](https://html.spec.whatwg.org/multipage/text-level-semantics.html):**
     - `<a>`, `<abbr>`, `<b>`, `<cite>`, `<code>`, `<data>`, `<dfn>`, `<em>`, `<i>`, `<kbd>`, `<mark>`, `<q>`, `<rp>`, `<rt>`, `<ruby>`, `<s>`, `<samp>`, `<small>`, `<span>`, `<strong>`, `<sub>`, `<sup>`, `<time>`, `<u>`, `<var>`
@@ -47,7 +47,7 @@ Raw HTML block elements are **not supported** and there are no plans to support 
 HTML character references (`&#60;`, `&lt;`, etc.) are not supported (and won't be in the future) and appear as literal text. Use Unicode characters directly or backslash escaping instead.
 
 ## GitHub Flavored Markdown (GFM) Extensions
-`deck` selectively supports some [GFM (GitHub Flavored Markdown)](https://github.github.com/gfm/) extensions that are useful for presentations:
+`slidown` selectively supports some [GFM (GitHub Flavored Markdown)](https://github.github.com/gfm/) extensions that are useful for presentations:
 
 ### Supported GFM Features
 
@@ -75,7 +75,7 @@ The following GFM extensions are **not supported** as they are not relevant for 
 - **Autolinks without brackets**: Use Markdown autolink syntax by wrapping URLs in angle brackets (`<URL>`) instead
 
 ## Horizontal Rules and Page Breaks
-Among all Markdown horizontal rule (thematic break) syntaxes, `deck` treats them differently:
+Among all Markdown horizontal rule (thematic break) syntaxes, `slidown` treats them differently:
 
 ### Page Separators (Slide Breaks)
 
@@ -106,7 +106,7 @@ These separate multiple body placeholders within a single slide.
 
 ### Default Behavior (CommonMark/GFM Compliant)
 
-By default, `deck` follows the CommonMark and GitHub Flavored Markdown specifications:
+By default, `slidown` follows the CommonMark and GitHub Flavored Markdown specifications:
 - **Soft line breaks** (single line breaks) are rendered as **spaces**
 - **Hard line breaks** require either:
   - Two or more spaces at the end of a line

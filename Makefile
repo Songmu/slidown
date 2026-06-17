@@ -1,4 +1,4 @@
-PKG = github.com/k1LoW/deck
+PKG = github.com/Songmu/slidown
 COMMIT = $(shell git rev-parse --short HEAD)
 
 BUILD_LDFLAGS = "-s -w -X $(PKG)/version.Revision=$(COMMIT)"
@@ -14,10 +14,10 @@ fulltest:
 	env TEST_INTEGRATION=1 go test -v ./... -coverprofile=coverage.out -covermode=count -count=1
 
 build:
-	go build -ldflags=$(BUILD_LDFLAGS) -trimpath -o deck cmd/deck/main.go
+	go build -ldflags=$(BUILD_LDFLAGS) -trimpath -o slidown cmd/slidown/main.go
 
 install:
-	go install -ldflags=$(BUILD_LDFLAGS) -trimpath ./cmd/deck
+	go install -ldflags=$(BUILD_LDFLAGS) -trimpath ./cmd/slidown
 
 lint:
 	golangci-lint run ./...

@@ -5,11 +5,11 @@ before:
     - go mod tidy
 builds:
   -
-    id: deck-darwin
+    id: slidown-darwin
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X github.com/k1LoW/deck/version.Revision={{.ShortCommit}}
+      - -s -w -X github.com/Songmu/slidown/version.Revision={{.ShortCommit}}
     env:
       - CGO_ENABLED=0
     goos:
@@ -17,26 +17,26 @@ builds:
     goarch:
       - amd64
       - arm64
-    main: ./cmd/deck/main.go
+    main: ./cmd/slidown/main.go
   -
-    id: deck-windows
+    id: slidown-windows
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X github.com/k1LoW/deck/version.Revision={{.ShortCommit}}
+      - -s -w -X github.com/Songmu/slidown/version.Revision={{.ShortCommit}}
     env:
       - CGO_ENABLED=0
     goos:
       - windows
     goarch:
       - amd64
-    main: ./cmd/deck/main.go
+    main: ./cmd/slidown/main.go
   -
-    id: deck-linux
+    id: slidown-linux
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X github.com/k1LoW/deck/version.Revision={{.ShortCommit}}
+      - -s -w -X github.com/Songmu/slidown/version.Revision={{.ShortCommit}}
     env:
       - CGO_ENABLED=0
     goos:
@@ -44,10 +44,10 @@ builds:
     goarch:
       - amd64
       - arm64
-    main: ./cmd/deck/main.go
+    main: ./cmd/slidown/main.go
 archives:
   -
-    id: deck-archive
+    id: slidown-archive
     name_template: '{{ .ProjectName }}_v{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}'
     format_overrides:
       - goos: darwin
@@ -68,13 +68,13 @@ changelog:
     - '^test:'
 nfpms:
   -
-    id: deck-nfpms
+    id: slidown-nfpms
     file_name_template: "{{ .ProjectName }}_{{ .Version }}-1_{{ .Arch }}"
     builds:
-      - deck-linux
-    homepage: https://github.com/k1LoW/deck
+      - slidown-linux
+    homepage: https://github.com/Songmu/slidown
     maintainer: Ken'ichiro Oyama <k1lowxb@gmail.com>
-    description: deck is a tool for creating deck using Markdown and Google Slides.
+    description: slidown is a tool for creating PowerPoint presentations from Markdown.
     license: MIT
     formats:
       - deb
