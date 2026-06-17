@@ -1,8 +1,7 @@
-package deck
+package slidown
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -12,17 +11,14 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/corona10/goimagehash"
 	"github.com/k1LoW/errors"
-	"golang.org/x/net/publicsuffix"
 )
 
 type MIMEType string
@@ -43,22 +39,7 @@ type Image struct {
 	pHash        *goimagehash.ImageHash // Perceptual hash for JPEG images
 	modTime      time.Time              // Modification time of the image file, if applicable
 	link         string                 // External link associated with the image
-
-	// Upload state management
-	uploadMutex    sync.RWMutex
-	uploadState    uploadState
-	webContentLink string
-	uploadError    error
 }
-
-type uploadState int
-
-const (
-	uploadStateNotStarted uploadState = iota
-	uploadStateInProgress
-	uploadStateCompleted
-	uploadStateFailed
-)
 
 func NewImage(pathOrURL string) (_ *Image, err error) {
 	defer func() {
@@ -67,10 +48,6 @@ func NewImage(pathOrURL string) (_ *Image, err error) {
 	var b io.Reader
 	var modTime time.Time
 	if strings.HasPrefix(pathOrURL, "http://") || strings.HasPrefix(pathOrURL, "https://") {
-		i, ok := LoadImageCache(pathOrURL)
-		if ok {
-			return i, nil
-		}
 		if _, err := url.Parse(pathOrURL); err != nil {
 			return nil, fmt.Errorf("invalid URL %s: %w", pathOrURL, err)
 		}
@@ -98,12 +75,6 @@ func NewImage(pathOrURL string) (_ *Image, err error) {
 			return nil, fmt.Errorf("failed to stat image file %s: %w", pathOrURL, err)
 		}
 		modTime = fi.ModTime()
-		i, ok := LoadImageCache(pathOrURL)
-		if ok {
-			if modTime.Equal(i.modTime) {
-				return i, nil
-			}
-		}
 		file, err := os.Open(pathOrURL)
 		if err != nil {
 			return nil, fmt.Errorf("failed to open image file %s: %w", pathOrURL, err)
@@ -116,13 +87,7 @@ func NewImage(pathOrURL string) (_ *Image, err error) {
 		return nil, fmt.Errorf("failed to create image from buffer: %w", err)
 	}
 	i.url = pathOrURL
-	if isPublicURL(pathOrURL) {
-		// If the URL appears to be OK for direct access, `deck` will not upload a temporary image to Google Drive
-		// but will instead specify that URL directly in the CreateImageRequest.
-		i.webContentLink = pathOrURL
-	}
 	i.modTime = modTime
-	StoreImageCache(pathOrURL, i)
 	return i, nil
 }
 
@@ -181,40 +146,6 @@ func newImageFromBuffer(r io.Reader) (_ *Image, err error) {
 
 func (i *Image) SetLink(link string) {
 	i.link = link
-}
-
-func (i *Image) Equivalent(ii *Image) bool {
-	if i == nil || ii == nil {
-		return false
-	}
-	if i.mimeType != ii.mimeType {
-		return false
-	}
-	if i.link != ii.link {
-		return false
-	}
-	if i.Checksum() == ii.Checksum() {
-		return true
-	}
-
-	// Images are compressed on the Google Slides side (especially JPEG, large images),
-	// so we use Perceptual Hashing for comparison
-	aHash, err := i.PHash()
-	if err != nil {
-		return false
-	}
-	bHash, err := ii.PHash()
-	if err != nil {
-		return false
-	}
-	distance, err := aHash.Distance(bHash)
-	if err != nil {
-		return false
-	}
-	if distance < 5 { // threshold for similarity
-		return true
-	}
-	return false
 }
 
 func (i *Image) Checksum() uint32 {
@@ -304,73 +235,6 @@ func (i *Image) UnmarshalJSON(data []byte) (err error) {
 	return iimg.toImage(i)
 }
 
-// StartUpload marks the image as upload in progress.
-func (i *Image) StartUpload() {
-	i.uploadMutex.Lock()
-	defer i.uploadMutex.Unlock()
-	i.uploadState = uploadStateInProgress
-}
-
-// SetUploadResult sets the upload result (success or failure).
-func (i *Image) SetUploadResult(webContentLink string, err error) {
-	i.uploadMutex.Lock()
-	defer i.uploadMutex.Unlock()
-	if err != nil {
-		i.uploadState = uploadStateFailed
-		i.uploadError = err
-	} else {
-		i.uploadState = uploadStateCompleted
-		i.webContentLink = webContentLink
-		i.uploadError = nil
-	}
-}
-
-type uploadInfo struct {
-	url       string
-	link      string
-	codeBlock bool
-}
-
-// UploadInfo waits for the upload to complete and returns the webContentLink.
-func (i *Image) UploadInfo(ctx context.Context) (*uploadInfo, error) {
-	for {
-		i.uploadMutex.RLock()
-		state := i.uploadState
-		link := i.webContentLink
-		uploadErr := i.uploadError
-		i.uploadMutex.RUnlock()
-
-		switch state {
-		case uploadStateNotStarted, uploadStateCompleted:
-			return &uploadInfo{
-				url:       link,
-				link:      i.link,
-				codeBlock: i.codeBlock(),
-			}, nil
-		case uploadStateFailed:
-			return nil, uploadErr
-		case uploadStateInProgress:
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(10 * time.Millisecond):
-				// Continue waiting
-			}
-		}
-	}
-}
-
-// IsUploadNeeded returns true if the image needs to be uploaded.
-func (i *Image) IsUploadNeeded() bool {
-	i.uploadMutex.RLock()
-	defer i.uploadMutex.RUnlock()
-	return i.uploadState == uploadStateNotStarted && i.webContentLink == ""
-}
-
-func (i *Image) codeBlock() bool {
-	return i.url == "" && i.fromMarkdown
-}
-
 func (i *Image) toInternal() *internalImage {
 	return &internalImage{
 		Data:         i.String(),
@@ -409,24 +273,4 @@ func (iimg *internalImage) toImage(i *Image) error {
 	}
 	i.b = decoded
 	return nil
-}
-
-// isPublicURL checks whether a URL string is OK for direct public access.
-// Since we only need to identify what appear to be public URLs, false negatives are acceptable.
-func isPublicURL(rawURL string) bool {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return false
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return false
-	}
-	if u.User != nil || u.Port() != "" {
-		return false
-	}
-	if ip := net.ParseIP(u.Host); ip != nil {
-		return false
-	}
-	_, icann := publicsuffix.PublicSuffix(u.Host)
-	return icann
 }

@@ -1,0 +1,376 @@
+package pptx
+
+import (
+	"fmt"
+	"strings"
+)
+
+// slideRel represents a relationship referenced from a slide part (currently
+// only hyperlinks).
+type slideRel struct {
+	id     string
+	relTyp string
+	target string
+	mode   string // "External" for hyperlinks
+}
+
+// mediaPart is a binary media file (e.g. an image) destined for ppt/media.
+type mediaPart struct {
+	name string // file name within ppt/media, e.g. "image1.png"
+	data []byte
+}
+
+// renderSlide serializes a slide to its slide XML part and returns the XML plus
+// any relationships and media parts it references. mediaIdx is a shared counter
+// used to assign globally-unique media file names across all slides.
+func renderSlide(s *Slide, mediaIdx *int) (xml string, rels []slideRel, media []mediaPart) {
+	var b strings.Builder
+	b.WriteString(xmlDecl)
+	b.WriteString(`<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" ` +
+		`xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ` +
+		`xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">`)
+	b.WriteString(`<p:cSld><p:spTree>`)
+	b.WriteString(`<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>`)
+	b.WriteString(`<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>`)
+
+	relIdx := 1 // rId1 is reserved for the slide layout relationship
+	id := 2     // shape ids; 1 is the group
+	for _, sh := range s.Shapes {
+		b.WriteString(renderShape(sh, id, &relIdx, &rels))
+		id++
+	}
+	for _, pic := range s.Pictures {
+		b.WriteString(renderPicture(pic, id, &relIdx, &rels, mediaIdx, &media))
+		id++
+	}
+	for _, tbl := range s.Tables {
+		b.WriteString(renderTable(tbl, id))
+		id++
+	}
+
+	b.WriteString(`</p:spTree></p:cSld>`)
+	b.WriteString(fingerprintExt(s.Fingerprint, s.Key))
+	b.WriteString(`</p:sld>`)
+	return b.String(), rels, media
+}
+
+// fingerprintNS / fingerprintURI identify slidown's per-slide source
+// fingerprint extension embedded in the slide's extLst. slidown reads this back
+// on an incremental rebuild to decide whether a slide's source changed (see
+// Slide.Fingerprint in the root package) and to match slides by key across
+// inserts/reordering. It is stored in the OOXML extension list so it is
+// invisible to the presentation and preserved verbatim when an unchanged slide
+// is reused. Tools that drop unknown extensions simply cause the affected slide
+// to be regenerated, which is harmless.
+const (
+	fingerprintNS  = "https://github.com/Songmu/slidown/ns"
+	fingerprintURI = "{6F2A3B40-5C7D-4E21-9A6B-1D3F8C0E7B92}"
+)
+
+// fingerprintExt renders the slide-level extLst carrying the source fingerprint
+// and optional stable key, or an empty string when no fingerprint is set.
+func fingerprintExt(fp, key string) string {
+	if fp == "" {
+		return ""
+	}
+	attrs := ` v="` + escapeXML(fp) + `"`
+	if key != "" {
+		attrs += ` k="` + escapeXML(key) + `"`
+	}
+	return `<p:extLst><p:ext uri="` + fingerprintURI + `">` +
+		`<slidown:fp xmlns:slidown="` + fingerprintNS + `"` + attrs + `/>` +
+		`</p:ext></p:extLst>`
+}
+
+func renderPicture(pic *Picture, id int, relIdx *int, rels *[]slideRel, mediaIdx *int, media *[]mediaPart) string {
+	ext := pic.Ext
+	if ext == "" {
+		ext = "png"
+	}
+	*mediaIdx++
+	fileName := fmt.Sprintf("image%d.%s", *mediaIdx, ext)
+	*media = append(*media, mediaPart{name: fileName, data: pic.Data})
+
+	*relIdx++
+	embedID := fmt.Sprintf("rId%d", *relIdx)
+	*rels = append(*rels, slideRel{
+		id:     embedID,
+		relTyp: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+		target: "../media/" + fileName,
+	})
+
+	var linkAttr string
+	if pic.Link != "" {
+		*relIdx++
+		linkID := fmt.Sprintf("rId%d", *relIdx)
+		*rels = append(*rels, slideRel{
+			id:     linkID,
+			relTyp: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+			target: pic.Link,
+			mode:   "External",
+		})
+		linkAttr = fmt.Sprintf(`<a:hlinkClick r:id="%s"/>`, linkID)
+	}
+
+	name := pic.Name
+	if name == "" {
+		name = fmt.Sprintf("Picture %d", id)
+	}
+
+	return `<p:pic><p:nvPicPr>` +
+		fmt.Sprintf(`<p:cNvPr id="%d" name="%s">`, id, escapeXML(name)) + linkAttr + `</p:cNvPr>` +
+		`<p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>` +
+		`<p:blipFill><a:blip r:embed="` + embedID + `"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
+		`<p:spPr><a:xfrm><a:off x="` + itoa64(pic.X) + `" y="` + itoa64(pic.Y) + `"/>` +
+		`<a:ext cx="` + itoa64(pic.W) + `" cy="` + itoa64(pic.H) + `"/></a:xfrm>` +
+		`<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`
+}
+
+func renderShape(sh *Shape, id int, relIdx *int, rels *[]slideRel) string {
+	var b strings.Builder
+	name := sh.Name
+	if name == "" {
+		name = fmt.Sprintf("Shape %d", id)
+	}
+	b.WriteString(`<p:sp><p:nvSpPr>`)
+	b.WriteString(fmt.Sprintf(`<p:cNvPr id="%d" name="%s"/>`, id, escapeXML(name)))
+	b.WriteString(`<p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr>`)
+	b.WriteString(`<p:nvPr>`)
+	if sh.isPlaceholder() {
+		ph := `<p:ph`
+		if sh.Placeholder != PlaceholderNone {
+			ph += fmt.Sprintf(` type="%s"`, sh.Placeholder)
+		}
+		if sh.PlaceholderIdx > 0 {
+			ph += fmt.Sprintf(` idx="%d"`, sh.PlaceholderIdx)
+		}
+		ph += `/>`
+		b.WriteString(ph)
+	}
+	b.WriteString(`</p:nvPr></p:nvSpPr>`)
+
+	b.WriteString(`<p:spPr>`)
+	if sh.W > 0 || sh.H > 0 || sh.X > 0 || sh.Y > 0 {
+		b.WriteString(fmt.Sprintf(`<a:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></a:xfrm>`, sh.X, sh.Y, sh.W, sh.H))
+	}
+	if !sh.isPlaceholder() {
+		b.WriteString(`<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>`)
+	}
+	b.WriteString(`</p:spPr>`)
+
+	b.WriteString(`<p:txBody><a:bodyPr/><a:lstStyle/>`)
+	if len(sh.Paragraphs) == 0 {
+		b.WriteString(`<a:p><a:endParaRPr/></a:p>`)
+	}
+	for _, p := range sh.Paragraphs {
+		b.WriteString(renderParagraph(p, relIdx, rels))
+	}
+	b.WriteString(`</p:txBody></p:sp>`)
+	return b.String()
+}
+
+func renderParagraph(p *Paragraph, relIdx *int, rels *[]slideRel) string {
+	var b strings.Builder
+	b.WriteString(`<a:p>`)
+	// Paragraph properties.
+	var pPr strings.Builder
+	if p.Level > 0 {
+		pPr.WriteString(fmt.Sprintf(` lvl="%d"`, p.Level))
+	}
+	if p.Align != AlignNone {
+		pPr.WriteString(fmt.Sprintf(` algn="%s"`, p.Align))
+	}
+	var bullet string
+	switch {
+	case p.Bullet && p.Numbered:
+		bullet = `<a:buFont typeface="+mj-lt"/><a:buAutoNum type="arabicPeriod"/>`
+	case p.Bullet:
+		bullet = `<a:buFont typeface="Arial" panose="020B0604020202020204" pitchFamily="34" charset="0"/><a:buChar char="&#8226;"/>`
+	default:
+		bullet = `<a:buNone/>`
+	}
+	b.WriteString(`<a:pPr` + pPr.String() + `>` + bullet + `</a:pPr>`)
+
+	for _, r := range p.Runs {
+		b.WriteString(renderRun(r, relIdx, rels))
+	}
+	b.WriteString(`</a:p>`)
+	return b.String()
+}
+
+func renderRun(r *Run, relIdx *int, rels *[]slideRel) string {
+	var rPr strings.Builder
+	rPr.WriteString(`<a:rPr lang="en-US"`)
+	if r.Bold {
+		rPr.WriteString(` b="1"`)
+	}
+	if r.Italic {
+		rPr.WriteString(` i="1"`)
+	}
+	if r.Underline {
+		rPr.WriteString(` u="sng"`)
+	}
+	if r.Strike {
+		rPr.WriteString(` strike="sngStrike"`)
+	}
+	if r.FontSize > 0 {
+		rPr.WriteString(fmt.Sprintf(` sz="%d"`, int(r.FontSize*100)))
+	}
+	rPr.WriteString(`>`)
+
+	var inner strings.Builder
+	if r.Color != "" {
+		inner.WriteString(fmt.Sprintf(`<a:solidFill><a:srgbClr val="%s"/></a:solidFill>`, escapeXML(r.Color)))
+	}
+	// The CT_TextCharacterProperties schema requires latin/cs (the font, set for
+	// code runs) to precede hlinkClick, so emit Code before Link.
+	if r.Code {
+		inner.WriteString(`<a:latin typeface="Consolas" pitchFamily="49" charset="0"/><a:cs typeface="Consolas"/>`)
+	}
+	if r.Link != "" {
+		*relIdx++
+		rid := fmt.Sprintf("rId%d", *relIdx)
+		*rels = append(*rels, slideRel{
+			id:     rid,
+			relTyp: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+			target: r.Link,
+			mode:   "External",
+		})
+		inner.WriteString(fmt.Sprintf(`<a:hlinkClick xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="%s"/>`, rid))
+	}
+
+	hasInner := inner.Len() > 0
+	var rPrStr string
+	if hasInner {
+		rPrStr = rPr.String() + inner.String() + `</a:rPr>`
+	} else {
+		// self-close: replace trailing '>' with '/>'
+		s := rPr.String()
+		rPrStr = s[:len(s)-1] + `/>`
+	}
+	return `<a:r>` + rPrStr + `<a:t>` + escapeXML(r.Text) + `</a:t></a:r>`
+}
+
+// slideRelsXML builds the slide's .rels part from its relationships.
+func slideRelsXML(rels []slideRel) string {
+	var b strings.Builder
+	b.WriteString(xmlDecl)
+	b.WriteString(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`)
+	for _, rel := range rels {
+		if rel.mode != "" {
+			b.WriteString(fmt.Sprintf(`<Relationship Id="%s" Type="%s" Target="%s" TargetMode="%s"/>`,
+				rel.id, rel.relTyp, escapeXML(rel.target), rel.mode))
+		} else {
+			b.WriteString(fmt.Sprintf(`<Relationship Id="%s" Type="%s" Target="%s"/>`,
+				rel.id, rel.relTyp, escapeXML(rel.target)))
+		}
+	}
+	b.WriteString(`</Relationships>`)
+	return b.String()
+}
+
+const defaultRowHeight int64 = 370840 // ~0.405 inch
+
+// contentWidthEMU is the fallback table width (the built-in body width).
+const contentWidthEMU int64 = 10515600
+
+// renderTable serializes a table as a p:graphicFrame containing an a:tbl with
+// explicit per-cell borders and header fill (self-contained, no table style
+// part required).
+func renderTable(t *Table, id int) string {
+	rows := t.Rows
+	if len(rows) == 0 {
+		return ""
+	}
+	cols := 0
+	for _, r := range rows {
+		if len(r.Cells) > cols {
+			cols = len(r.Cells)
+		}
+	}
+	if cols == 0 {
+		return ""
+	}
+
+	width := t.W
+	if width <= 0 {
+		width = contentWidthEMU
+	}
+	colW := width / int64(cols)
+	height := t.H
+	if height <= 0 {
+		height = int64(len(rows)) * defaultRowHeight
+	}
+
+	var b strings.Builder
+	b.WriteString(`<p:graphicFrame><p:nvGraphicFramePr>`)
+	b.WriteString(fmt.Sprintf(`<p:cNvPr id="%d" name="Table %d"/>`, id, id))
+	b.WriteString(`<p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr>`)
+	b.WriteString(fmt.Sprintf(`<p:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></p:xfrm>`, t.X, t.Y, width, height))
+	b.WriteString(`<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">`)
+	b.WriteString(`<a:tbl><a:tblPr firstRow="1" bandRow="1"/><a:tblGrid>`)
+	for i := 0; i < cols; i++ {
+		w := colW
+		if i == cols-1 {
+			w = width - colW*int64(cols-1) // last column absorbs rounding
+		}
+		b.WriteString(fmt.Sprintf(`<a:gridCol w="%d"/>`, w))
+	}
+	b.WriteString(`</a:tblGrid>`)
+
+	for _, r := range rows {
+		b.WriteString(fmt.Sprintf(`<a:tr h="%d">`, defaultRowHeight))
+		for c := 0; c < cols; c++ {
+			var cell *TableCell
+			if c < len(r.Cells) {
+				cell = r.Cells[c]
+			}
+			b.WriteString(renderTableCell(cell, r.Header))
+		}
+		b.WriteString(`</a:tr>`)
+	}
+	b.WriteString(`</a:tbl></a:graphicData></a:graphic></p:graphicFrame>`)
+	return b.String()
+}
+
+func renderTableCell(cell *TableCell, header bool) string {
+	var b strings.Builder
+	b.WriteString(`<a:tc><a:txBody><a:bodyPr/><a:lstStyle/>`)
+	var paras []*Paragraph
+	if cell != nil {
+		paras = cell.Paragraphs
+	}
+	if len(paras) == 0 {
+		b.WriteString(`<a:p><a:endParaRPr/></a:p>`)
+	}
+	align := AlignNone
+	if cell != nil {
+		align = cell.Align
+	}
+	for _, p := range paras {
+		if p.Align == AlignNone {
+			p.Align = align
+		}
+		if header {
+			for _, run := range p.Runs {
+				run.Bold = true
+			}
+		}
+		var dummy int
+		var dummyRels []slideRel
+		b.WriteString(renderParagraph(p, &dummy, &dummyRels))
+	}
+	b.WriteString(`</a:txBody>`)
+
+	// Cell properties: thin grey borders on all sides; header gets a light fill.
+	const border = `<a:lnL w="6350"><a:solidFill><a:srgbClr val="BFBFBF"/></a:solidFill></a:lnL>` +
+		`<a:lnR w="6350"><a:solidFill><a:srgbClr val="BFBFBF"/></a:solidFill></a:lnR>` +
+		`<a:lnT w="6350"><a:solidFill><a:srgbClr val="BFBFBF"/></a:solidFill></a:lnT>` +
+		`<a:lnB w="6350"><a:solidFill><a:srgbClr val="BFBFBF"/></a:solidFill></a:lnB>`
+	b.WriteString(`<a:tcPr>` + border)
+	if header {
+		b.WriteString(`<a:solidFill><a:srgbClr val="D9E1F2"/></a:solidFill>`)
+	}
+	b.WriteString(`</a:tcPr></a:tc>`)
+	return b.String()
+}

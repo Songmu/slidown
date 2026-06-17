@@ -1,13 +1,18 @@
-package deck
+package slidown
 
 import "strings"
 
 type Slides []*Slide
 
 type Slide struct {
-	Layout         string        `json:"layout"`
-	Freeze         bool          `json:"freeze,omitempty"`
-	Skip           bool          `json:"skip,omitempty"`
+	Layout string `json:"layout"`
+	Freeze bool   `json:"freeze,omitempty"`
+	Skip   bool   `json:"skip,omitempty"`
+	// Key is an opaque, stable per-page identifier (from the markdown page
+	// config) used to match a slide to its existing counterpart across inserts,
+	// deletions and reordering during an incremental rebuild. It is identity,
+	// not content, so it is excluded from the content fingerprint.
+	Key            string        `json:"-"`
 	Titles         []string      `json:"titles,omitempty"`
 	TitleBodies    []*Body       `json:"title_bodies,omitempty"`
 	Subtitles      []string      `json:"subtitles,omitempty"`
@@ -17,9 +22,6 @@ type Slide struct {
 	BlockQuotes    []*BlockQuote `json:"block_quotes,omitempty"`
 	Tables         []*Table      `json:"tables,omitempty"`
 	SpeakerNote    string        `json:"speaker_note,omitempty"`
-
-	new    bool
-	delete bool
 }
 
 // Body represents the content body of a slide.
@@ -65,6 +67,13 @@ type TableCell struct {
 
 // Bullet represents the type of bullet point for a paragraph.
 type Bullet string
+
+// StyleName constants for inline-syntax styles shared with the markdown parser.
+const (
+	// StyleDel is the style name applied to GFM strikethrough (`~~`) and the
+	// HTML <del> element.
+	StyleDel = "del"
+)
 
 // Bullet constants for different bullet point types.
 const (

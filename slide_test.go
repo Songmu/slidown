@@ -1,4 +1,4 @@
-package deck
+package slidown
 
 import (
 	"fmt"
@@ -230,59 +230,6 @@ func TestImageBytes(t *testing.T) {
 			bytes := img.Bytes()
 			if len(bytes) == 0 {
 				t.Error("Bytes() method returned empty byte array")
-			}
-		})
-	}
-}
-
-func TestEquivalent(t *testing.T) {
-	tests := []struct {
-		name     string
-		imageA   string
-		imageB   string
-		expected bool
-	}{
-		{
-			name:     "compare same PNG images",
-			imageA:   "testdata/test.png",
-			imageB:   "testdata/test.png",
-			expected: true,
-		},
-		{
-			name:     "compare same JPEG images",
-			imageA:   "testdata/test.jpeg",
-			imageB:   "testdata/test.jpeg",
-			expected: true,
-		},
-		{
-			name:     "compare same GIF images",
-			imageA:   "testdata/test.gif",
-			imageB:   "testdata/test.gif",
-			expected: true,
-		},
-		{
-			name:     "compare JPEG with compressed JPEG",
-			imageA:   "testdata/test.jpeg",
-			imageB:   "testdata/test.compressed.jpeg",
-			expected: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			imgA, err := NewImage(tt.imageA)
-			if err != nil {
-				t.Fatalf("failed to load image A: %v", err)
-			}
-
-			imgB, err := NewImage(tt.imageB)
-			if err != nil {
-				t.Fatalf("failed to load image B: %v", err)
-			}
-
-			result := imgA.Equivalent(imgB)
-			if result != tt.expected {
-				t.Errorf("Equivalent() = %v, expected %v", result, tt.expected)
 			}
 		})
 	}

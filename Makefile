@@ -1,4 +1,4 @@
-PKG = github.com/k1LoW/deck
+PKG = github.com/Songmu/slidown
 COMMIT = $(shell git rev-parse --short HEAD)
 
 BUILD_LDFLAGS = "-s -w -X $(PKG)/version.Revision=$(COMMIT)"
@@ -10,26 +10,18 @@ ci: depsdev test
 test:
 	go test ./... -coverprofile=coverage.out -covermode=count -count=1
 
-fulltest:
-	env TEST_INTEGRATION=1 go test -v ./... -coverprofile=coverage.out -covermode=count -count=1
-
 build:
-	go build -ldflags=$(BUILD_LDFLAGS) -trimpath -o deck cmd/deck/main.go
+	go build -ldflags=$(BUILD_LDFLAGS) -trimpath -o slidown cmd/slidown/main.go
 
 install:
-	go install -ldflags=$(BUILD_LDFLAGS) -trimpath ./cmd/deck
+	go install -ldflags=$(BUILD_LDFLAGS) -trimpath ./cmd/slidown
 
 lint:
-	golangci-lint run ./...
+	go vet ./...
+	go tool staticcheck ./...
 
 fuzz:
 	go test -fuzz=FuzzParse -fuzztime=1m ./md/.
-	go test -fuzz=FuzzGenerateActions -fuzztime=1m .
-
-integration:
-	env TEST_INTEGRATION=1 go test -v . -test.failfast -run \
-	  'TestApply$$|TestRoundTripSlidesToGoogleSlidesPresentationAndBack$$|TestApplyMarkdown$$|TestAction$$' \
-	  -timeout 30m
 
 depsdev:
 	go install github.com/Songmu/gocredits/cmd/gocredits@latest
@@ -39,4 +31,4 @@ prerelease_for_tagpr: depsdev
 	gocredits -w .
 	git add CHANGELOG.md CREDITS go.mod go.sum
 
-.PHONY: default ci test fulltest build install lint fuzz integration depsdev prerelease_for_tagpr
+.PHONY: default ci test build install lint fuzz depsdev prerelease_for_tagpr

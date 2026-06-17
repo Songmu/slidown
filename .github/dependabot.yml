@@ -16,7 +16,7 @@ updates:
       include: "scope"
     open-pull-requests-limit: 10
     assignees:
-      - "k1LoW"
+      - "Songmu"
 
   - package-ecosystem: "gomod"
     directory: "/"
@@ -33,4 +33,4 @@ updates:
       include: "scope"
     open-pull-requests-limit: 10
     assignees:
-      - "k1LoW"
+      - "Songmu"

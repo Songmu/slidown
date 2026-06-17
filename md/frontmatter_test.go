@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Songmu/slidown/config"
 	"github.com/google/go-cmp/cmp"
-	"github.com/k1LoW/deck/config"
 )
 
 func TestFrontmatter(t *testing.T) {
@@ -109,16 +109,13 @@ func TestApplyFrontmatterToMD(t *testing.T) {
 		name            string
 		initialContent  string
 		title           string
-		presentationID  string
 		expectedContent string
 	}{
 		{
 			name:           "new file without frontmatter",
 			initialContent: "",
 			title:          "Test Title",
-			presentationID: "test-id-123",
 			expectedContent: `---
-presentationID: test-id-123
 title: Test Title
 ---
 `,
@@ -128,10 +125,8 @@ title: Test Title
 			initialContent: `# My Presentation
 
 This is the content.`,
-			title:          "Test Title",
-			presentationID: "test-id-123",
+			title: "Test Title",
 			expectedContent: `---
-presentationID: test-id-123
 title: Test Title
 ---
 # My Presentation
@@ -145,28 +140,25 @@ author: John Doe
 date: 2023-01-01
 ---
 # My Presentation`,
-			title:          "Updated Title",
-			presentationID: "new-id-456",
+			title: "Updated Title",
 			expectedContent: `---
 author: John Doe
 date: "2023-01-01"
-presentationID: new-id-456
 title: Updated Title
 ---
 # My Presentation`,
 		},
 		{
-			name: "existing file with frontmatter - update presentationID only",
+			name: "existing file with frontmatter - keep other fields",
 			initialContent: `---
 title: Existing Title
-presentationID: old-id
+author: Jane
 ---
 # Content`,
-			title:          "",
-			presentationID: "new-id-789",
+			title: "New Title",
 			expectedContent: `---
-presentationID: new-id-789
-title: Existing Title
+author: Jane
+title: New Title
 ---
 # Content`,
 		},
@@ -186,7 +178,7 @@ title: Existing Title
 			}
 
 			// Run the function
-			err := ApplyFrontmatterToMD(tmpFile, tt.title, tt.presentationID)
+			err := ApplyFrontmatterToMD(tmpFile, tt.title)
 			if err != nil {
 				t.Fatalf("ApplyFrontmatterToMD failed: %v", err)
 			}
@@ -212,7 +204,7 @@ func TestApplyFrontmatterToMD_CreateDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 	nestedFile := filepath.Join(tmpDir, "nested", "dir", "test.md")
 
-	err := ApplyFrontmatterToMD(nestedFile, "Test", "test-id")
+	err := ApplyFrontmatterToMD(nestedFile, "Test")
 	if err != nil {
 		t.Fatalf("Failed to create nested directory: %v", err)
 	}

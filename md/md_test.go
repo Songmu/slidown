@@ -374,7 +374,6 @@ func TestIsPageDelimiter(t *testing.T) {
 	}
 }
 
-
 func FuzzParse(f *testing.F) {
 	f.Add([]byte(`# Title
 
@@ -403,7 +402,7 @@ E<br>*F*
 1. h**H**
   2. **i**I
 
-ref: [deck repo](https://github.com/k1LoW/deck)
+ref: [deck repo](https://github.com/Songmu/slidown)
 
 ---
 
