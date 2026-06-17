@@ -48,10 +48,6 @@ func NewImage(pathOrURL string) (_ *Image, err error) {
 	var b io.Reader
 	var modTime time.Time
 	if strings.HasPrefix(pathOrURL, "http://") || strings.HasPrefix(pathOrURL, "https://") {
-		i, ok := LoadImageCache(pathOrURL)
-		if ok {
-			return i, nil
-		}
 		if _, err := url.Parse(pathOrURL); err != nil {
 			return nil, fmt.Errorf("invalid URL %s: %w", pathOrURL, err)
 		}
@@ -79,12 +75,6 @@ func NewImage(pathOrURL string) (_ *Image, err error) {
 			return nil, fmt.Errorf("failed to stat image file %s: %w", pathOrURL, err)
 		}
 		modTime = fi.ModTime()
-		i, ok := LoadImageCache(pathOrURL)
-		if ok {
-			if modTime.Equal(i.modTime) {
-				return i, nil
-			}
-		}
 		file, err := os.Open(pathOrURL)
 		if err != nil {
 			return nil, fmt.Errorf("failed to open image file %s: %w", pathOrURL, err)
@@ -98,7 +88,6 @@ func NewImage(pathOrURL string) (_ *Image, err error) {
 	}
 	i.url = pathOrURL
 	i.modTime = modTime
-	StoreImageCache(pathOrURL, i)
 	return i, nil
 }
 
