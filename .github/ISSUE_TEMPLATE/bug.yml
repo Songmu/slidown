@@ -3,7 +3,7 @@ description: A Bug report with error.json
 title: "(Please update title)"
 labels: ["bug"]
 assignees:
-  - k1LoW
+  - Songmu
 body:
   - type: markdown
     attributes:
@@ -14,7 +14,7 @@ body:
     id: verson
     attributes:
       label: Version
-      description: Please paste the result of running `deck -v`.
+      description: Please paste the result of running `slidown -v`.
       placeholder: 0.0.0
     validations:
       required: true
@@ -32,7 +32,7 @@ body:
     id: error-json
     attributes:
       label: error.json
-      description: If an error occurred during deck execution, please paste the contents of `$XDG_STATE_HOME/deck/error.json` or `$HOME/.local/share/deck/error.json`.
+      description: If an error occurred during slidown execution, please paste the contents of `$XDG_STATE_HOME/slidown/error.json` or `$HOME/.local/state/slidown/error.json`.
       placeholder: Paste the error.json content here
       render: json
     validations:

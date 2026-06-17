@@ -1,8 +1,7 @@
 coverage.out
-deck
+slidown
 *.json
 *.diff.png
 *~lock~*
 .DS_Store
 md/testdata/fuzz
-gha-creds-*.json

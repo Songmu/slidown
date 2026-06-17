@@ -1,8 +1,8 @@
 # yaml-language-server: $schema=https://json-schema.org/draft/2020-12/schema
 
 "$schema": https://json-schema.org/draft/2020-12/schema
-title: deck Configuration Schema
-description: Configuration schema for deck - a tool for creating Google Slides presentations from Markdown
+title: slidown Configuration Schema
+description: Configuration schema for slidown - a tool for creating PowerPoint (.pptx) presentations from Markdown
 type: object
 additionalProperties: false
 properties:
@@ -15,14 +15,9 @@ properties:
     examples:
     - "laminate"
     - "silicon -l {{lang}} -o {{output}}"
-  folderID:
+  template:
     type: string
-    description: "Folder ID where new presentations are created and temporary images are uploaded"
-    pattern: "^[a-zA-Z0-9_-]+$"
-  basePresentationID:
-    type: string
-    description: "Base presentation ID whose theme will be reused for new presentations"
-    pattern: "^[a-zA-Z0-9_-]+$"
+    description: "Path to a .pptx file whose theme, slide masters and layouts are used as the design"
   defaults:
     type: array
     description: "Default page configurations based on CEL expressions"
