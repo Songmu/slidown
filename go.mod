@@ -1,4 +1,4 @@
-module github.com/k1LoW/deck
+module github.com/Songmu/slidown
 
 go 1.26
 

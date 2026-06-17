@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/k1LoW/deck/config"
+	"github.com/Songmu/slidown/config"
 )
 
 func TestFrontmatter(t *testing.T) {

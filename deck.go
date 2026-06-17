@@ -10,7 +10,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/k1LoW/deck/config"
+	"github.com/Songmu/slidown/config"
 	"github.com/k1LoW/errors"
 	"google.golang.org/api/drive/v3"
 	"google.golang.org/api/option"

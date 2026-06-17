@@ -13,8 +13,8 @@ import (
 	"github.com/corona10/goimagehash"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/k1LoW/deck"
-	"github.com/k1LoW/deck/md"
+	"github.com/Songmu/slidown"
+	"github.com/Songmu/slidown/md"
 	"github.com/lestrrat-go/backoff/v2"
 )
 

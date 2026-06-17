@@ -30,13 +30,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/k1LoW/deck/config"
-	"github.com/k1LoW/deck/version"
+	"github.com/Songmu/slidown/config"
+	"github.com/Songmu/slidown/version"
 	"github.com/k1LoW/errors"
 	"github.com/spf13/cobra"
 )
 
-const setupInstructionMessage = "Run 'deck doctor' to check your setup or see https://github.com/k1LoW/deck?tab=readme-ov-file#setup for setup instructions"
+const setupInstructionMessage = "Run 'deck doctor' to check your setup or see https://github.com/Songmu/slidown?tab=readme-ov-file#setup for setup instructions"
 
 var profile string
 

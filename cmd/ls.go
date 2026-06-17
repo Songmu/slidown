@@ -24,7 +24,7 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/k1LoW/deck"
+	"github.com/Songmu/slidown"
 	"github.com/spf13/cobra"
 )
 

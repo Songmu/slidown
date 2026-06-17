@@ -4,8 +4,8 @@ import (
 	"os"
 
 	"github.com/fatih/color"
-	"github.com/k1LoW/deck"
-	"github.com/k1LoW/deck/config"
+	"github.com/Songmu/slidown"
+	"github.com/Songmu/slidown/config"
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/slides/v1"
@@ -131,7 +131,7 @@ func showSetupHelp(cmd *cobra.Command) {
 	cmd.Println(color.YellowString("   %s", deck.GetCredentialsPath(profile)))
 	cmd.Println()
 	cmd.Println(color.New(color.Bold).Sprint("📖 For detailed step-by-step instructions, see:"))
-	cmd.Println(color.CyanString("   https://github.com/k1LoW/deck#get-and-set-your-oauth-client-credentials"))
+	cmd.Println(color.CyanString("   https://github.com/Songmu/slidown#get-and-set-your-oauth-client-credentials"))
 	cmd.Println()
 }
 

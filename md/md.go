@@ -15,8 +15,8 @@ import (
 	"sync"
 
 	"github.com/goccy/go-yaml"
-	"github.com/k1LoW/deck"
-	"github.com/k1LoW/deck/config"
+	"github.com/Songmu/slidown"
+	"github.com/Songmu/slidown/config"
 	"github.com/k1LoW/errors"
 	"github.com/k1LoW/exec"
 	"github.com/yuin/goldmark"

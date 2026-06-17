@@ -25,9 +25,9 @@ import (
 	"fmt"
 
 	"github.com/fatih/color"
-	"github.com/k1LoW/deck"
-	"github.com/k1LoW/deck/config"
-	"github.com/k1LoW/deck/md"
+	"github.com/Songmu/slidown"
+	"github.com/Songmu/slidown/config"
+	"github.com/Songmu/slidown/md"
 	"github.com/k1LoW/errors"
 	"github.com/spf13/cobra"
 )

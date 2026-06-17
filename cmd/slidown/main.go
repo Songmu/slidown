@@ -21,7 +21,7 @@ THE SOFTWARE.
 */
 package main
 
-import "github.com/k1LoW/deck/cmd"
+import "github.com/Songmu/slidown/cmd"
 
 func main() {
 	cmd.Execute()

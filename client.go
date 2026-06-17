@@ -16,8 +16,8 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-retryablehttp"
-	"github.com/k1LoW/deck/config"
-	"github.com/k1LoW/deck/version"
+	"github.com/Songmu/slidown/config"
+	"github.com/Songmu/slidown/version"
 	"github.com/k1LoW/errors"
 	"github.com/pkg/browser"
 	"golang.org/x/oauth2"
@@ -42,7 +42,7 @@ const (
 	EnvAccessToken = "DECK_ACCESS_TOKEN"
 )
 
-var userAgent = "k1LoW-deck/" + version.Version + " (+https://github.com/k1LoW/deck)"
+var userAgent = "k1LoW-deck/" + version.Version + " (+https://github.com/Songmu/slidown)"
 
 // getHTTPClient returns the appropriate client option based on available credentials.
 func (d *Deck) getHTTPClient(ctx context.Context) (*http.Client, error) {

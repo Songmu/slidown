@@ -1,0 +1,105 @@
+package pptx
+
+import (
+	"archive/zip"
+	"bytes"
+	"io"
+	"strings"
+	"testing"
+)
+
+func samplePresentation() *Presentation {
+	p := New()
+	s := p.AddSlide()
+	s.AddShape(&Shape{
+		Placeholder: PlaceholderTitle,
+		Paragraphs: []*Paragraph{
+			{Runs: []*Run{{Text: "Hello slidown"}}},
+		},
+	})
+	s.AddShape(&Shape{
+		Placeholder:    PlaceholderBody,
+		PlaceholderIdx: 1,
+		Paragraphs: []*Paragraph{
+			{Bullet: true, Runs: []*Run{
+				{Text: "plain "},
+				{Text: "bold", Bold: true},
+				{Text: " "},
+				{Text: "code", Code: true},
+			}},
+			{Bullet: true, Level: 1, Runs: []*Run{
+				{Text: "nested with "},
+				{Text: "link", Link: "https://example.com"},
+			}},
+			{Bullet: true, Numbered: true, Runs: []*Run{{Text: "numbered item"}}},
+		},
+	})
+	return p
+}
+
+func TestWriteToProducesValidZip(t *testing.T) {
+	var buf bytes.Buffer
+	if _, err := samplePresentation().WriteTo(&buf); err != nil {
+		t.Fatalf("WriteTo: %v", err)
+	}
+
+	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	if err != nil {
+		t.Fatalf("not a valid zip: %v", err)
+	}
+
+	want := []string{
+		"[Content_Types].xml",
+		"_rels/.rels",
+		"ppt/presentation.xml",
+		"ppt/_rels/presentation.xml.rels",
+		"ppt/theme/theme1.xml",
+		"ppt/slideMasters/slideMaster1.xml",
+		"ppt/slideLayouts/slideLayout1.xml",
+		"ppt/slides/slide1.xml",
+		"ppt/slides/_rels/slide1.xml.rels",
+	}
+	got := map[string]string{}
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("open %s: %v", f.Name, err)
+		}
+		b, _ := io.ReadAll(rc)
+		rc.Close()
+		got[f.Name] = string(b)
+	}
+	for _, name := range want {
+		if _, ok := got[name]; !ok {
+			t.Errorf("missing part %q", name)
+		}
+	}
+
+	slide := got["ppt/slides/slide1.xml"]
+	for _, sub := range []string{
+		`<p:ph type="title"/>`,
+		`<p:ph type="body" idx="1"/>`,
+		`<a:t>Hello slidown</a:t>`,
+		`b="1"`,                  // bold run
+		`typeface="Consolas"`,    // code run
+		`<a:buAutoNum`,           // numbered bullet
+		`lvl="1"`,                // nested level
+		`<a:hlinkClick`,          // hyperlink
+	} {
+		if !strings.Contains(slide, sub) {
+			t.Errorf("slide1.xml missing %q", sub)
+		}
+	}
+
+	rels := got["ppt/slides/_rels/slide1.xml.rels"]
+	if !strings.Contains(rels, "slideLayout1.xml") {
+		t.Errorf("slide rels missing layout relationship")
+	}
+	if !strings.Contains(rels, `TargetMode="External"`) || !strings.Contains(rels, "https://example.com") {
+		t.Errorf("slide rels missing external hyperlink relationship: %s", rels)
+	}
+	// The hyperlink rId in the slide must not collide with the layout rId1.
+	if strings.Contains(slide, `r:id="rId1"`) {
+		t.Errorf("hyperlink relationship id collides with layout rId1")
+	}
+}

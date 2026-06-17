@@ -1,7 +1,7 @@
 package md
 
 import (
-	"github.com/k1LoW/deck"
+	"github.com/Songmu/slidown"
 	"github.com/yuin/goldmark/ast"
 	east "github.com/yuin/goldmark/extension/ast"
 )

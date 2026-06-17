@@ -3,8 +3,8 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/k1LoW/deck"
-	"github.com/k1LoW/deck/md"
+	"github.com/Songmu/slidown"
+	"github.com/Songmu/slidown/md"
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 )
