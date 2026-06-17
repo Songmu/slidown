@@ -8,10 +8,16 @@ import (
 	"os"
 )
 
-// part is a single file entry within the .pptx ZIP package.
+// part is a single text file entry within the .pptx ZIP package.
 type part struct {
 	name string
 	data string
+}
+
+// binPart is a single binary file entry within the .pptx ZIP package.
+type binPart struct {
+	name string
+	data []byte
 }
 
 // WriteTo serializes the presentation as an OOXML (.pptx) package to w.
@@ -41,10 +47,12 @@ func (p *Presentation) WriteTo(w io.Writer) (int64, error) {
 		{"ppt/slideLayouts/_rels/slideLayout1.xml.rels", slideLayout1Rels},
 	}
 
+	mediaIdx := 0
+	var binParts []binPart
 	for i, s := range p.Slides {
-		xml, rels := renderSlide(s)
+		xml, rels, media := renderSlide(s, &mediaIdx)
 		parts = append(parts, part{fmt.Sprintf("ppt/slides/slide%d.xml", i+1), xml})
-		// Every slide part needs a layout relationship; hyperlink rels follow.
+		// Every slide part needs a layout relationship; other rels follow.
 		layoutRel := slideRel{
 			id:     "rId1",
 			relTyp: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout",
@@ -55,6 +63,9 @@ func (p *Presentation) WriteTo(w io.Writer) (int64, error) {
 			fmt.Sprintf("ppt/slides/_rels/slide%d.xml.rels", i+1),
 			slideRelsXML(all),
 		})
+		for _, m := range media {
+			binParts = append(binParts, binPart{"ppt/media/" + m.name, m.data})
+		}
 	}
 
 	var buf bytes.Buffer
@@ -65,6 +76,15 @@ func (p *Presentation) WriteTo(w io.Writer) (int64, error) {
 			return 0, err
 		}
 		if _, err := io.WriteString(fw, pt.data); err != nil {
+			return 0, err
+		}
+	}
+	for _, bp := range binParts {
+		fw, err := zw.Create(bp.name)
+		if err != nil {
+			return 0, err
+		}
+		if _, err := fw.Write(bp.data); err != nil {
 			return 0, err
 		}
 	}

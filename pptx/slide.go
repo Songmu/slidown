@@ -14,9 +14,16 @@ type slideRel struct {
 	mode   string // "External" for hyperlinks
 }
 
+// mediaPart is a binary media file (e.g. an image) destined for ppt/media.
+type mediaPart struct {
+	name string // file name within ppt/media, e.g. "image1.png"
+	data []byte
+}
+
 // renderSlide serializes a slide to its slide XML part and returns the XML plus
-// any relationships it references.
-func renderSlide(s *Slide) (xml string, rels []slideRel) {
+// any relationships and media parts it references. mediaIdx is a shared counter
+// used to assign globally-unique media file names across all slides.
+func renderSlide(s *Slide, mediaIdx *int) (xml string, rels []slideRel, media []mediaPart) {
 	var b strings.Builder
 	b.WriteString(xmlDecl)
 	b.WriteString(`<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" ` +
@@ -32,11 +39,59 @@ func renderSlide(s *Slide) (xml string, rels []slideRel) {
 		b.WriteString(renderShape(sh, id, &relIdx, &rels))
 		id++
 	}
+	for _, pic := range s.Pictures {
+		b.WriteString(renderPicture(pic, id, &relIdx, &rels, mediaIdx, &media))
+		id++
+	}
 
 	b.WriteString(`</p:spTree></p:cSld>`)
 	b.WriteString(`<p:clrMapOvr><a:overrideClrMapping bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/></p:clrMapOvr>`)
 	b.WriteString(`</p:sld>`)
-	return b.String(), rels
+	return b.String(), rels, media
+}
+
+func renderPicture(pic *Picture, id int, relIdx *int, rels *[]slideRel, mediaIdx *int, media *[]mediaPart) string {
+	ext := pic.Ext
+	if ext == "" {
+		ext = "png"
+	}
+	*mediaIdx++
+	fileName := fmt.Sprintf("image%d.%s", *mediaIdx, ext)
+	*media = append(*media, mediaPart{name: fileName, data: pic.Data})
+
+	*relIdx++
+	embedID := fmt.Sprintf("rId%d", *relIdx)
+	*rels = append(*rels, slideRel{
+		id:     embedID,
+		relTyp: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+		target: "../media/" + fileName,
+	})
+
+	var linkAttr string
+	if pic.Link != "" {
+		*relIdx++
+		linkID := fmt.Sprintf("rId%d", *relIdx)
+		*rels = append(*rels, slideRel{
+			id:     linkID,
+			relTyp: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+			target: pic.Link,
+			mode:   "External",
+		})
+		linkAttr = fmt.Sprintf(`<a:hlinkClick r:id="%s"/>`, linkID)
+	}
+
+	name := pic.Name
+	if name == "" {
+		name = fmt.Sprintf("Picture %d", id)
+	}
+
+	return `<p:pic><p:nvPicPr>` +
+		fmt.Sprintf(`<p:cNvPr id="%d" name="%s">`, id, escapeXML(name)) + linkAttr + `</p:cNvPr>` +
+		`<p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>` +
+		`<p:blipFill><a:blip r:embed="` + embedID + `"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
+		`<p:spPr><a:xfrm><a:off x="` + itoa64(pic.X) + `" y="` + itoa64(pic.Y) + `"/>` +
+		`<a:ext cx="` + itoa64(pic.W) + `" cy="` + itoa64(pic.H) + `"/></a:xfrm>` +
+		`<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`
 }
 
 func renderShape(sh *Shape, id int, relIdx *int, rels *[]slideRel) string {

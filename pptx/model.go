@@ -27,6 +27,8 @@ func (p *Presentation) AddSlide() *Slide {
 // notes.
 type Slide struct {
 	Shapes []*Shape
+	// Pictures are raster images placed on the slide.
+	Pictures []*Picture
 	// Note is the speaker note text for the slide.
 	Note string
 }
@@ -35,6 +37,25 @@ type Slide struct {
 func (s *Slide) AddShape(sh *Shape) *Shape {
 	s.Shapes = append(s.Shapes, sh)
 	return sh
+}
+
+// AddPicture appends a picture to the slide and returns it.
+func (s *Slide) AddPicture(p *Picture) *Picture {
+	s.Pictures = append(s.Pictures, p)
+	return p
+}
+
+// Picture is a raster image placed on a slide with explicit EMU geometry.
+type Picture struct {
+	Name string
+	// Data is the raw encoded image (PNG/JPEG/GIF).
+	Data []byte
+	// Ext is the file extension without the dot: "png", "jpeg" or "gif".
+	Ext string
+	// Geometry in EMUs.
+	X, Y, W, H int64
+	// Link, when set, makes the picture a hyperlink to the given URL.
+	Link string
 }
 
 // PlaceholderType enumerates the OOXML placeholder types relevant to slidown's

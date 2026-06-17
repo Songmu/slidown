@@ -9,6 +9,9 @@
 package render
 
 import (
+	"bytes"
+	"image"
+
 	deck "github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/pptx"
 )
@@ -47,7 +50,88 @@ func renderSlide(p *pptx.Presentation, s *deck.Slide) {
 		})
 	}
 
+	renderImages(sl, s.Images, len(body) > 0)
+
 	sl.Note = s.SpeakerNote
+}
+
+// Content region of the built-in layout's body placeholder, in EMUs.
+const (
+	contentX int64 = 838200
+	contentY int64 = 1825625
+	contentW int64 = 10515600
+	contentH int64 = 4351338
+	// emuPerPixel assumes a 96 DPI source image.
+	emuPerPixel int64 = 9525
+)
+
+// renderImages lays images out within the content region, in a single row,
+// each fitted to its cell while preserving aspect ratio. When the slide also
+// has body text, images are placed in the lower half to reduce overlap.
+func renderImages(sl *pptx.Slide, images []*deck.Image, hasBody bool) {
+	if len(images) == 0 {
+		return
+	}
+	regionX, regionY, regionW, regionH := contentX, contentY, contentW, contentH
+	if hasBody {
+		regionY = contentY + contentH/2
+		regionH = contentH / 2
+	}
+
+	n := int64(len(images))
+	const gap int64 = 91440 // 0.1 inch between cells
+	cellW := (regionW - gap*(n-1)) / n
+
+	for i, img := range images {
+		if img == nil {
+			continue
+		}
+		data := img.Bytes()
+		cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
+		if err != nil || cfg.Width == 0 || cfg.Height == 0 {
+			continue
+		}
+		natW := int64(cfg.Width) * emuPerPixel
+		natH := int64(cfg.Height) * emuPerPixel
+
+		// Scale to fit the cell (cellW x regionH) preserving aspect ratio.
+		w, h := fit(natW, natH, cellW, regionH)
+		cellX := regionX + int64(i)*(cellW+gap)
+		x := cellX + (cellW-w)/2
+		y := regionY + (regionH-h)/2
+
+		sl.AddPicture(&pptx.Picture{
+			Data: data,
+			Ext:  imageExt(format),
+			X:    x, Y: y, W: w, H: h,
+		})
+	}
+}
+
+// fit returns the largest (w,h) preserving the natural aspect ratio that fits
+// within the bounding box (maxW,maxH).
+func fit(natW, natH, maxW, maxH int64) (int64, int64) {
+	if natW <= maxW && natH <= maxH {
+		return natW, natH
+	}
+	// Compare aspect ratios with cross multiplication to avoid floats.
+	if natW*maxH > maxW*natH {
+		// width-bound
+		return maxW, natH * maxW / natW
+	}
+	// height-bound
+	return natW * maxH / natH, maxH
+}
+
+func imageExt(format string) string {
+	switch format {
+	case "jpeg":
+		return "jpeg"
+	case "gif":
+		return "gif"
+	default:
+		return "png"
+	}
 }
 
 // titleParagraphs produces the title placeholder paragraphs, preferring the
