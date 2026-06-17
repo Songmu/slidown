@@ -193,6 +193,11 @@ func renderRun(r *Run, relIdx *int, rels *[]slideRel) string {
 	if r.Color != "" {
 		inner.WriteString(fmt.Sprintf(`<a:solidFill><a:srgbClr val="%s"/></a:solidFill>`, escapeXML(r.Color)))
 	}
+	// The CT_TextCharacterProperties schema requires latin/cs (the font, set for
+	// code runs) to precede hlinkClick, so emit Code before Link.
+	if r.Code {
+		inner.WriteString(`<a:latin typeface="Consolas" pitchFamily="49" charset="0"/><a:cs typeface="Consolas"/>`)
+	}
 	if r.Link != "" {
 		*relIdx++
 		rid := fmt.Sprintf("rId%d", *relIdx)
@@ -203,9 +208,6 @@ func renderRun(r *Run, relIdx *int, rels *[]slideRel) string {
 			mode:   "External",
 		})
 		inner.WriteString(fmt.Sprintf(`<a:hlinkClick xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="%s"/>`, rid))
-	}
-	if r.Code {
-		inner.WriteString(`<a:latin typeface="Consolas" pitchFamily="49" charset="0"/><a:cs typeface="Consolas"/>`)
 	}
 
 	hasInner := inner.Len() > 0

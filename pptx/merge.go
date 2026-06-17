@@ -31,12 +31,12 @@ func MergeWithExisting(existingPath string, newPPTX []byte) ([]byte, error) {
 	for name, data := range oldParts {
 		if _, ok := merged[name]; !ok {
 			merged[name] = data
-			newOrder = append(newOrder, name)
 		}
 	}
 
 	// Preserve the ordering from the new package and append any extra old
-	// entries in lexical order for deterministic output.
+	// entries in lexical order for deterministic output. Old-only parts are
+	// added here exactly once.
 	extras := make([]string, 0, len(oldOrder))
 	for _, name := range oldOrder {
 		if _, ok := newParts[name]; ok {

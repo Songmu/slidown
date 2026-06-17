@@ -184,3 +184,42 @@ func TestPresentationTitleMetadata(t *testing.T) {
 		})
 	}
 }
+
+// TestRunCodeLinkRPrOrder verifies that for a run that is both code and a
+// hyperlink, the font (latin/cs) is emitted before hlinkClick, as the OOXML
+// CT_TextCharacterProperties schema requires.
+func TestRunCodeLinkRPrOrder(t *testing.T) {
+	p := New()
+	s := p.AddSlide()
+	s.AddShape(&Shape{
+		Placeholder: PlaceholderBody,
+		Paragraphs: []*Paragraph{
+			{Runs: []*Run{{Text: "code", Code: true, Link: "https://example.com"}}},
+		},
+	})
+	var buf bytes.Buffer
+	if _, err := p.WriteTo(&buf); err != nil {
+		t.Fatalf("WriteTo: %v", err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	if err != nil {
+		t.Fatalf("zip: %v", err)
+	}
+	var slide string
+	for _, f := range zr.File {
+		if f.Name == "ppt/slides/slide1.xml" {
+			rc, _ := f.Open()
+			b, _ := io.ReadAll(rc)
+			rc.Close()
+			slide = string(b)
+		}
+	}
+	latin := strings.Index(slide, "<a:latin")
+	hlink := strings.Index(slide, "<a:hlinkClick")
+	if latin < 0 || hlink < 0 {
+		t.Fatalf("expected both latin and hlinkClick in slide:\n%s", slide)
+	}
+	if latin > hlink {
+		t.Errorf("latin (%d) must precede hlinkClick (%d) per the schema", latin, hlink)
+	}
+}

@@ -77,3 +77,51 @@ func writeZipFile(path string, entries map[string]string) error {
 	}
 	return f.Close()
 }
+
+// TestMergeWithExistingNoDuplicateEntries guards against the merge emitting an
+// old-only part twice (which produced duplicate ZIP members and a corrupt
+// package when the slide count shrank).
+func TestMergeWithExistingNoDuplicateEntries(t *testing.T) {
+	dir := t.TempDir()
+	existingPath := filepath.Join(dir, "existing.pptx")
+	if err := writeZipFile(existingPath, map[string]string{
+		"ppt/slides/slide1.xml":            "old1",
+		"ppt/slides/slide2.xml":            "old2",
+		"ppt/slides/slide3.xml":            "old3",
+		"ppt/slides/_rels/slide3.xml.rels": "old3 rels",
+		"foo/extra.txt":                    "extra",
+	}); err != nil {
+		t.Fatalf("write existing zip: %v", err)
+	}
+
+	// New package only has slide1 and slide2 (the deck shrank to two slides).
+	newPPTX, err := zipFromParts(
+		[]string{"ppt/slides/slide1.xml", "ppt/slides/slide2.xml"},
+		map[string][]byte{
+			"ppt/slides/slide1.xml": []byte("new1"),
+			"ppt/slides/slide2.xml": []byte("new2"),
+		},
+	)
+	if err != nil {
+		t.Fatalf("zipFromParts: %v", err)
+	}
+
+	merged, err := MergeWithExisting(existingPath, newPPTX)
+	if err != nil {
+		t.Fatalf("MergeWithExisting: %v", err)
+	}
+
+	zr, err := zip.NewReader(bytes.NewReader(merged), int64(len(merged)))
+	if err != nil {
+		t.Fatalf("zip reader: %v", err)
+	}
+	seen := map[string]int{}
+	for _, f := range zr.File {
+		seen[f.Name]++
+	}
+	for name, n := range seen {
+		if n > 1 {
+			t.Errorf("duplicate ZIP entry %q appears %d times", name, n)
+		}
+	}
+}

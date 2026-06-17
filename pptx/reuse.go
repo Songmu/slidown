@@ -42,6 +42,10 @@ func MergeReusingUnchangedSlides(existingPath string, newPPTX []byte, reuseSlide
 		result[name] = data
 	}
 
+	// Part name -> content type for restored notes parts that may be missing
+	// from the regenerated [Content_Types].xml.
+	neededOverrides := map[string]string{}
+
 	for _, num := range reuseSlideNums {
 		slideName := fmt.Sprintf("ppt/slides/slide%d.xml", num)
 		relsName := fmt.Sprintf("ppt/slides/_rels/slide%d.xml.rels", num)
@@ -68,18 +72,73 @@ func MergeReusingUnchangedSlides(existingPath string, newPPTX []byte, reuseSlide
 					addPart(resolved, data)
 				}
 			case strings.HasPrefix(resolved, "ppt/notesSlides/"):
-				if data, ok := oldParts[resolved]; ok {
-					addPart(resolved, data)
+				data, ok := oldParts[resolved]
+				if !ok {
+					continue
 				}
+				addPart(resolved, data)
+				neededOverrides[resolved] = ctNotesSlide
+
 				notesRels := relsPath(resolved)
-				if data, ok := oldParts[notesRels]; ok {
-					addPart(notesRels, data)
+				rdata, ok := oldParts[notesRels]
+				if !ok {
+					continue
+				}
+				addPart(notesRels, rdata)
+				// Restore the notes master the notes slide depends on, so the
+				// reused note does not leave a dangling relationship when the
+				// regenerated package has no notes of its own.
+				for _, nt := range relTargets(rdata) {
+					master := path.Clean(path.Join("ppt/notesSlides", nt))
+					if !strings.HasPrefix(master, "ppt/notesMasters/") {
+						continue
+					}
+					if mdata, ok := oldParts[master]; ok {
+						addPart(master, mdata)
+						neededOverrides[master] = ctNotesMaster
+					}
+					if mrels, ok := oldParts[relsPath(master)]; ok {
+						addPart(relsPath(master), mrels)
+					}
 				}
 			}
 		}
 	}
 
+	// Ensure [Content_Types].xml declares the restored notes parts; otherwise
+	// they fall back to the default application/xml type and PowerPoint reports
+	// the package as corrupt.
+	if ct, ok := result["[Content_Types].xml"]; ok && len(neededOverrides) > 0 {
+		result["[Content_Types].xml"] = ensureContentTypeOverrides(ct, neededOverrides)
+	}
+
 	return zipFromParts(order, result)
+}
+
+const (
+	ctNotesSlide  = "application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml"
+	ctNotesMaster = "application/vnd.openxmlformats-officedocument.presentationml.notesMaster+xml"
+)
+
+// ensureContentTypeOverrides injects an <Override> for each part that is not
+// already declared in the [Content_Types].xml document.
+func ensureContentTypeOverrides(contentTypes []byte, overrides map[string]string) []byte {
+	s := string(contentTypes)
+	var inject strings.Builder
+	for part, ct := range overrides {
+		decl := fmt.Sprintf(`PartName="/%s"`, part)
+		if strings.Contains(s, decl) {
+			continue
+		}
+		inject.WriteString(fmt.Sprintf(`<Override PartName="/%s" ContentType="%s"/>`, part, ct))
+	}
+	if inject.Len() == 0 {
+		return contentTypes
+	}
+	if idx := strings.LastIndex(s, "</Types>"); idx >= 0 {
+		return []byte(s[:idx] + inject.String() + s[idx:])
+	}
+	return contentTypes
 }
 
 // relTargets returns the (internal) relationship targets declared in a .rels
