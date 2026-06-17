@@ -50,27 +50,27 @@ func renderSlide(p *pptx.Presentation, s *deck.Slide) {
 		})
 	}
 
-	renderImages(sl, s.Images, len(body) > 0)
-	renderTables(sl, s.Tables, len(body) > 0 || len(s.Images) > 0)
+	renderImagesAt(sl, s.Images, contentX, contentY, contentW, contentH, len(body) > 0)
+	renderTablesAt(sl, s.Tables, contentX, contentY, contentW, len(body) > 0 || len(s.Images) > 0)
 
 	sl.Note = s.SpeakerNote
 }
 
-// renderTables maps internal tables to pptx tables placed in the content area.
-// When other content is present, the table is nudged toward the lower half.
-func renderTables(sl *pptx.Slide, tables []*deck.Table, crowded bool) {
+// renderTablesAt maps internal tables to pptx tables placed within the given
+// region. When other content is present, tables are nudged toward the lower half.
+func renderTablesAt(sl *pptx.Slide, tables []*deck.Table, rx, ry, rw int64, crowded bool) {
 	if len(tables) == 0 {
 		return
 	}
-	y := contentY
+	y := ry
 	if crowded {
-		y = contentY + contentH/2
+		y = ry + contentH/2
 	}
 	for _, t := range tables {
 		if t == nil || len(t.Rows) == 0 {
 			continue
 		}
-		pt := &pptx.Table{X: contentX, Y: y, W: contentW}
+		pt := &pptx.Table{X: rx, Y: y, W: rw}
 		for _, row := range t.Rows {
 			pr := &pptx.TableRow{Header: rowIsHeader(row)}
 			for _, cell := range row.Cells {
@@ -130,17 +130,17 @@ const (
 	emuPerPixel int64 = 9525
 )
 
-// renderImages lays images out within the content region, in a single row,
+// renderImagesAt lays images out within the given region, in a single row,
 // each fitted to its cell while preserving aspect ratio. When the slide also
 // has body text, images are placed in the lower half to reduce overlap.
-func renderImages(sl *pptx.Slide, images []*deck.Image, hasBody bool) {
+func renderImagesAt(sl *pptx.Slide, images []*deck.Image, rx, ry, rw, rh int64, hasBody bool) {
 	if len(images) == 0 {
 		return
 	}
-	regionX, regionY, regionW, regionH := contentX, contentY, contentW, contentH
+	regionX, regionY, regionW, regionH := rx, ry, rw, rh
 	if hasBody {
-		regionY = contentY + contentH/2
-		regionH = contentH / 2
+		regionY = ry + rh/2
+		regionH = rh / 2
 	}
 
 	n := int64(len(images))

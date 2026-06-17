@@ -22,6 +22,9 @@ type binPart struct {
 
 // WriteTo serializes the presentation as an OOXML (.pptx) package to w.
 func (p *Presentation) WriteTo(w io.Writer) (int64, error) {
+	if p.Template != nil {
+		return p.writeWithTemplate(w)
+	}
 	width, height := p.Width, p.Height
 	if width == 0 {
 		width = DefaultSlideWidth

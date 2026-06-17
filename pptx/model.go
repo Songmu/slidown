@@ -6,6 +6,9 @@ type Presentation struct {
 	Width  int64
 	Height int64
 	Slides []*Slide
+	// Template, when set, supplies the design (theme, masters, layouts) and the
+	// generated slides reference its layouts instead of the built-in one.
+	Template *Template
 }
 
 // New returns an empty Presentation using the default 16:9 dimensions.
@@ -31,6 +34,9 @@ type Slide struct {
 	Pictures []*Picture
 	// Tables are tables placed on the slide.
 	Tables []*Table
+	// LayoutName is the template layout name this slide should use. Ignored in
+	// built-in (non-template) mode.
+	LayoutName string
 	// Note is the speaker note text for the slide.
 	Note string
 }
@@ -87,13 +93,21 @@ const (
 type Shape struct {
 	Name        string
 	Placeholder PlaceholderType
-	// PlaceholderIdx is the placeholder index; only meaningful when Placeholder
-	// is non-empty.
+	// IsPlaceholder marks this shape as a placeholder even when Placeholder is
+	// the empty (default body) type. When false, Placeholder != "" also implies
+	// a placeholder.
+	IsPlaceholder bool
+	// PlaceholderIdx is the placeholder index; only meaningful for placeholders.
 	PlaceholderIdx int
 	// Geometry in EMUs. Used for non-placeholder shapes and as an explicit
 	// override for placeholders.
 	X, Y, W, H int64
 	Paragraphs []*Paragraph
+}
+
+// isPlaceholder reports whether the shape should emit a placeholder element.
+func (s *Shape) isPlaceholder() bool {
+	return s.IsPlaceholder || s.Placeholder != PlaceholderNone
 }
 
 // Alignment enumerates horizontal paragraph alignment values.

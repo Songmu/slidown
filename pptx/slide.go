@@ -49,7 +49,6 @@ func renderSlide(s *Slide, mediaIdx *int) (xml string, rels []slideRel, media []
 	}
 
 	b.WriteString(`</p:spTree></p:cSld>`)
-	b.WriteString(`<p:clrMapOvr><a:overrideClrMapping bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/></p:clrMapOvr>`)
 	b.WriteString(`</p:sld>`)
 	return b.String(), rels, media
 }
@@ -108,8 +107,11 @@ func renderShape(sh *Shape, id int, relIdx *int, rels *[]slideRel) string {
 	b.WriteString(fmt.Sprintf(`<p:cNvPr id="%d" name="%s"/>`, id, escapeXML(name)))
 	b.WriteString(`<p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr>`)
 	b.WriteString(`<p:nvPr>`)
-	if sh.Placeholder != PlaceholderNone {
-		ph := fmt.Sprintf(`<p:ph type="%s"`, sh.Placeholder)
+	if sh.isPlaceholder() {
+		ph := `<p:ph`
+		if sh.Placeholder != PlaceholderNone {
+			ph += fmt.Sprintf(` type="%s"`, sh.Placeholder)
+		}
 		if sh.PlaceholderIdx > 0 {
 			ph += fmt.Sprintf(` idx="%d"`, sh.PlaceholderIdx)
 		}
@@ -122,7 +124,7 @@ func renderShape(sh *Shape, id int, relIdx *int, rels *[]slideRel) string {
 	if sh.W > 0 || sh.H > 0 || sh.X > 0 || sh.Y > 0 {
 		b.WriteString(fmt.Sprintf(`<a:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></a:xfrm>`, sh.X, sh.Y, sh.W, sh.H))
 	}
-	if sh.Placeholder == PlaceholderNone {
+	if !sh.isPlaceholder() {
 		b.WriteString(`<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>`)
 	}
 	b.WriteString(`</p:spPr>`)
