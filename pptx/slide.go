@@ -43,6 +43,10 @@ func renderSlide(s *Slide, mediaIdx *int) (xml string, rels []slideRel, media []
 		b.WriteString(renderPicture(pic, id, &relIdx, &rels, mediaIdx, &media))
 		id++
 	}
+	for _, tbl := range s.Tables {
+		b.WriteString(renderTable(tbl, id))
+		id++
+	}
 
 	b.WriteString(`</p:spTree></p:cSld>`)
 	b.WriteString(`<p:clrMapOvr><a:overrideClrMapping bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/></p:clrMapOvr>`)
@@ -229,5 +233,111 @@ func slideRelsXML(rels []slideRel) string {
 		}
 	}
 	b.WriteString(`</Relationships>`)
+	return b.String()
+}
+
+const defaultRowHeight int64 = 370840 // ~0.405 inch
+
+// contentWidthEMU is the fallback table width (the built-in body width).
+const contentWidthEMU int64 = 10515600
+
+// renderTable serializes a table as a p:graphicFrame containing an a:tbl with
+// explicit per-cell borders and header fill (self-contained, no table style
+// part required).
+func renderTable(t *Table, id int) string {
+	rows := t.Rows
+	if len(rows) == 0 {
+		return ""
+	}
+	cols := 0
+	for _, r := range rows {
+		if len(r.Cells) > cols {
+			cols = len(r.Cells)
+		}
+	}
+	if cols == 0 {
+		return ""
+	}
+
+	width := t.W
+	if width <= 0 {
+		width = contentWidthEMU
+	}
+	colW := width / int64(cols)
+	height := t.H
+	if height <= 0 {
+		height = int64(len(rows)) * defaultRowHeight
+	}
+
+	var b strings.Builder
+	b.WriteString(`<p:graphicFrame><p:nvGraphicFramePr>`)
+	b.WriteString(fmt.Sprintf(`<p:cNvPr id="%d" name="Table %d"/>`, id, id))
+	b.WriteString(`<p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr>`)
+	b.WriteString(fmt.Sprintf(`<p:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></p:xfrm>`, t.X, t.Y, width, height))
+	b.WriteString(`<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">`)
+	b.WriteString(`<a:tbl><a:tblPr firstRow="1" bandRow="1"/><a:tblGrid>`)
+	for i := 0; i < cols; i++ {
+		w := colW
+		if i == cols-1 {
+			w = width - colW*int64(cols-1) // last column absorbs rounding
+		}
+		b.WriteString(fmt.Sprintf(`<a:gridCol w="%d"/>`, w))
+	}
+	b.WriteString(`</a:tblGrid>`)
+
+	for _, r := range rows {
+		b.WriteString(fmt.Sprintf(`<a:tr h="%d">`, defaultRowHeight))
+		for c := 0; c < cols; c++ {
+			var cell *TableCell
+			if c < len(r.Cells) {
+				cell = r.Cells[c]
+			}
+			b.WriteString(renderTableCell(cell, r.Header))
+		}
+		b.WriteString(`</a:tr>`)
+	}
+	b.WriteString(`</a:tbl></a:graphicData></a:graphic></p:graphicFrame>`)
+	return b.String()
+}
+
+func renderTableCell(cell *TableCell, header bool) string {
+	var b strings.Builder
+	b.WriteString(`<a:tc><a:txBody><a:bodyPr/><a:lstStyle/>`)
+	var paras []*Paragraph
+	if cell != nil {
+		paras = cell.Paragraphs
+	}
+	if len(paras) == 0 {
+		b.WriteString(`<a:p><a:endParaRPr/></a:p>`)
+	}
+	align := AlignNone
+	if cell != nil {
+		align = cell.Align
+	}
+	for _, p := range paras {
+		if p.Align == AlignNone {
+			p.Align = align
+		}
+		if header {
+			for _, run := range p.Runs {
+				run.Bold = true
+			}
+		}
+		var dummy int
+		var dummyRels []slideRel
+		b.WriteString(renderParagraph(p, &dummy, &dummyRels))
+	}
+	b.WriteString(`</a:txBody>`)
+
+	// Cell properties: thin grey borders on all sides; header gets a light fill.
+	const border = `<a:lnL w="6350"><a:solidFill><a:srgbClr val="BFBFBF"/></a:solidFill></a:lnL>` +
+		`<a:lnR w="6350"><a:solidFill><a:srgbClr val="BFBFBF"/></a:solidFill></a:lnR>` +
+		`<a:lnT w="6350"><a:solidFill><a:srgbClr val="BFBFBF"/></a:solidFill></a:lnT>` +
+		`<a:lnB w="6350"><a:solidFill><a:srgbClr val="BFBFBF"/></a:solidFill></a:lnB>`
+	b.WriteString(`<a:tcPr>` + border)
+	if header {
+		b.WriteString(`<a:solidFill><a:srgbClr val="D9E1F2"/></a:solidFill>`)
+	}
+	b.WriteString(`</a:tcPr></a:tc>`)
 	return b.String()
 }

@@ -51,8 +51,73 @@ func renderSlide(p *pptx.Presentation, s *deck.Slide) {
 	}
 
 	renderImages(sl, s.Images, len(body) > 0)
+	renderTables(sl, s.Tables, len(body) > 0 || len(s.Images) > 0)
 
 	sl.Note = s.SpeakerNote
+}
+
+// renderTables maps internal tables to pptx tables placed in the content area.
+// When other content is present, the table is nudged toward the lower half.
+func renderTables(sl *pptx.Slide, tables []*deck.Table, crowded bool) {
+	if len(tables) == 0 {
+		return
+	}
+	y := contentY
+	if crowded {
+		y = contentY + contentH/2
+	}
+	for _, t := range tables {
+		if t == nil || len(t.Rows) == 0 {
+			continue
+		}
+		pt := &pptx.Table{X: contentX, Y: y, W: contentW}
+		for _, row := range t.Rows {
+			pr := &pptx.TableRow{Header: rowIsHeader(row)}
+			for _, cell := range row.Cells {
+				pc := &pptx.TableCell{Align: toAlign(cell.Alignment)}
+				para := &pptx.Paragraph{}
+				for _, f := range cell.Fragments {
+					if f == nil {
+						continue
+					}
+					para.Runs = append(para.Runs, convertFragment(f))
+				}
+				pc.Paragraphs = []*pptx.Paragraph{para}
+				pr.Cells = append(pr.Cells, pc)
+			}
+			pt.Rows = append(pt.Rows, pr)
+		}
+		sl.AddTable(pt)
+		// Advance y so multiple tables stack instead of overlapping.
+		y += int64(len(pt.Rows))*pptxRowHeight + tableGap
+	}
+}
+
+const (
+	pptxRowHeight int64 = 370840
+	tableGap      int64 = 182880 // 0.2 inch
+)
+
+func rowIsHeader(row *deck.TableRow) bool {
+	for _, c := range row.Cells {
+		if c != nil && c.IsHeader {
+			return true
+		}
+	}
+	return false
+}
+
+func toAlign(a string) pptx.Alignment {
+	switch a {
+	case "CENTER", "center", "ctr":
+		return pptx.AlignCenter
+	case "END", "RIGHT", "right", "r":
+		return pptx.AlignRight
+	case "START", "LEFT", "left", "l":
+		return pptx.AlignLeft
+	default:
+		return pptx.AlignNone
+	}
 }
 
 // Content region of the built-in layout's body placeholder, in EMUs.

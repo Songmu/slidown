@@ -29,6 +29,8 @@ type Slide struct {
 	Shapes []*Shape
 	// Pictures are raster images placed on the slide.
 	Pictures []*Picture
+	// Tables are tables placed on the slide.
+	Tables []*Table
 	// Note is the speaker note text for the slide.
 	Note string
 }
@@ -43,6 +45,12 @@ func (s *Slide) AddShape(sh *Shape) *Shape {
 func (s *Slide) AddPicture(p *Picture) *Picture {
 	s.Pictures = append(s.Pictures, p)
 	return p
+}
+
+// AddTable appends a table to the slide and returns it.
+func (s *Slide) AddTable(t *Table) *Table {
+	s.Tables = append(s.Tables, t)
+	return t
 }
 
 // Picture is a raster image placed on a slide with explicit EMU geometry.
@@ -125,4 +133,23 @@ type Run struct {
 	FontSize float64
 	// Color is an RRGGBB hex string (without '#'); empty means inherit.
 	Color string
+}
+
+// Table is a simple grid table positioned on a slide.
+type Table struct {
+	// Geometry in EMUs. Height may be 0 to let it be derived from rows.
+	X, Y, W, H int64
+	Rows       []*TableRow
+}
+
+// TableRow is a single row of table cells.
+type TableRow struct {
+	Cells  []*TableCell
+	Header bool
+}
+
+// TableCell is a single table cell.
+type TableCell struct {
+	Paragraphs []*Paragraph
+	Align      Alignment
 }
