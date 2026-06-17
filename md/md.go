@@ -97,22 +97,22 @@ type CodeBlock struct {
 
 // Content represents a single slide content.
 type Content struct {
-	Layout         string             `json:"layout"`
-	Freeze         *bool              `json:"freeze,omitempty"`
-	Ignore         *bool              `json:"ignore,omitempty"`
-	Skip           *bool              `json:"skip,omitempty"`
-	Key            string             `json:"key,omitempty"`
-	Titles         []string           `json:"titles,omitempty"`
-	TitleBodies    []*deck.Body       `json:"-"`
-	Subtitles      []string           `json:"subtitles,omitempty"`
-	SubtitleBodies []*deck.Body       `json:"-"`
-	Bodies         []*deck.Body       `json:"bodies,omitempty"`
-	Images         []*deck.Image      `json:"images,omitempty"`
-	CodeBlocks     []*CodeBlock       `json:"code_blocks,omitempty"`
-	BlockQuotes    []*deck.BlockQuote `json:"block_quotes,omitempty"`
-	Tables         []*deck.Table      `json:"tables,omitempty"`
-	Comments       []string           `json:"comments,omitempty"`
-	Headings       map[int][]string   `json:"headings,omitempty"`
+	Layout         string                `json:"layout"`
+	Freeze         *bool                 `json:"freeze,omitempty"`
+	Ignore         *bool                 `json:"ignore,omitempty"`
+	Skip           *bool                 `json:"skip,omitempty"`
+	Key            string                `json:"key,omitempty"`
+	Titles         []string              `json:"titles,omitempty"`
+	TitleBodies    []*slidown.Body       `json:"-"`
+	Subtitles      []string              `json:"subtitles,omitempty"`
+	SubtitleBodies []*slidown.Body       `json:"-"`
+	Bodies         []*slidown.Body       `json:"bodies,omitempty"`
+	Images         []*slidown.Image      `json:"images,omitempty"`
+	CodeBlocks     []*CodeBlock          `json:"code_blocks,omitempty"`
+	BlockQuotes    []*slidown.BlockQuote `json:"block_quotes,omitempty"`
+	Tables         []*slidown.Table      `json:"tables,omitempty"`
+	Comments       []string              `json:"comments,omitempty"`
+	Headings       map[int][]string      `json:"headings,omitempty"`
 }
 
 // ParseFile parses a markdown file into contents.
@@ -250,7 +250,7 @@ func ParseContent(baseDir string, b []byte, breaks bool) (_ *Content, err error)
 	return content, nil
 }
 
-func (md *MD) ToSlides(ctx context.Context, codeBlockToImageCmd string) (_ deck.Slides, err error) {
+func (md *MD) ToSlides(ctx context.Context, codeBlockToImageCmd string) (_ slidown.Slides, err error) {
 	defer func() {
 		err = errors.WithStack(err)
 	}()
@@ -285,24 +285,24 @@ func newParser() goldmark.Markdown {
 	)
 }
 
-// toSlides converts the contents to a slice of deck.Slide structures.
-func (contents Contents) toSlides(ctx context.Context, codeBlockToImageCmd string) (_ deck.Slides, err error) {
+// toSlides converts the contents to a slice of slidown.Slide structures.
+func (contents Contents) toSlides(ctx context.Context, codeBlockToImageCmd string) (_ slidown.Slides, err error) {
 	defer func() {
 		err = errors.WithStack(err)
 	}()
 
-	var slides []*deck.Slide
+	var slides []*slidown.Slide
 	for _, content := range contents {
 		if content.Ignore != nil && *content.Ignore {
 			// Skip ignored contents
 			continue
 		}
-		var images []*deck.Image
+		var images []*slidown.Image
 		images = append(images, content.Images...)
 		if codeBlockToImageCmd != "" && len(content.CodeBlocks) > 0 {
 			mu := sync.Mutex{}
 			eg := errgroup.Group{}
-			blockMap := make(map[int]*deck.Image)
+			blockMap := make(map[int]*slidown.Image)
 			for i, codeBlock := range content.CodeBlocks {
 				eg.Go(func() error {
 					image, err := genCodeImage(ctx, codeBlockToImageCmd, codeBlock)
@@ -322,7 +322,7 @@ func (contents Contents) toSlides(ctx context.Context, codeBlockToImageCmd strin
 				images = append(images, blockMap[i])
 			}
 		}
-		slide := &deck.Slide{
+		slide := &slidown.Slide{
 			Layout:         content.Layout,
 			Titles:         content.Titles,
 			TitleBodies:    content.TitleBodies,
@@ -347,16 +347,16 @@ func (contents Contents) toSlides(ctx context.Context, codeBlockToImageCmd strin
 
 func walkContents(doc ast.Node, baseDir string, b []byte, content *Content, titleLevel int, breaks bool) error {
 	if len(content.Bodies) == 0 {
-		content.Bodies = append(content.Bodies, &deck.Body{})
+		content.Bodies = append(content.Bodies, &slidown.Body{})
 	}
 	currentBody := content.Bodies[len(content.Bodies)-1]
-	currentListMarker := deck.BulletNone
+	currentListMarker := slidown.BulletNone
 	if err := ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if entering {
 			switch v := n.(type) {
 			case *ast.Heading:
 				var text strings.Builder
-				seedFragment := deck.Fragment{}
+				seedFragment := slidown.Fragment{}
 				if v.Level > titleLevel+1 {
 					// Heading elements that are not at the level of titles or subtitles are embedded in the body,
 					// so they are bold by default.
@@ -367,8 +367,8 @@ func walkContents(doc ast.Node, baseDir string, b []byte, content *Content, titl
 				if err != nil {
 					return ast.WalkStop, err
 				}
-				deckFrags := toDeckFragments(frags, breaks)
-				for _, frag := range deckFrags {
+				modelFrags := toModelFragments(frags, breaks)
+				for _, frag := range modelFrags {
 					if frag.Value != "" {
 						text.WriteString(frag.Value)
 					}
@@ -378,43 +378,43 @@ func walkContents(doc ast.Node, baseDir string, b []byte, content *Content, titl
 				switch v.Level {
 				case titleLevel:
 					content.Titles = append(content.Titles, text.String())
-					content.TitleBodies = append(content.TitleBodies, &deck.Body{
-						Paragraphs: []*deck.Paragraph{{
-							Fragments: deckFrags,
+					content.TitleBodies = append(content.TitleBodies, &slidown.Body{
+						Paragraphs: []*slidown.Paragraph{{
+							Fragments: modelFrags,
 						}},
 					})
 					if len(currentBody.Paragraphs) > 0 {
-						currentBody = &deck.Body{}
+						currentBody = &slidown.Body{}
 						content.Bodies = append(content.Bodies, currentBody)
 					}
 				case titleLevel + 1:
 					content.Subtitles = append(content.Subtitles, text.String())
-					content.SubtitleBodies = append(content.SubtitleBodies, &deck.Body{
-						Paragraphs: []*deck.Paragraph{{
-							Fragments: deckFrags,
+					content.SubtitleBodies = append(content.SubtitleBodies, &slidown.Body{
+						Paragraphs: []*slidown.Paragraph{{
+							Fragments: modelFrags,
 						}},
 					})
 					if len(currentBody.Paragraphs) > 0 {
-						currentBody = &deck.Body{}
+						currentBody = &slidown.Body{}
 						content.Bodies = append(content.Bodies, currentBody)
 					}
 				default:
-					currentBody.Paragraphs = append(currentBody.Paragraphs, &deck.Paragraph{
-						Fragments: deckFrags,
-						Bullet:    deck.BulletNone,
+					currentBody.Paragraphs = append(currentBody.Paragraphs, &slidown.Paragraph{
+						Fragments: modelFrags,
+						Bullet:    slidown.BulletNone,
 						Nesting:   0,
 					})
 				}
 			case *ast.ThematicBreak:
 				if len(currentBody.Paragraphs) > 0 {
-					currentBody = &deck.Body{}
+					currentBody = &slidown.Body{}
 					content.Bodies = append(content.Bodies, currentBody)
 				}
 			case *ast.List:
 				currentListMarker = toBullet(v.Marker)
 			case *ast.ListItem:
 				tb := v.FirstChild()
-				frags, images, err := toFragments(baseDir, b, tb, deck.Fragment{})
+				frags, images, err := toFragments(baseDir, b, tb, slidown.Fragment{})
 				if err != nil {
 					return ast.WalkStop, err
 				}
@@ -443,8 +443,8 @@ func walkContents(doc ast.Node, baseDir string, b []byte, content *Content, titl
 				if len(frags) == 0 {
 					return ast.WalkContinue, nil
 				}
-				currentBody.Paragraphs = append(currentBody.Paragraphs, &deck.Paragraph{
-					Fragments: toDeckFragments(frags, breaks),
+				currentBody.Paragraphs = append(currentBody.Paragraphs, &slidown.Paragraph{
+					Fragments: toModelFragments(frags, breaks),
 					Bullet:    currentListMarker,
 					Nesting:   nesting,
 				})
@@ -453,7 +453,7 @@ func walkContents(doc ast.Node, baseDir string, b []byte, content *Content, titl
 				if v.Parent() != nil && v.Parent().Kind() == ast.KindListItem {
 					return ast.WalkSkipChildren, nil
 				}
-				frags, images, err := toFragments(baseDir, b, v, deck.Fragment{})
+				frags, images, err := toFragments(baseDir, b, v, slidown.Fragment{})
 				if err != nil {
 					return ast.WalkStop, err
 				}
@@ -461,9 +461,9 @@ func walkContents(doc ast.Node, baseDir string, b []byte, content *Content, titl
 				if len(frags) == 0 {
 					return ast.WalkContinue, nil
 				}
-				currentBody.Paragraphs = append(currentBody.Paragraphs, &deck.Paragraph{
-					Fragments: toDeckFragments(frags, breaks),
-					Bullet:    deck.BulletNone,
+				currentBody.Paragraphs = append(currentBody.Paragraphs, &slidown.Paragraph{
+					Fragments: toModelFragments(frags, breaks),
+					Bullet:    slidown.BulletNone,
 					Nesting:   0,
 				})
 			case *ast.HTMLBlock:
@@ -488,12 +488,12 @@ func walkContents(doc ast.Node, baseDir string, b []byte, content *Content, titl
 					if trimmed == "<br>" || trimmed == "<br/>" || trimmed == "<br />" {
 						trimmed = "\n"
 					}
-					currentBody.Paragraphs = append(currentBody.Paragraphs, &deck.Paragraph{
-						Fragments: []*deck.Fragment{{
+					currentBody.Paragraphs = append(currentBody.Paragraphs, &slidown.Paragraph{
+						Fragments: []*slidown.Fragment{{
 							Value: trimmed,
 							Bold:  false,
 						}},
-						Bullet:  deck.BulletNone,
+						Bullet:  slidown.BulletNone,
 						Nesting: 0,
 					})
 				}
@@ -529,7 +529,7 @@ func walkContents(doc ast.Node, baseDir string, b []byte, content *Content, titl
 				content.Images = append(content.Images, blockQuoteContent.Images...)
 				for _, body := range blockQuoteContent.Bodies {
 					if len(body.Paragraphs) > 0 {
-						content.BlockQuotes = append(content.BlockQuotes, &deck.BlockQuote{
+						content.BlockQuotes = append(content.BlockQuotes, &slidown.BlockQuote{
 							Paragraphs: body.Paragraphs,
 							Nesting:    0,
 						})
@@ -580,9 +580,9 @@ func detectShell() (string, error) {
 }
 
 func genCodeImage(ctx context.Context, codeBlockToImageCmd string, codeBlock *CodeBlock) (
-	*deck.Image, error) {
+	*slidown.Image, error) {
 
-	dir, err := os.MkdirTemp("", "deck")
+	dir, err := os.MkdirTemp("", "slidown")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temporary directory: %w", err)
 	}
@@ -635,16 +635,16 @@ func genCodeImage(ctx context.Context, codeBlockToImageCmd string, codeBlock *Co
 	if err != nil {
 		b = stdout.Bytes() // use stdout if output file is not found
 	}
-	return deck.NewImageFromCodeBlock(bytes.NewBuffer(b))
+	return slidown.NewImageFromCodeBlock(bytes.NewBuffer(b))
 }
 
 type fragment struct {
-	*deck.Fragment
+	*slidown.Fragment
 	SoftLineBreak bool
 }
 
-func toDeckFragments(frags []*fragment, breaks bool) []*deck.Fragment {
-	deckFrags := make([]*deck.Fragment, 0, len(frags))
+func toModelFragments(frags []*fragment, breaks bool) []*slidown.Fragment {
+	modelFrags := make([]*slidown.Fragment, 0, len(frags))
 	for i, frag := range frags {
 		f := frag.Fragment
 		if frag.SoftLineBreak && i < len(frags)-1 {
@@ -657,27 +657,27 @@ func toDeckFragments(frags []*fragment, breaks bool) []*deck.Fragment {
 			}
 			f.Value += breakChar
 		}
-		if len(deckFrags) > 0 {
-			prev := deckFrags[len(deckFrags)-1]
+		if len(modelFrags) > 0 {
+			prev := modelFrags[len(modelFrags)-1]
 			if prev.StylesEqual(f) {
 				prev.Value += f.Value
 				continue
 			}
 		}
-		deckFrags = append(deckFrags, f)
+		modelFrags = append(modelFrags, f)
 	}
-	return deckFrags
+	return modelFrags
 }
 
 // toFragments converts an AST node to a slice of Fragment structures.
 // It handles emphasis, links, text, and other node types to create formatted text fragments.
-func toFragments(baseDir string, b []byte, n ast.Node, seedFragment deck.Fragment) (_ []*fragment, _ []*deck.Image, err error) {
+func toFragments(baseDir string, b []byte, n ast.Node, seedFragment slidown.Fragment) (_ []*fragment, _ []*slidown.Image, err error) {
 	defer func() {
 		err = errors.WithStack(err)
 	}()
 
 	var frags []*fragment
-	var images []*deck.Image
+	var images []*slidown.Image
 	if n == nil {
 		return frags, images, nil
 	}
@@ -692,7 +692,7 @@ func toFragments(baseDir string, b []byte, n ast.Node, seedFragment deck.Fragmen
 			for _, child := range children {
 				frags = append(frags, &fragment{
 					SoftLineBreak: child.SoftLineBreak,
-					Fragment: &deck.Fragment{
+					Fragment: &slidown.Fragment{
 						Value:     child.Value,
 						Link:      child.Link,
 						Bold:      (childNode.Level == 2) || child.Bold,
@@ -717,7 +717,7 @@ func toFragments(baseDir string, b []byte, n ast.Node, seedFragment deck.Fragmen
 			for _, child := range children {
 				frags = append(frags, &fragment{
 					SoftLineBreak: child.SoftLineBreak,
-					Fragment: &deck.Fragment{
+					Fragment: &slidown.Fragment{
 						Value:     child.Value,
 						Link:      string(childNode.Destination),
 						Bold:      child.Bold,
@@ -731,7 +731,7 @@ func toFragments(baseDir string, b []byte, n ast.Node, seedFragment deck.Fragmen
 			url := string(childNode.URL(b))
 			label := string(childNode.Label(b))
 			frags = append(frags, &fragment{
-				Fragment: &deck.Fragment{
+				Fragment: &slidown.Fragment{
 					Value:     label,
 					Link:      url,
 					StyleName: styleName,
@@ -763,7 +763,7 @@ func toFragments(baseDir string, b []byte, n ast.Node, seedFragment deck.Fragmen
 			if !strings.Contains(imageLink, "://") && !filepath.IsAbs(imageLink) {
 				imageLink = filepath.Join(baseDir, imageLink)
 			}
-			image, err := deck.NewImageFromMarkdown(imageLink)
+			image, err := slidown.NewImageFromMarkdown(imageLink)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -786,7 +786,7 @@ func toFragments(baseDir string, b []byte, n ast.Node, seedFragment deck.Fragmen
 			// <br> tag - add a newline fragment
 			if strings.HasPrefix(htmlContent, "<br") {
 				frags = append(frags, &fragment{
-					Fragment: &deck.Fragment{
+					Fragment: &slidown.Fragment{
 						Value:     "\n",
 						Bold:      false,
 						StyleName: styleName,
@@ -821,7 +821,7 @@ func toFragments(baseDir string, b []byte, n ast.Node, seedFragment deck.Fragmen
 			}
 			frags = append(frags, &fragment{
 				SoftLineBreak: children[0].SoftLineBreak,
-				Fragment: &deck.Fragment{
+				Fragment: &slidown.Fragment{
 					Value:     children[0].Value,
 					Link:      children[0].Link,
 					Bold:      children[0].Bold,
@@ -839,7 +839,7 @@ func toFragments(baseDir string, b []byte, n ast.Node, seedFragment deck.Fragmen
 				SoftLineBreak: children[0].SoftLineBreak,
 				// Previously, Bold, Italic, and Code were used as flags to control styles. However, to ensure
 				// consistency with raw HTML tags, we will now simply assign StyleName instead of adding new flag fields.
-				Fragment: &deck.Fragment{
+				Fragment: &slidown.Fragment{
 					Value:  children[0].Value,
 					Link:   children[0].Link,
 					Bold:   children[0].Bold,
@@ -847,12 +847,12 @@ func toFragments(baseDir string, b []byte, n ast.Node, seedFragment deck.Fragmen
 					Code:   children[0].Code,
 					// The GFM specification states that Strikethrough corresponds to the `del` tag, not the `s` tag,
 					// and goldmark's implementation follows this. Therefore, the style name should also be `del`.
-					StyleName: deck.StyleDel,
+					StyleName: slidown.StyleDel,
 				}})
 			images = append(images, childImages...)
 		default:
 			// For all other node types, return a newline to match original behavior
-			frags = append(frags, &fragment{Fragment: &deck.Fragment{
+			frags = append(frags, &fragment{Fragment: &slidown.Fragment{
 				Value: "\n",
 				Bold:  false,
 			}})
@@ -865,14 +865,14 @@ func toFragments(baseDir string, b []byte, n ast.Node, seedFragment deck.Fragmen
 var classRe = regexp.MustCompile(`class="\s*([^"]*)\s*"|class='\s*([^']*)\s*'`)
 
 // toBullet converts a marker byte to a Bullet type.
-func toBullet(m byte) deck.Bullet {
+func toBullet(m byte) slidown.Bullet {
 	switch m {
 	case '-', '+', '*':
-		return deck.BulletDash
+		return slidown.BulletDash
 	case '.', ')':
-		return deck.BulletNumbered
+		return slidown.BulletNumbered
 	default:
-		return deck.BulletNone
+		return slidown.BulletNone
 	}
 }
 

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	deck "github.com/Songmu/slidown"
+	"github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/config"
 	"github.com/Songmu/slidown/md"
 	"github.com/Songmu/slidown/pptx"
@@ -48,7 +48,7 @@ func TestSlidesEquivalentForUpdateIgnoresDefaultLayout(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	readSlides, _, err := deck.ReadSlidesFromPPTX(tmp.Name())
+	readSlides, _, err := slidown.ReadSlidesFromPPTX(tmp.Name())
 	if err != nil {
 		t.Fatalf("ReadSlidesFromPPTX: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestWritePresentationUpdatesExistingFile(t *testing.T) {
 	if !updated {
 		t.Fatalf("expected changed deck to update existing file")
 	}
-	readSlides, _, err := deck.ReadSlidesFromPPTX(out)
+	readSlides, _, err := slidown.ReadSlidesFromPPTX(out)
 	if err != nil {
 		t.Fatalf("ReadSlidesFromPPTX updated deck: %v", err)
 	}

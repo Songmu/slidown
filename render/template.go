@@ -1,14 +1,14 @@
 package render
 
 import (
-	deck "github.com/Songmu/slidown"
+	"github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/pptx"
 )
 
 // ToPresentationWithTemplate converts internal slides into a pptx.Presentation
 // that uses the given template's design (theme, masters, layouts). Each slide is
 // mapped onto a template layout and its placeholders.
-func ToPresentationWithTemplate(ss deck.Slides, tmpl *pptx.Template) *pptx.Presentation {
+func ToPresentationWithTemplate(ss slidown.Slides, tmpl *pptx.Template) *pptx.Presentation {
 	p := pptx.New()
 	p.Template = tmpl
 	for i, s := range ss {
@@ -20,7 +20,7 @@ func ToPresentationWithTemplate(ss deck.Slides, tmpl *pptx.Template) *pptx.Prese
 	return p
 }
 
-func renderSlideWithLayout(p *pptx.Presentation, s *deck.Slide, tmpl *pptx.Template, first bool) {
+func renderSlideWithLayout(p *pptx.Presentation, s *slidown.Slide, tmpl *pptx.Template, first bool) {
 	layout := resolveLayout(s, tmpl, first)
 	sl := p.AddSlide()
 	sl.LayoutName = layout.Name
@@ -83,7 +83,7 @@ func renderSlideWithLayout(p *pptx.Presentation, s *deck.Slide, tmpl *pptx.Templ
 // resolveLayout selects a template layout for the slide: by explicit name if it
 // matches, otherwise a title layout for the first slide and a content layout for
 // the rest.
-func resolveLayout(s *deck.Slide, tmpl *pptx.Template, first bool) *pptx.LayoutInfo {
+func resolveLayout(s *slidown.Slide, tmpl *pptx.Template, first bool) *pptx.LayoutInfo {
 	if s.Layout != "" {
 		if l := tmpl.LayoutByName(s.Layout); l != nil {
 			return l
@@ -119,7 +119,7 @@ func classifyPlaceholders(l *pptx.LayoutInfo) (title, sub, body *pptx.Placeholde
 
 // subtitleParagraphs renders only the subtitle content (without the emphasis
 // that bodyParagraphs applies when folding subtitles into the body).
-func subtitleParagraphs(s *deck.Slide) []*pptx.Paragraph {
+func subtitleParagraphs(s *slidown.Slide) []*pptx.Paragraph {
 	var out []*pptx.Paragraph
 	if len(s.SubtitleBodies) > 0 {
 		for _, b := range s.SubtitleBodies {
@@ -134,7 +134,7 @@ func subtitleParagraphs(s *deck.Slide) []*pptx.Paragraph {
 }
 
 // contentParagraphs renders body content and block quotes (no subtitles).
-func contentParagraphs(s *deck.Slide) []*pptx.Paragraph {
+func contentParagraphs(s *slidown.Slide) []*pptx.Paragraph {
 	var out []*pptx.Paragraph
 	for _, b := range s.Bodies {
 		out = append(out, convertBody(b)...)

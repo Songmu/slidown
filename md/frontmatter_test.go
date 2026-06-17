@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
 	"github.com/Songmu/slidown/config"
+	"github.com/google/go-cmp/cmp"
 )
 
 func TestFrontmatter(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	deck "github.com/Songmu/slidown"
+	"github.com/Songmu/slidown"
 )
 
 func makePNG(t *testing.T, w, h int) []byte {
@@ -30,15 +30,15 @@ func makePNG(t *testing.T, w, h int) []byte {
 
 func TestRenderImage(t *testing.T) {
 	imgData := makePNG(t, 100, 200) // portrait 1:2
-	img, err := deck.NewImageFromCodeBlock(bytes.NewReader(imgData))
+	img, err := slidown.NewImageFromCodeBlock(bytes.NewReader(imgData))
 	if err != nil {
 		t.Fatalf("NewImageFromCodeBlock: %v", err)
 	}
 
-	slides := deck.Slides{
+	slides := slidown.Slides{
 		{
 			Titles: []string{"Image slide"},
-			Images: []*deck.Image{img},
+			Images: []*slidown.Image{img},
 		},
 	}
 

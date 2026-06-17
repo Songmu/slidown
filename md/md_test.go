@@ -374,7 +374,6 @@ func TestIsPageDelimiter(t *testing.T) {
 	}
 }
 
-
 func FuzzParse(f *testing.F) {
 	f.Add([]byte(`# Title
 

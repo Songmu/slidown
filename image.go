@@ -1,4 +1,4 @@
-package deck
+package slidown
 
 import (
 	"bytes"
@@ -173,8 +173,8 @@ func (i *Image) Equivalent(ii *Image) bool {
 		return true
 	}
 
-	// Images are compressed on the Google Slides side (especially JPEG, large images),
-	// so we use Perceptual Hashing for comparison
+	// Re-encoding (e.g. JPEG re-compression) can change the bytes without
+	// changing the visible image, so fall back to perceptual hashing.
 	aHash, err := i.PHash()
 	if err != nil {
 		return false

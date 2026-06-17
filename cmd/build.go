@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	deck "github.com/Songmu/slidown"
+	"github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/config"
 	"github.com/Songmu/slidown/md"
 	"github.com/Songmu/slidown/pptx"
@@ -106,7 +106,7 @@ with --template or the "template" frontmatter/config field.`,
 	},
 }
 
-func writePresentation(out string, newPPTX []byte, sourceSlides deck.Slides, allowNoOp bool) (bool, error) {
+func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, allowNoOp bool) (bool, error) {
 	exists, err := pathExists(out)
 	if err != nil {
 		return false, err
@@ -122,7 +122,7 @@ func writePresentation(out string, newPPTX []byte, sourceSlides deck.Slides, all
 	// parts of slides whose source content did not change so that manual edits
 	// survive (mirroring deck's behaviour of leaving unchanged slides alone).
 	if allowNoOp {
-		if existingSlides, _, err := deck.ReadSlidesFromPPTX(out); err == nil &&
+		if existingSlides, _, err := slidown.ReadSlidesFromPPTX(out); err == nil &&
 			len(existingSlides) == len(sourceSlides) {
 			reuse := unchangedSlideNums(sourceSlides, existingSlides)
 			switch {
@@ -155,7 +155,7 @@ func writePresentation(out string, newPPTX []byte, sourceSlides deck.Slides, all
 // unchangedSlideNums returns the 1-based positions whose source slide matches
 // the corresponding slide reconstructed from the existing presentation. The two
 // slices must have the same length.
-func unchangedSlideNums(source, existing deck.Slides) []int {
+func unchangedSlideNums(source, existing slidown.Slides) []int {
 	var nums []int
 	for i := range source {
 		if slideEquivalentForUpdate(source[i], existing[i]) {
@@ -180,7 +180,7 @@ func pathExists(path string) (bool, error) {
 // markdown) matches a slide reconstructed from an existing presentation. A
 // source slide with no explicit layout is considered equivalent regardless of
 // the concrete default layout the existing slide resolved to.
-func slideEquivalentForUpdate(source, generated *deck.Slide) bool {
+func slideEquivalentForUpdate(source, generated *slidown.Slide) bool {
 	if source == nil || generated == nil {
 		return source == generated
 	}

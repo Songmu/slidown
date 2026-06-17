@@ -73,7 +73,7 @@ nfpms:
     builds:
       - slidown-linux
     homepage: https://github.com/Songmu/slidown
-    maintainer: Ken'ichiro Oyama <k1lowxb@gmail.com>
+    maintainer: Songmu <y.songmu@gmail.com>
     description: slidown is a tool for creating PowerPoint presentations from Markdown.
     license: MIT
     formats:

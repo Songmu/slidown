@@ -1,4 +1,4 @@
-package deck_test
+package slidown_test
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	deck "github.com/Songmu/slidown"
+	"github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/config"
 	"github.com/Songmu/slidown/md"
 	"github.com/Songmu/slidown/render"
@@ -44,7 +44,7 @@ func TestReadSlidesFromPPTXRoundTrip(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	readSlides, _, err := deck.ReadSlidesFromPPTX(tmp.Name())
+	readSlides, _, err := slidown.ReadSlidesFromPPTX(tmp.Name())
 	if err != nil {
 		t.Fatalf("ReadSlidesFromPPTX: %v", err)
 	}

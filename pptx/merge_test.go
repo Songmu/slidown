@@ -13,8 +13,8 @@ func TestMergeWithExistingPreservesExtraParts(t *testing.T) {
 	dir := t.TempDir()
 	existingPath := filepath.Join(dir, "existing.pptx")
 	if err := writeZipFile(existingPath, map[string]string{
-		"foo/custom.txt":           "keep me",
-		"ppt/slides/slide1.xml":    "old slide",
+		"foo/custom.txt":             "keep me",
+		"ppt/slides/slide1.xml":      "old slide",
 		"ppt/slides/slide1.xml.rels": "old rels",
 	}); err != nil {
 		t.Fatalf("write existing zip: %v", err)

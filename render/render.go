@@ -1,4 +1,4 @@
-// Package render maps slidown's internal slide model (the deck package types
+// Package render maps slidown's internal slide model (the slidown package types
 // produced by the md parser) onto the pptx package's serializable model.
 //
 // The mapping mirrors deck's "how markdown maps to placeholders" rules so that
@@ -12,13 +12,13 @@ import (
 	"bytes"
 	"image"
 
-	deck "github.com/Songmu/slidown"
+	"github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/pptx"
 )
 
 // ToPresentation converts internal slides into a pptx.Presentation using the
 // built-in default layout (title + body placeholders).
-func ToPresentation(ss deck.Slides) *pptx.Presentation {
+func ToPresentation(ss slidown.Slides) *pptx.Presentation {
 	p := pptx.New()
 	for _, s := range ss {
 		if s.Skip {
@@ -29,7 +29,7 @@ func ToPresentation(ss deck.Slides) *pptx.Presentation {
 	return p
 }
 
-func renderSlide(p *pptx.Presentation, s *deck.Slide) {
+func renderSlide(p *pptx.Presentation, s *slidown.Slide) {
 	sl := p.AddSlide()
 
 	if title := titleParagraphs(s); len(title) > 0 {
@@ -58,7 +58,7 @@ func renderSlide(p *pptx.Presentation, s *deck.Slide) {
 
 // renderTablesAt maps internal tables to pptx tables placed within the given
 // region. When other content is present, tables are nudged toward the lower half.
-func renderTablesAt(sl *pptx.Slide, tables []*deck.Table, rx, ry, rw int64, crowded bool) {
+func renderTablesAt(sl *pptx.Slide, tables []*slidown.Table, rx, ry, rw int64, crowded bool) {
 	if len(tables) == 0 {
 		return
 	}
@@ -98,7 +98,7 @@ const (
 	tableGap      int64 = 182880 // 0.2 inch
 )
 
-func rowIsHeader(row *deck.TableRow) bool {
+func rowIsHeader(row *slidown.TableRow) bool {
 	for _, c := range row.Cells {
 		if c != nil && c.IsHeader {
 			return true
@@ -133,7 +133,7 @@ const (
 // renderImagesAt lays images out within the given region, in a single row,
 // each fitted to its cell while preserving aspect ratio. When the slide also
 // has body text, images are placed in the lower half to reduce overlap.
-func renderImagesAt(sl *pptx.Slide, images []*deck.Image, rx, ry, rw, rh int64, hasBody bool) {
+func renderImagesAt(sl *pptx.Slide, images []*slidown.Image, rx, ry, rw, rh int64, hasBody bool) {
 	if len(images) == 0 {
 		return
 	}
@@ -201,7 +201,7 @@ func imageExt(format string) string {
 
 // titleParagraphs produces the title placeholder paragraphs, preferring the
 // rich TitleBodies when available and falling back to plain Titles.
-func titleParagraphs(s *deck.Slide) []*pptx.Paragraph {
+func titleParagraphs(s *slidown.Slide) []*pptx.Paragraph {
 	if len(s.TitleBodies) > 0 {
 		var out []*pptx.Paragraph
 		for _, b := range s.TitleBodies {
@@ -221,7 +221,7 @@ func titleParagraphs(s *deck.Slide) []*pptx.Paragraph {
 // bodyParagraphs collects subtitles and body content into the body placeholder.
 // Because the built-in layout has no dedicated subtitle placeholder, subtitles
 // are rendered as emphasized lead paragraphs so no content is lost.
-func bodyParagraphs(s *deck.Slide) []*pptx.Paragraph {
+func bodyParagraphs(s *slidown.Slide) []*pptx.Paragraph {
 	var out []*pptx.Paragraph
 
 	switch {
@@ -252,7 +252,7 @@ func bodyParagraphs(s *deck.Slide) []*pptx.Paragraph {
 
 // convertBlockQuote renders a block quote as italic, indented paragraphs so it
 // is visually distinct within the body placeholder.
-func convertBlockQuote(bq *deck.BlockQuote) []*pptx.Paragraph {
+func convertBlockQuote(bq *slidown.BlockQuote) []*pptx.Paragraph {
 	if bq == nil {
 		return nil
 	}
@@ -268,7 +268,7 @@ func convertBlockQuote(bq *deck.BlockQuote) []*pptx.Paragraph {
 	return out
 }
 
-func convertBody(b *deck.Body) []*pptx.Paragraph {
+func convertBody(b *slidown.Body) []*pptx.Paragraph {
 	if b == nil {
 		return nil
 	}
@@ -279,12 +279,12 @@ func convertBody(b *deck.Body) []*pptx.Paragraph {
 	return out
 }
 
-func convertParagraph(p *deck.Paragraph) *pptx.Paragraph {
+func convertParagraph(p *slidown.Paragraph) *pptx.Paragraph {
 	out := &pptx.Paragraph{Level: p.Nesting}
 	switch p.Bullet {
-	case deck.BulletDash:
+	case slidown.BulletDash:
 		out.Bullet = true
-	case deck.BulletNumbered:
+	case slidown.BulletNumbered:
 		out.Bullet = true
 		out.Numbered = true
 	}
@@ -297,7 +297,7 @@ func convertParagraph(p *deck.Paragraph) *pptx.Paragraph {
 	return out
 }
 
-func convertFragment(f *deck.Fragment) *pptx.Run {
+func convertFragment(f *slidown.Fragment) *pptx.Run {
 	r := &pptx.Run{
 		Text:   f.Value,
 		Bold:   f.Bold,

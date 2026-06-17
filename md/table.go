@@ -7,9 +7,9 @@ import (
 )
 
 // parseTable parses an east.Table node and converts it to our Table structure.
-func parseTable(tableNode *east.Table, baseDir string, b []byte, breaks bool) (*deck.Table, error) {
-	table := &deck.Table{
-		Rows: []*deck.TableRow{},
+func parseTable(tableNode *east.Table, baseDir string, b []byte, breaks bool) (*slidown.Table, error) {
+	table := &slidown.Table{
+		Rows: []*slidown.TableRow{},
 	}
 
 	for child := tableNode.FirstChild(); child != nil; child = child.NextSibling() {
@@ -36,9 +36,9 @@ func parseTable(tableNode *east.Table, baseDir string, b []byte, breaks bool) (*
 }
 
 // parseTableRow parses a table row (header or regular) and extracts cells.
-func parseTableRow(rowNode ast.Node, baseDir string, b []byte, breaks, isHeader bool) (*deck.TableRow, error) {
-	row := &deck.TableRow{
-		Cells: []*deck.TableCell{},
+func parseTableRow(rowNode ast.Node, baseDir string, b []byte, breaks, isHeader bool) (*slidown.TableRow, error) {
+	row := &slidown.TableRow{
+		Cells: []*slidown.TableCell{},
 	}
 
 	for child := rowNode.FirstChild(); child != nil; child = child.NextSibling() {
@@ -55,9 +55,9 @@ func parseTableRow(rowNode ast.Node, baseDir string, b []byte, breaks, isHeader 
 }
 
 // parseTableCell parses a table cell and extracts its content and alignment.
-func parseTableCell(cellNode *east.TableCell, baseDir string, b []byte, breaks, isHeader bool) (*deck.TableCell, error) {
-	cell := &deck.TableCell{
-		Fragments: []*deck.Fragment{},
+func parseTableCell(cellNode *east.TableCell, baseDir string, b []byte, breaks, isHeader bool) (*slidown.TableCell, error) {
+	cell := &slidown.TableCell{
+		Fragments: []*slidown.Fragment{},
 		IsHeader:  isHeader,
 		Alignment: "START", // Default alignment for LTR text
 	}
@@ -71,14 +71,14 @@ func parseTableCell(cellNode *east.TableCell, baseDir string, b []byte, breaks, 
 		cell.Alignment = "END"
 	}
 
-	seedFragment := deck.Fragment{}
+	seedFragment := slidown.Fragment{}
 	// Parse cell content to fragments
 	frags, _, err := toFragments(baseDir, b, cellNode, seedFragment)
 	if err != nil {
 		return nil, err
 	}
-	// Convert to deck fragments
-	cell.Fragments = toDeckFragments(frags, breaks)
+	// Convert to model fragments
+	cell.Fragments = toModelFragments(frags, breaks)
 
 	return cell, nil
 }

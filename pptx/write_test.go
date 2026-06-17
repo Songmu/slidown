@@ -80,11 +80,11 @@ func TestWriteToProducesValidZip(t *testing.T) {
 		`<p:ph type="title"/>`,
 		`<p:ph type="body" idx="1"/>`,
 		`<a:t>Hello slidown</a:t>`,
-		`b="1"`,                  // bold run
-		`typeface="Consolas"`,    // code run
-		`<a:buAutoNum`,           // numbered bullet
-		`lvl="1"`,                // nested level
-		`<a:hlinkClick`,          // hyperlink
+		`b="1"`,               // bold run
+		`typeface="Consolas"`, // code run
+		`<a:buAutoNum`,        // numbered bullet
+		`lvl="1"`,             // nested level
+		`<a:hlinkClick`,       // hyperlink
 	} {
 		if !strings.Contains(slide, sub) {
 			t.Errorf("slide1.xml missing %q", sub)

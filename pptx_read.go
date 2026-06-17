@@ -1,4 +1,4 @@
-package deck
+package slidown
 
 import (
 	"archive/zip"
@@ -259,11 +259,11 @@ func parseFragments(paras []xmlParagraph, relMap map[string]string) []*Fragment 
 	for _, p := range paras {
 		for _, r := range p.Runs {
 			frag := &Fragment{
-				Value:     strings.TrimSuffix(r.Text, "\n"),
-				Bold:      strings.TrimSpace(r.RPr.B) == "1",
-				Italic:    strings.TrimSpace(r.RPr.I) == "1",
-				Link:      relMap[r.RPr.HlinkClick.ID],
-				Code:      isCodeRun(r.RPr),
+				Value:  strings.TrimSuffix(r.Text, "\n"),
+				Bold:   strings.TrimSpace(r.RPr.B) == "1",
+				Italic: strings.TrimSpace(r.RPr.I) == "1",
+				Link:   relMap[r.RPr.HlinkClick.ID],
+				Code:   isCodeRun(r.RPr),
 			}
 			if strings.TrimSpace(r.RPr.Strike) != "" {
 				frag.StyleName = StyleDel
@@ -400,7 +400,7 @@ type xmlSlide struct {
 		SpTree struct {
 			Sp           []xmlShape        `xml:"sp"`
 			Pic          []xmlPic          `xml:"pic"`
-			GraphicFrame []xmlGraphicFrame  `xml:"graphicFrame"`
+			GraphicFrame []xmlGraphicFrame `xml:"graphicFrame"`
 		} `xml:"spTree"`
 	} `xml:"cSld"`
 }
@@ -432,7 +432,7 @@ type xmlShape struct {
 type xmlPic struct {
 	NvPicPr struct {
 		CNvPr struct {
-			Name       string       `xml:"name,attr"`
+			Name       string        `xml:"name,attr"`
 			HlinkClick xmlHlinkClick `xml:"hlinkClick"`
 		} `xml:"cNvPr"`
 	} `xml:"nvPicPr"`
@@ -474,21 +474,21 @@ type xmlTxBody struct {
 }
 
 type xmlParagraph struct {
-	PPr  xmlPPr      `xml:"pPr"`
-	Runs []xmlRun    `xml:"r"`
+	PPr  xmlPPr   `xml:"pPr"`
+	Runs []xmlRun `xml:"r"`
 }
 
 type xmlPPr struct {
-	Lvl       string `xml:"lvl,attr"`
-	Algn      string `xml:"algn,attr"`
+	Lvl       string    `xml:"lvl,attr"`
+	Algn      string    `xml:"algn,attr"`
 	BuNone    *struct{} `xml:"buNone"`
 	BuChar    *struct{} `xml:"buChar"`
 	BuAutoNum *struct{} `xml:"buAutoNum"`
 }
 
 type xmlRun struct {
-	RPr xmlRunPr `xml:"rPr"`
-	Text string  `xml:"t"`
+	RPr  xmlRunPr `xml:"rPr"`
+	Text string   `xml:"t"`
 }
 
 type xmlRunPr struct {
@@ -498,7 +498,7 @@ type xmlRunPr struct {
 	Strike     string        `xml:"strike,attr"`
 	Latin      xmlTypeface   `xml:"latin"`
 	Cs         xmlTypeface   `xml:"cs"`
-	HlinkClick  xmlHlinkClick `xml:"hlinkClick"`
+	HlinkClick xmlHlinkClick `xml:"hlinkClick"`
 }
 
 type xmlPh struct {

@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"reflect"
 
-	"github.com/goccy/go-yaml"
 	"github.com/Songmu/slidown/config"
+	"github.com/goccy/go-yaml"
 	"github.com/k1LoW/errors"
 )
 

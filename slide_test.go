@@ -1,4 +1,4 @@
-package deck
+package slidown
 
 import (
 	"fmt"
