@@ -87,6 +87,9 @@ with --template or the "template" frontmatter/config field.`,
 		} else {
 			pres = render.ToPresentation(slides)
 		}
+		if m.Frontmatter != nil {
+			pres.Title = m.Frontmatter.Title
+		}
 
 		var buf bytes.Buffer
 		if _, err := pres.WriteTo(&buf); err != nil {

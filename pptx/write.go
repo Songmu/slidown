@@ -46,7 +46,7 @@ func (p *Presentation) WriteTo(w io.Writer) (int64, error) {
 	parts := []part{
 		{"[Content_Types].xml", contentTypes(n, notesSlideNums)},
 		{"_rels/.rels", rootRels},
-		{"docProps/core.xml", coreProps},
+		{"docProps/core.xml", coreProps(p.Title)},
 		{"docProps/app.xml", appProps},
 		{"ppt/presentation.xml", presentation(width, height, n, hasNotes)},
 		{"ppt/_rels/presentation.xml.rels", presentationRels(n, hasNotes)},

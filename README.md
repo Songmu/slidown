@@ -98,6 +98,19 @@ $ slidown build deck.md --template theme.pptx
 
 The template can also be set with the `template` frontmatter or config field.
 
+To see which layout names a template provides (for use in per-page
+configuration), use `ls-layouts`:
+
+```console
+$ slidown ls-layouts theme.pptx
+Title Slide
+Title and Content
+Section Header
+```
+
+The argument may also be a markdown deck, in which case its configured template
+is resolved.
+
 ## Markdown file format
 
 The Markdown used by `slidown` consists of an optional YAML frontmatter and a
@@ -118,7 +131,8 @@ Content...
 
 #### Available fields
 
-- `title` (string): The title of the presentation.
+- `title` (string): The title of the presentation, written to the generated
+  `.pptx` document properties (metadata).
 - `output` (string): Output `.pptx` path (used when `--output` is not given).
 - `template` (string): Path to a `.pptx` file whose theme, slide masters and
   layouts are used as the design for the generated deck.

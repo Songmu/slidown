@@ -101,11 +101,15 @@ const viewProps = xmlDecl +
 	`xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ` +
 	`xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>`
 
-const coreProps = xmlDecl +
-	`<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" ` +
-	`xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" ` +
-	`xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">` +
-	`<dc:title></dc:title><cp:revision>1</cp:revision></cp:coreProperties>`
+// coreProps renders docProps/core.xml, embedding the presentation title (which
+// may be empty) as the Dublin Core title.
+func coreProps(title string) string {
+	return xmlDecl +
+		`<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" ` +
+		`xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" ` +
+		`xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">` +
+		`<dc:title>` + escapeXML(title) + `</dc:title><cp:revision>1</cp:revision></cp:coreProperties>`
+}
 
 const appProps = xmlDecl +
 	`<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" ` +

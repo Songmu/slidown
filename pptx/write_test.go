@@ -146,3 +146,41 @@ func TestWriteToWithSpeakerNotes(t *testing.T) {
 		t.Errorf("slide rels missing notesSlide relationship")
 	}
 }
+
+func TestPresentationTitleMetadata(t *testing.T) {
+	cases := []struct {
+		name  string
+		title string
+		want  string
+	}{
+		{"plain", "My Talk", "<dc:title>My Talk</dc:title>"},
+		{"escaped", "A & B <x>", "<dc:title>A &amp; B &lt;x&gt;</dc:title>"},
+		{"empty", "", "<dc:title></dc:title>"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := samplePresentation()
+			p.Title = tc.title
+			var buf bytes.Buffer
+			if _, err := p.WriteTo(&buf); err != nil {
+				t.Fatalf("WriteTo: %v", err)
+			}
+			zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+			if err != nil {
+				t.Fatalf("zip: %v", err)
+			}
+			var core string
+			for _, f := range zr.File {
+				if f.Name == "docProps/core.xml" {
+					rc, _ := f.Open()
+					b, _ := io.ReadAll(rc)
+					rc.Close()
+					core = string(b)
+				}
+			}
+			if !strings.Contains(core, tc.want) {
+				t.Errorf("core.xml missing %q\ngot: %s", tc.want, core)
+			}
+		})
+	}
+}

@@ -6,6 +6,9 @@ type Presentation struct {
 	Width  int64
 	Height int64
 	Slides []*Slide
+	// Title is the presentation title written to the document metadata
+	// (docProps/core.xml). Empty leaves the title blank.
+	Title string
 	// Template, when set, supplies the design (theme, masters, layouts) and the
 	// generated slides reference its layouts instead of the built-in one.
 	Template *Template
