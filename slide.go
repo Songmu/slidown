@@ -17,9 +17,6 @@ type Slide struct {
 	BlockQuotes    []*BlockQuote `json:"block_quotes,omitempty"`
 	Tables         []*Table      `json:"tables,omitempty"`
 	SpeakerNote    string        `json:"speaker_note,omitempty"`
-
-	new    bool
-	delete bool
 }
 
 // Body represents the content body of a slide.

@@ -17,7 +17,8 @@ install:
 	go install -ldflags=$(BUILD_LDFLAGS) -trimpath ./cmd/slidown
 
 lint:
-	golangci-lint run ./...
+	go vet ./...
+	go tool staticcheck ./...
 
 fuzz:
 	go test -fuzz=FuzzParse -fuzztime=1m ./md/.
