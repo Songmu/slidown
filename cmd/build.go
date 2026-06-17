@@ -1,10 +1,13 @@
 package cmd
 
 import (
+	"bytes"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
+	deck "github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/config"
 	"github.com/Songmu/slidown/md"
 	"github.com/Songmu/slidown/pptx"
@@ -25,6 +28,9 @@ var buildCmd = &cobra.Command{
 
 The output path defaults to the input file name with a .pptx extension,
 and can be overridden with the --output/-o flag.
+
+A pre-existing output file is treated as the update target and reused as the
+template when no explicit template is supplied.
 
 A .pptx template (its theme, slide masters and layouts) can be supplied
 with --template or the "template" frontmatter/config field.`,
@@ -51,8 +57,19 @@ with --template or the "template" frontmatter/config field.`,
 		}
 
 		templatePath := buildTemplate
+		useExistingAsTemplate := false
 		if templatePath == "" && m.Frontmatter != nil {
 			templatePath = m.Frontmatter.Template
+		}
+		if templatePath == "" {
+			exists, err := pathExists(out)
+			if err != nil {
+				return fmt.Errorf("failed to inspect output path: %w", err)
+			}
+			if exists {
+				templatePath = out
+				useExistingAsTemplate = true
+			}
 		}
 
 		slides, err := m.ToSlides(cmd.Context(), buildCodeBlockToImageCmd)
@@ -71,12 +88,79 @@ with --template or the "template" frontmatter/config field.`,
 			pres = render.ToPresentation(slides)
 		}
 
-		if err := pres.WriteFile(out); err != nil {
+		var buf bytes.Buffer
+		if _, err := pres.WriteTo(&buf); err != nil {
 			return fmt.Errorf("failed to write presentation: %w", err)
 		}
-		cmd.Printf("Wrote %s (%d slide(s))\n", out, len(slides))
+
+		updated, err := writePresentation(out, buf.Bytes(), slides, useExistingAsTemplate)
+		if err != nil {
+			return fmt.Errorf("failed to write presentation: %w", err)
+		}
+		if updated {
+			cmd.Printf("Updated %s (%d slide(s))\n", out, len(slides))
+		} else {
+			cmd.Printf("Wrote %s (%d slide(s))\n", out, len(slides))
+		}
 		return nil
 	},
+}
+
+func writePresentation(out string, newPPTX []byte, sourceSlides deck.Slides, allowNoOp bool) (bool, error) {
+	exists, err := pathExists(out)
+	if err != nil {
+		return false, err
+	}
+	if exists {
+		if allowNoOp {
+			existingSlides, _, err := deck.ReadSlidesFromPPTX(out)
+			if err == nil && slidesEquivalentForUpdate(sourceSlides, existingSlides) {
+				return true, nil
+			}
+		}
+		merged, err := pptx.MergeWithExisting(out, newPPTX)
+		if err != nil {
+			return false, err
+		}
+		if err := os.WriteFile(out, merged, 0o600); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	if err := os.WriteFile(out, newPPTX, 0o600); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+func pathExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+func slidesEquivalentForUpdate(source, generated deck.Slides) bool {
+	if len(source) != len(generated) {
+		return false
+	}
+	normalized := make(deck.Slides, len(generated))
+	for i, slide := range generated {
+		if slide == nil {
+			normalized[i] = nil
+			continue
+		}
+		cp := *slide
+		if source[i] != nil && source[i].Layout == "" {
+			cp.Layout = ""
+		}
+		normalized[i] = &cp
+	}
+	return source.Equal(normalized)
 }
 
 // defaultOutputPath derives the output .pptx path from the input markdown path.

@@ -58,6 +58,14 @@ $ slidown build deck.md
 Wrote deck.pptx (2 slide(s))
 ```
 
+If the output `.pptx` already exists, `build` updates it in place while
+preserving unchanged package parts:
+
+```console
+$ slidown build deck.md -o deck.pptx
+Updated deck.pptx (2 slide(s))
+```
+
 By default the output file is the input file name with a `.pptx` extension. You
 can override it with `--output`/`-o`, or with the `output` frontmatter field.
 
@@ -186,7 +194,7 @@ as images.
 
 `slidown` is under active development. Planned work:
 
-- Incremental updates to an existing `.pptx`.
+- True slide-level incremental diff apply.
 - Inline-syntax style customization and table styling derived from the template.
 - Richer per-slide layout selection and placeholder mapping.
 
