@@ -13,7 +13,7 @@ import (
 )
 
 // ApplyFrontmatterToMD updates or creates a markdown file with frontmatter.
-func ApplyFrontmatterToMD(mdFile, title, presentationID string) (err error) {
+func ApplyFrontmatterToMD(mdFile, title string) (err error) {
 	defer func() {
 		err = errors.WithStack(err)
 	}()
@@ -50,7 +50,6 @@ func ApplyFrontmatterToMD(mdFile, title, presentationID string) (err error) {
 	if title != "" {
 		frontmatter["title"] = title
 	}
-	frontmatter["presentationID"] = presentationID
 
 	// Marshal frontmatter back to YAML
 	frontmatterYAML, err := yaml.Marshal(frontmatter)
@@ -95,6 +94,9 @@ func (fm *Frontmatter) applyConfig(cfg *config.Config) *Frontmatter {
 	}
 	if fm.CodeBlockToImageCommand == "" {
 		fm.CodeBlockToImageCommand = cfg.CodeBlockToImageCommand
+	}
+	if fm.Template == "" {
+		fm.Template = cfg.Template
 	}
 	// append default conditions from config
 	for _, cond := range cfg.Defaults {

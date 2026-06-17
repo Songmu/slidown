@@ -38,6 +38,9 @@ and can be overridden with the --output/-o flag.`,
 		}
 
 		out := buildOutput
+		if out == "" && m.Frontmatter != nil && m.Frontmatter.Output != "" {
+			out = m.Frontmatter.Output
+		}
 		if out == "" {
 			out = defaultOutputPath(f)
 		}

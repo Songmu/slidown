@@ -16,10 +16,8 @@ type Config struct {
 	Defaults []DefaultCondition `yaml:"defaults,omitempty" json:"defaults,omitempty"`
 	// command to convert code blocks to images
 	CodeBlockToImageCommand string `yaml:"codeBlockToImageCommand,omitempty" json:"codeBlockToImageCommand,omitempty"`
-	// folder ID to create presentations and upload temporary images to
-	FolderID string `yaml:"folderID,omitempty" json:"folderID,omitempty"`
-	// base presentation ID to use for new presentations
-	BasePresentationID string `yaml:"basePresentationID,omitempty" json:"basePresentationID,omitempty"`
+	// Template is the path to a .pptx file used as the design template.
+	Template string `yaml:"template,omitempty" json:"template,omitempty"`
 }
 
 type DefaultCondition struct {
@@ -42,8 +40,8 @@ func init() {
 
 // Load loads the configuration from the config file.
 // It searches for config files in the following order:
-// 1. $XDG_CONFIG_HOME/deck/config-{profile}.yml
-// 2. $XDG_CONFIG_HOME/deck/config.yml
+// 1. $XDG_CONFIG_HOME/slidown/config-{profile}.yml
+// 2. $XDG_CONFIG_HOME/slidown/config.yml
 // If no config file is found, it returns an empty Config struct.
 func Load(profile string) (*Config, error) {
 	var configBasePaths []string
@@ -72,23 +70,23 @@ func Load(profile string) (*Config, error) {
 
 var configHomePath = sync.OnceValue(func() string {
 	if v := os.Getenv("XDG_CONFIG_HOME"); v != "" {
-		return filepath.Join(v, "deck")
+		return filepath.Join(v, "slidown")
 	}
-	return filepath.Join(homeDir, ".config", "deck")
+	return filepath.Join(homeDir, ".config", "slidown")
 })
 
 var dataHomePath = sync.OnceValue(func() string {
 	if v := os.Getenv("XDG_DATA_HOME"); v != "" {
-		return filepath.Join(v, "deck")
+		return filepath.Join(v, "slidown")
 	}
-	return filepath.Join(homeDir, ".local", "share", "deck")
+	return filepath.Join(homeDir, ".local", "share", "slidown")
 })
 
 var stateHomePath = sync.OnceValue(func() string {
 	if v := os.Getenv("XDG_STATE_HOME"); v != "" {
-		return filepath.Join(v, "deck")
+		return filepath.Join(v, "slidown")
 	}
-	return filepath.Join(homeDir, ".local", "state", "deck")
+	return filepath.Join(homeDir, ".local", "state", "slidown")
 })
 
 // DataHomePath returns the path to the data home directory.
