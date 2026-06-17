@@ -1,15 +1,19 @@
 package cmd
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	deck "github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/config"
 	"github.com/Songmu/slidown/md"
+	"github.com/Songmu/slidown/pptx"
 	"github.com/Songmu/slidown/render"
 )
 
@@ -135,5 +139,121 @@ func TestWritePresentationUpdatesExistingFile(t *testing.T) {
 	}
 	if len(readSlides) != 1 || len(readSlides[0].Titles) != 1 || readSlides[0].Titles[0] != "Changed" {
 		t.Fatalf("unexpected updated slides: %#v", readSlides)
+	}
+}
+
+// buildToFileForTest mirrors the build command's template selection: a
+// pre-existing output is reused as the design template, which enables
+// whole-slide reuse for unchanged positions.
+func buildToFileForTest(t *testing.T, mdText, out string) bool {
+	t.Helper()
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	mdPath := filepath.Join(t.TempDir(), "deck.md")
+	if err := os.WriteFile(mdPath, []byte(mdText), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	m, err := md.ParseFile(mdPath, cfg)
+	if err != nil {
+		t.Fatalf("md.ParseFile: %v", err)
+	}
+	slides, err := m.ToSlides(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ToSlides: %v", err)
+	}
+
+	templatePath := ""
+	useExisting := false
+	if exists, err := pathExists(out); err != nil {
+		t.Fatalf("pathExists: %v", err)
+	} else if exists {
+		templatePath = out
+		useExisting = true
+	}
+
+	var pres *pptx.Presentation
+	if templatePath != "" {
+		tmpl, err := pptx.LoadTemplate(templatePath)
+		if err != nil {
+			t.Fatalf("LoadTemplate: %v", err)
+		}
+		pres = render.ToPresentationWithTemplate(slides, tmpl)
+	} else {
+		pres = render.ToPresentation(slides)
+	}
+
+	var buf bytes.Buffer
+	if _, err := pres.WriteTo(&buf); err != nil {
+		t.Fatalf("WriteTo: %v", err)
+	}
+	updated, err := writePresentation(out, buf.Bytes(), slides, useExisting)
+	if err != nil {
+		t.Fatalf("writePresentation: %v", err)
+	}
+	return updated
+}
+
+func readSlidePartsForTest(t *testing.T, path string) map[string][]byte {
+	t.Helper()
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatalf("zip.OpenReader: %v", err)
+	}
+	defer zr.Close()
+	parts := map[string][]byte{}
+	for _, f := range zr.File {
+		if !strings.HasPrefix(f.Name, "ppt/slides/slide") || !strings.HasSuffix(f.Name, ".xml") {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("open %s: %v", f.Name, err)
+		}
+		b, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatalf("read %s: %v", f.Name, err)
+		}
+		parts[f.Name] = b
+	}
+	return parts
+}
+
+func TestBuildReusesUnchangedSlides(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "deck.pptx")
+
+	const deck3 = "# One\n\nbody one\n\n---\n\n# Two\n\nbody two\n\n---\n\n# Three\n\nbody three\n"
+	const deck3changed = "# One\n\nbody one\n\n---\n\n# Two\n\nbody two changed\n\n---\n\n# Three\n\nbody three\n"
+
+	if updated := buildToFileForTest(t, deck3, out); updated {
+		t.Fatalf("first build should report a fresh write, got updated=true")
+	}
+	orig := readSlidePartsForTest(t, out)
+	if len(orig) != 3 {
+		t.Fatalf("expected 3 slide parts, got %d", len(orig))
+	}
+
+	if updated := buildToFileForTest(t, deck3changed, out); !updated {
+		t.Fatalf("second build should report an update, got updated=false")
+	}
+	now := readSlidePartsForTest(t, out)
+
+	s1 := "ppt/slides/slide1.xml"
+	s2 := "ppt/slides/slide2.xml"
+	s3 := "ppt/slides/slide3.xml"
+	if !bytes.Equal(orig[s1], now[s1]) {
+		t.Errorf("unchanged slide 1 was rewritten")
+	}
+	if !bytes.Equal(orig[s3], now[s3]) {
+		t.Errorf("unchanged slide 3 was rewritten")
+	}
+	if bytes.Equal(orig[s2], now[s2]) {
+		t.Errorf("changed slide 2 was not updated")
+	}
+	if !bytes.Contains(now[s2], []byte("body two changed")) {
+		t.Errorf("changed slide 2 does not contain new content: %s", now[s2])
 	}
 }

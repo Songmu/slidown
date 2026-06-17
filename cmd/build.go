@@ -111,26 +111,58 @@ func writePresentation(out string, newPPTX []byte, sourceSlides deck.Slides, all
 	if err != nil {
 		return false, err
 	}
-	if exists {
-		if allowNoOp {
-			existingSlides, _, err := deck.ReadSlidesFromPPTX(out)
-			if err == nil && slidesEquivalentForUpdate(sourceSlides, existingSlides) {
+	if !exists {
+		if err := os.WriteFile(out, newPPTX, 0o600); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+
+	// When the existing file is reused as the design template, preserve the
+	// parts of slides whose source content did not change so that manual edits
+	// survive (mirroring deck's behaviour of leaving unchanged slides alone).
+	if allowNoOp {
+		if existingSlides, _, err := deck.ReadSlidesFromPPTX(out); err == nil &&
+			len(existingSlides) == len(sourceSlides) {
+			reuse := unchangedSlideNums(sourceSlides, existingSlides)
+			switch {
+			case len(reuse) == len(sourceSlides):
+				// Nothing changed: keep the existing file untouched.
+				return true, nil
+			case len(reuse) > 0:
+				merged, err := pptx.MergeReusingUnchangedSlides(out, newPPTX, reuse)
+				if err != nil {
+					return false, err
+				}
+				if err := os.WriteFile(out, merged, 0o600); err != nil {
+					return false, err
+				}
 				return true, nil
 			}
 		}
-		merged, err := pptx.MergeWithExisting(out, newPPTX)
-		if err != nil {
-			return false, err
-		}
-		if err := os.WriteFile(out, merged, 0o600); err != nil {
-			return false, err
-		}
-		return true, nil
 	}
-	if err := os.WriteFile(out, newPPTX, 0o600); err != nil {
+
+	merged, err := pptx.MergeWithExisting(out, newPPTX)
+	if err != nil {
 		return false, err
 	}
-	return false, nil
+	if err := os.WriteFile(out, merged, 0o600); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// unchangedSlideNums returns the 1-based positions whose source slide matches
+// the corresponding slide reconstructed from the existing presentation. The two
+// slices must have the same length.
+func unchangedSlideNums(source, existing deck.Slides) []int {
+	var nums []int
+	for i := range source {
+		if slideEquivalentForUpdate(source[i], existing[i]) {
+			nums = append(nums, i+1)
+		}
+	}
+	return nums
 }
 
 func pathExists(path string) (bool, error) {
@@ -148,19 +180,27 @@ func slidesEquivalentForUpdate(source, generated deck.Slides) bool {
 	if len(source) != len(generated) {
 		return false
 	}
-	normalized := make(deck.Slides, len(generated))
-	for i, slide := range generated {
-		if slide == nil {
-			normalized[i] = nil
-			continue
+	for i := range source {
+		if !slideEquivalentForUpdate(source[i], generated[i]) {
+			return false
 		}
-		cp := *slide
-		if source[i] != nil && source[i].Layout == "" {
-			cp.Layout = ""
-		}
-		normalized[i] = &cp
 	}
-	return source.Equal(normalized)
+	return true
+}
+
+// slideEquivalentForUpdate reports whether a source slide (derived from
+// markdown) matches a slide reconstructed from an existing presentation. A
+// source slide with no explicit layout is considered equivalent regardless of
+// the concrete default layout the existing slide resolved to.
+func slideEquivalentForUpdate(source, generated *deck.Slide) bool {
+	if source == nil || generated == nil {
+		return source == generated
+	}
+	cp := *generated
+	if source.Layout == "" {
+		cp.Layout = ""
+	}
+	return source.Equal(&cp)
 }
 
 // defaultOutputPath derives the output .pptx path from the input markdown path.

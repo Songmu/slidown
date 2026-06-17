@@ -58,8 +58,10 @@ $ slidown build deck.md
 Wrote deck.pptx (2 slide(s))
 ```
 
-If the output `.pptx` already exists, `build` updates it in place while
-preserving unchanged package parts:
+If the output `.pptx` already exists, `build` updates it in place. Slides whose
+source content has not changed keep their existing slide parts verbatim, so
+manual edits made in PowerPoint to unchanged slides are preserved; only changed
+slides are regenerated:
 
 ```console
 $ slidown build deck.md -o deck.pptx
@@ -194,7 +196,9 @@ as images.
 
 `slidown` is under active development. Planned work:
 
-- True slide-level incremental diff apply.
+- Intra-slide (sub-element) incremental diff apply. `build` already reuses
+  unchanged whole slides; finer-grained patching of individual shapes is future
+  work.
 - Inline-syntax style customization and table styling derived from the template.
 - Richer per-slide layout selection and placeholder mapping.
 
