@@ -262,3 +262,37 @@ func TestBuildReusesUnchangedSlides(t *testing.T) {
 		t.Errorf("changed slide 2 does not contain new content: %s", now[s2])
 	}
 }
+
+func TestBuildKeepsFrozenSlides(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "deck.pptx")
+
+	// Slide 2 is frozen, so its content must be kept even when the source changes.
+	const base = "# One\n\nbody one\n\n---\n\n# Two\n\nbody two\n\n<!-- {\"freeze\": true} -->\n"
+	const changed = "# One\n\nbody one changed\n\n---\n\n# Two\n\nbody two changed\n\n<!-- {\"freeze\": true} -->\n"
+
+	if updated := buildToFileForTest(t, base, out); updated {
+		t.Fatalf("first build should report a fresh write, got updated=true")
+	}
+	orig := readSlidePartsForTest(t, out)
+
+	if updated := buildToFileForTest(t, changed, out); !updated {
+		t.Fatalf("second build should report an update, got updated=false")
+	}
+	now := readSlidePartsForTest(t, out)
+
+	s1 := "ppt/slides/slide1.xml"
+	s2 := "ppt/slides/slide2.xml"
+	if bytes.Equal(orig[s1], now[s1]) {
+		t.Errorf("changed slide 1 was not updated")
+	}
+	if !bytes.Contains(now[s1], []byte("body one changed")) {
+		t.Errorf("changed slide 1 does not contain new content: %s", now[s1])
+	}
+	if !bytes.Equal(orig[s2], now[s2]) {
+		t.Errorf("frozen slide 2 was rewritten despite freeze")
+	}
+	if bytes.Contains(now[s2], []byte("body two changed")) {
+		t.Errorf("frozen slide 2 picked up the changed source content")
+	}
+}

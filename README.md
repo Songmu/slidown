@@ -68,6 +68,17 @@ $ slidown build deck.md -o deck.pptx
 Updated deck.pptx (2 slide(s))
 ```
 
+A page can also be **frozen** with the `freeze` page configuration. A frozen
+page keeps its existing slide as-is when rebuilding over an existing `.pptx`,
+even if its markdown changed — useful for pinning a slide you have hand-tuned in
+PowerPoint:
+
+```markdown
+# Hand-tuned slide
+
+<!-- {"freeze": true} -->
+```
+
 By default the output file is the input file name with a `.pptx` extension. You
 can override it with `--output`/`-o`, or with the `output` frontmatter field.
 

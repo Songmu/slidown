@@ -44,7 +44,7 @@ properties:
             - "chapter"
         freeze:
           type: boolean
-          description: "Whether to freeze (fix and prevent updates to) the page when the condition is met"
+          description: "Whether to freeze the page: when rebuilding over an existing .pptx, a frozen page keeps its existing slide as-is even if the markdown changed"
         ignore:
           type: boolean
           description: "Whether to ignore (exclude from processing) the page when the condition is met"

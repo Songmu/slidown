@@ -119,15 +119,16 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, 
 	}
 
 	// When the existing file is reused as the design template, preserve the
-	// parts of slides whose source content did not change so that manual edits
-	// survive (mirroring deck's behaviour of leaving unchanged slides alone).
+	// parts of slides that should keep their existing content: slides whose
+	// source did not change (so manual edits survive) and slides explicitly
+	// frozen via configuration (which are pinned regardless of source changes).
 	if allowNoOp {
 		if existingSlides, _, err := slidown.ReadSlidesFromPPTX(out); err == nil &&
 			len(existingSlides) == len(sourceSlides) {
-			reuse := unchangedSlideNums(sourceSlides, existingSlides)
+			reuse := reusableSlideNums(sourceSlides, existingSlides)
 			switch {
 			case len(reuse) == len(sourceSlides):
-				// Nothing changed: keep the existing file untouched.
+				// Nothing to regenerate: keep the existing file untouched.
 				return true, nil
 			case len(reuse) > 0:
 				merged, err := pptx.MergeReusingUnchangedSlides(out, newPPTX, reuse)
@@ -152,13 +153,14 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, 
 	return true, nil
 }
 
-// unchangedSlideNums returns the 1-based positions whose source slide matches
-// the corresponding slide reconstructed from the existing presentation. The two
-// slices must have the same length.
-func unchangedSlideNums(source, existing slidown.Slides) []int {
+// reusableSlideNums returns the 1-based positions whose existing slide should be
+// kept verbatim: either the source slide is frozen (pinned regardless of source
+// changes) or it matches the slide reconstructed from the existing presentation.
+// The two slices must have the same length.
+func reusableSlideNums(source, existing slidown.Slides) []int {
 	var nums []int
 	for i := range source {
-		if slideEquivalentForUpdate(source[i], existing[i]) {
+		if (source[i] != nil && source[i].Freeze) || slideEquivalentForUpdate(source[i], existing[i]) {
 			nums = append(nums, i+1)
 		}
 	}
