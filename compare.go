@@ -8,12 +8,6 @@ import (
 	"strings"
 )
 
-func (s Slides) Equal(other Slides) bool { //nostyle:recvtype
-	return slices.EqualFunc(s, other, func(a, b *Slide) bool {
-		return a.Equal(b)
-	})
-}
-
 func (s *Slide) Equal(other *Slide) bool {
 	if s == nil || other == nil {
 		return s == other

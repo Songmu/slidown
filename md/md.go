@@ -14,9 +14,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/goccy/go-yaml"
 	"github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/config"
+	"github.com/goccy/go-yaml"
 	"github.com/k1LoW/errors"
 	"github.com/k1LoW/exec"
 	"github.com/yuin/goldmark"
@@ -863,128 +863,6 @@ func toFragments(baseDir string, b []byte, n ast.Node, seedFragment deck.Fragmen
 
 // classRe is a regular expression to extract class attribute from HTML tags.
 var classRe = regexp.MustCompile(`class="\s*([^"]*)\s*"|class='\s*([^']*)\s*'`)
-
-// DiffContents compares two Contents and returns the page numbers that have changed.
-// Page numbers are 1-indexed.
-func DiffContents(oldContents, newContents Contents) []int {
-	var changedPages []int
-
-	// Get the length of both Contents
-	oldLen := len(oldContents)
-	newLen := len(newContents)
-
-	// Get the maximum length
-	maxLen := max(oldLen, newLen)
-
-	// Compare each page
-	for i := range maxLen {
-		// If a new page has been added
-		if i >= oldLen {
-			changedPages = append(changedPages, i+1) // 1-indexed
-			continue
-		}
-
-		// If a page has been deleted
-		if i >= newLen {
-			// No action needed for deleted pages as they don't need to be applied
-			continue
-		}
-
-		// Compare the content of the pages
-		if (newContents[i].Freeze == nil || !*newContents[i].Freeze) && !contentEqual(oldContents[i], newContents[i]) {
-			changedPages = append(changedPages, i+1) // 1-indexed
-		}
-	}
-
-	return changedPages
-}
-
-func jsonEqual[T any](a, b T) bool {
-	aBytes, err := json.Marshal(a)
-	if err != nil {
-		return false
-	}
-	bBytes, err := json.Marshal(b)
-	if err != nil {
-		return false
-	}
-	return bytes.Equal(aBytes, bBytes)
-}
-
-// contentEqual compares two Content structs and returns true if they are equal.
-func contentEqual(old, new *Content) bool {
-	if old == nil || new == nil {
-		return old == new
-	}
-
-	// Compare layout and flags
-	if old.Layout != new.Layout || old.Freeze != new.Freeze || old.Skip != new.Skip || old.Ignore != new.Ignore {
-		return false
-	}
-
-	// Compare titles
-	if !slices.Equal(old.Titles, new.Titles) {
-		return false
-	}
-
-	// Compare subtitles
-	if !slices.Equal(old.Subtitles, new.Subtitles) {
-		return false
-	}
-
-	// Compare comments
-	if !slices.Equal(old.Comments, new.Comments) {
-		return false
-	}
-
-	// Compare code blocks
-	if !jsonEqual(old.CodeBlocks, new.CodeBlocks) {
-		return false
-	}
-
-	// Compare bodies
-	if !jsonEqual(old.Bodies, new.Bodies) {
-		return false
-	}
-
-	// Compare images
-	{
-		if len(old.Images) != len(new.Images) {
-			return false
-		}
-		var imageChecksums1 []uint32
-		var imageChecksums2 []uint32
-		for _, img := range old.Images {
-			if img == nil {
-				continue // Skip nil images
-			}
-			imageChecksums1 = append(imageChecksums1, img.Checksum())
-		}
-		for _, img := range new.Images {
-			if img == nil {
-				continue // Skip nil images
-			}
-			imageChecksums2 = append(imageChecksums2, img.Checksum())
-		}
-		slices.Sort(imageChecksums1)
-		slices.Sort(imageChecksums2)
-		if !slices.Equal(imageChecksums1, imageChecksums2) {
-			return false
-		}
-	}
-
-	// Compare block quotes
-	if !jsonEqual(old.BlockQuotes, new.BlockQuotes) {
-		return false
-	}
-
-	// Compare tables
-	if !jsonEqual(old.Tables, new.Tables) {
-		return false
-	}
-
-	return true
-}
 
 // toBullet converts a marker byte to a Bullet type.
 func toBullet(m byte) deck.Bullet {

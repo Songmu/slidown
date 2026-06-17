@@ -52,8 +52,13 @@ func TestSlidesEquivalentForUpdateIgnoresDefaultLayout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadSlidesFromPPTX: %v", err)
 	}
-	if !slidesEquivalentForUpdate(slides, readSlides) {
-		t.Fatalf("slidesEquivalentForUpdate returned false")
+	if len(slides) != len(readSlides) {
+		t.Fatalf("slide count mismatch: %d vs %d", len(slides), len(readSlides))
+	}
+	for i := range slides {
+		if !slideEquivalentForUpdate(slides[i], readSlides[i]) {
+			t.Fatalf("slide %d not equivalent after round-trip", i+1)
+		}
 	}
 }
 

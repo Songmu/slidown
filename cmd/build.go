@@ -176,18 +176,6 @@ func pathExists(path string) (bool, error) {
 	return false, err
 }
 
-func slidesEquivalentForUpdate(source, generated deck.Slides) bool {
-	if len(source) != len(generated) {
-		return false
-	}
-	for i := range source {
-		if !slideEquivalentForUpdate(source[i], generated[i]) {
-			return false
-		}
-	}
-	return true
-}
-
 // slideEquivalentForUpdate reports whether a source slide (derived from
 // markdown) matches a slide reconstructed from an existing presentation. A
 // source slide with no explicit layout is considered equivalent regardless of
