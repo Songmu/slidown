@@ -324,6 +324,7 @@ func (contents Contents) toSlides(ctx context.Context, codeBlockToImageCmd strin
 		}
 		slide := &slidown.Slide{
 			Layout:         content.Layout,
+			Key:            content.Key,
 			Titles:         content.Titles,
 			TitleBodies:    content.TitleBodies,
 			Subtitles:      content.Subtitles,

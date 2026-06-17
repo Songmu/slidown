@@ -5,9 +5,14 @@ import "strings"
 type Slides []*Slide
 
 type Slide struct {
-	Layout         string        `json:"layout"`
-	Freeze         bool          `json:"freeze,omitempty"`
-	Skip           bool          `json:"skip,omitempty"`
+	Layout string `json:"layout"`
+	Freeze bool   `json:"freeze,omitempty"`
+	Skip   bool   `json:"skip,omitempty"`
+	// Key is an opaque, stable per-page identifier (from the markdown page
+	// config) used to match a slide to its existing counterpart across inserts,
+	// deletions and reordering during an incremental rebuild. It is identity,
+	// not content, so it is excluded from the content fingerprint.
+	Key            string        `json:"-"`
 	Titles         []string      `json:"titles,omitempty"`
 	TitleBodies    []*Body       `json:"title_bodies,omitempty"`
 	Subtitles      []string      `json:"subtitles,omitempty"`

@@ -79,6 +79,19 @@ PowerPoint:
 <!-- {"freeze": true} -->
 ```
 
+Give a page a stable `key` so that reuse and `freeze` follow the slide when
+pages are inserted, removed or reordered, rather than being matched purely by
+position:
+
+```markdown
+# Overview
+
+<!-- {"key": "overview"} -->
+```
+
+Image-only differences (recompression, reordering or repositioning) are treated
+as unchanged, so adjusting images in PowerPoint does not trigger a regenerate.
+
 By default the output file is the input file name with a `.pptx` extension. You
 can override it with `--output`/`-o`, or with the `output` frontmatter field.
 

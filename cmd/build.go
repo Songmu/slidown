@@ -122,18 +122,18 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, 
 	}
 
 	// When the existing file is reused as the design template, preserve the
-	// parts of slides that should keep their existing content: slides whose
-	// source did not change (so manual edits survive) and slides explicitly
-	// frozen via configuration (which are pinned regardless of source changes).
-	// Change detection compares each slide's embedded source fingerprint against
-	// the freshly computed one, which is exact and avoids lossy reverse parsing.
+	// slides that should keep their existing content: slides whose source did
+	// not change (so manual edits survive) and slides explicitly frozen via
+	// configuration. Slides are matched to their existing counterpart by stable
+	// key (falling back to position), so reuse and freeze survive inserts,
+	// deletions and reordering. Change detection compares each slide's embedded
+	// source fingerprint against the freshly computed one.
 	if allowNoOp {
-		if existingFPs, err := pptx.ReadSlideFingerprints(out); err == nil &&
-			len(existingFPs) == len(sourceSlides) {
-			reuse := reusableSlideNums(sourceSlides, existingFPs)
+		if existing, err := pptx.ReadSlideMetas(out); err == nil {
+			reuse := buildReuseMap(sourceSlides, existing)
 			switch {
-			case len(reuse) == len(sourceSlides):
-				// Nothing to regenerate: keep the existing file untouched.
+			case isIdentityReuse(reuse, len(sourceSlides), len(existing)):
+				// Every slide is reused in place: keep the existing file as is.
 				return true, nil
 			case len(reuse) > 0:
 				merged, err := pptx.MergeReusingUnchangedSlides(out, newPPTX, reuse)
@@ -158,31 +158,65 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, 
 	return true, nil
 }
 
-// reusableSlideNums returns the 1-based positions whose existing slide should be
-// kept verbatim during an incremental rebuild. A position qualifies when the
-// source slide is frozen (pinned regardless of source changes), or when its
-// source matches the fingerprint embedded in the existing slide.
+// buildReuseMap matches source slides to slides in the existing presentation and
+// returns a map of new 1-based position -> existing 1-based position for slides
+// whose existing part should be kept. A source slide is matched to an existing
+// slide by stable key when both carry one, otherwise positionally (same index)
+// when neither does. A matched slide is reused when it is frozen or when its
+// source fingerprint still matches the existing slide's embedded fingerprint.
 //
-// Matching is delegated to Slide.MatchesFingerprint, which compares non-image
-// content exactly but images perceptually and order-independently. This means a
-// slide whose only difference is an image being recompressed, reordered or
-// repositioned is treated as unchanged, so its existing slide part (including
-// any manual tweaks made in PowerPoint) is preserved instead of regenerated.
-//
-// The two slices must have the same length. An empty existing fingerprint (for
-// example one stripped by another editor) never matches, forcing a safe
-// regenerate of that slide.
-func reusableSlideNums(source slidown.Slides, existingFPs []string) []int {
-	var nums []int
-	for i := range source {
-		if source[i] == nil {
-			continue
-		}
-		if source[i].Freeze || source[i].MatchesFingerprint(existingFPs[i]) {
-			nums = append(nums, i+1)
+// Matching by key means reuse and freeze survive inserts, deletions and
+// reordering; an empty fingerprint (e.g. stripped by another editor) never
+// matches, forcing a safe regenerate.
+func buildReuseMap(source slidown.Slides, existing []pptx.SlideMeta) map[int]int {
+	byKey := map[string]int{}
+	for i, m := range existing {
+		if m.Key != "" {
+			byKey[m.Key] = i
 		}
 	}
-	return nums
+
+	reuse := map[int]int{}
+	usedOld := make([]bool, len(existing))
+	for i := range source {
+		s := source[i]
+		if s == nil {
+			continue
+		}
+		oldIdx := -1
+		switch {
+		case s.Key != "":
+			if j, ok := byKey[s.Key]; ok {
+				oldIdx = j
+			}
+		case i < len(existing) && existing[i].Key == "":
+			// Keyless slides fall back to positional matching.
+			oldIdx = i
+		}
+		if oldIdx < 0 || usedOld[oldIdx] {
+			continue
+		}
+		if s.Freeze || s.MatchesFingerprint(existing[oldIdx].Fingerprint) {
+			reuse[i+1] = oldIdx + 1
+			usedOld[oldIdx] = true
+		}
+	}
+	return reuse
+}
+
+// isIdentityReuse reports whether every slide is reused at its original
+// position and the slide count is unchanged, in which case the existing file is
+// already correct and need not be rewritten.
+func isIdentityReuse(reuse map[int]int, sourceLen, existingLen int) bool {
+	if sourceLen == 0 || sourceLen != existingLen || len(reuse) != sourceLen {
+		return false
+	}
+	for newPos, oldPos := range reuse {
+		if newPos != oldPos {
+			return false
+		}
+	}
+	return true
 }
 
 func pathExists(path string) (bool, error) {

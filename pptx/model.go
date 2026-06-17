@@ -46,6 +46,10 @@ type Slide struct {
 	// extension so an incremental rebuild can detect whether the source
 	// content for this slide changed. Empty omits it.
 	Fingerprint string
+	// Key is the stable per-slide identity (from the markdown page config),
+	// embedded alongside the fingerprint so a rebuild can match slides across
+	// inserts, deletions and reordering. Empty omits it.
+	Key string
 }
 
 // AddShape appends a shape to the slide and returns it.

@@ -79,6 +79,7 @@ func renderSlideWithLayout(p *pptx.Presentation, s *slidown.Slide, tmpl *pptx.Te
 
 	sl.Note = s.SpeakerNote
 	sl.Fingerprint = s.Fingerprint()
+	sl.Key = s.Key
 }
 
 // resolveLayout selects a template layout for the slide: by explicit name if it

@@ -41,16 +41,16 @@ func TestSlideFingerprintRoundTrip(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	fps, err := pptx.ReadSlideFingerprints(out)
+	metas, err := pptx.ReadSlideMetas(out)
 	if err != nil {
-		t.Fatalf("ReadSlideFingerprints: %v", err)
+		t.Fatalf("ReadSlideMetas: %v", err)
 	}
-	if len(fps) != len(slides) {
-		t.Fatalf("fingerprint count mismatch: %d vs %d", len(fps), len(slides))
+	if len(metas) != len(slides) {
+		t.Fatalf("fingerprint count mismatch: %d vs %d", len(metas), len(slides))
 	}
 	for i := range slides {
-		if want := slides[i].Fingerprint(); fps[i] != want {
-			t.Errorf("slide %d fingerprint mismatch: embedded %q, source %q", i+1, fps[i], want)
+		if want := slides[i].Fingerprint(); metas[i].Fingerprint != want {
+			t.Errorf("slide %d fingerprint mismatch: embedded %q, source %q", i+1, metas[i].Fingerprint, want)
 		}
 	}
 }
@@ -131,12 +131,12 @@ func TestWritePresentationUpdatesExistingFile(t *testing.T) {
 	if !updated {
 		t.Fatalf("expected changed deck to update existing file")
 	}
-	fps, err := pptx.ReadSlideFingerprints(out)
+	metas, err := pptx.ReadSlideMetas(out)
 	if err != nil {
-		t.Fatalf("ReadSlideFingerprints updated deck: %v", err)
+		t.Fatalf("ReadSlideMetas updated deck: %v", err)
 	}
-	if len(fps) != 1 || fps[0] != slides2[0].Fingerprint() {
-		t.Fatalf("updated slide fingerprint not embedded: %v", fps)
+	if len(metas) != 1 || metas[0].Fingerprint != slides2[0].Fingerprint() {
+		t.Fatalf("updated slide fingerprint not embedded: %v", metas)
 	}
 	data, err := os.ReadFile(out)
 	if err != nil {
@@ -315,5 +315,40 @@ func TestBuildKeepsFrozenSlides(t *testing.T) {
 	}
 	if bytes.Contains(now[s2], []byte("body two changed")) {
 		t.Errorf("frozen slide 2 picked up the changed source content")
+	}
+}
+
+func TestBuildReusesKeyedSlideAcrossInsert(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "deck.pptx")
+
+	const v1 = "# A\n\n<!-- {\"key\":\"a\",\"freeze\":true} -->\n\n---\n\n# B\n\n<!-- {\"key\":\"b\"} -->\n"
+	// Insert a new slide before A and change A's markdown. A is frozen and B is
+	// unchanged, so both must be reused at their new positions despite the shift.
+	const v2 = "# New\n\n<!-- {\"key\":\"new\"} -->\n\n---\n\n# A CHANGED\n\n<!-- {\"key\":\"a\",\"freeze\":true} -->\n\n---\n\n# B\n\n<!-- {\"key\":\"b\"} -->\n"
+
+	if updated := buildToFileForTest(t, v1, out); updated {
+		t.Fatalf("first build should be a fresh write")
+	}
+	orig := readSlidePartsForTest(t, out)
+
+	if updated := buildToFileForTest(t, v2, out); !updated {
+		t.Fatalf("second build should report an update")
+	}
+	now := readSlidePartsForTest(t, out)
+
+	if len(now) != 3 {
+		t.Fatalf("expected 3 slides after insert, got %d", len(now))
+	}
+	// Frozen keyed slide A moved from position 1 to 2 and must be reused verbatim.
+	if !bytes.Equal(orig["ppt/slides/slide1.xml"], now["ppt/slides/slide2.xml"]) {
+		t.Errorf("frozen keyed slide A was not reused at its new position")
+	}
+	if bytes.Contains(now["ppt/slides/slide2.xml"], []byte("CHANGED")) {
+		t.Errorf("frozen slide picked up changed content")
+	}
+	// Unchanged keyed slide B moved from position 2 to 3 and must be reused.
+	if !bytes.Equal(orig["ppt/slides/slide2.xml"], now["ppt/slides/slide3.xml"]) {
+		t.Errorf("unchanged keyed slide B was not reused at its new position")
 	}
 }

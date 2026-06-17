@@ -40,7 +40,7 @@ func TestMergeReusingUnchangedSlidesRestoresNotesInfra(t *testing.T) {
 		t.Fatalf("write existing: %v", err)
 	}
 
-	merged, err := MergeReusingUnchangedSlides(existingPath, newPPTX, []int{1})
+	merged, err := MergeReusingUnchangedSlides(existingPath, newPPTX, map[int]int{1: 1})
 	if err != nil {
 		t.Fatalf("MergeReusingUnchangedSlides: %v", err)
 	}

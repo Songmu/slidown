@@ -7,11 +7,18 @@ import (
 	"strings"
 )
 
-// ReadSlideFingerprints reads the per-slide source fingerprints embedded by
-// slidown from an existing .pptx, returned in slide order. A slide without a
-// fingerprint (e.g. one re-saved by another tool that dropped the extension)
-// yields an empty string at its position.
-func ReadSlideFingerprints(path string) ([]string, error) {
+// SlideMeta is the slidown metadata embedded in a generated slide: its source
+// fingerprint and optional stable key.
+type SlideMeta struct {
+	Fingerprint string
+	Key         string
+}
+
+// ReadSlideMetas reads the per-slide slidown metadata embedded in an existing
+// .pptx, returned in slide order. A slide without the metadata (e.g. one
+// re-saved by another tool that dropped the extension) yields a zero SlideMeta
+// at its position.
+func ReadSlideMetas(path string) ([]SlideMeta, error) {
 	parts, _, err := readZipPartsFromPath(path)
 	if err != nil {
 		return nil, err
@@ -29,11 +36,11 @@ func ReadSlideFingerprints(path string) ([]string, error) {
 	}
 	sort.Slice(slides, func(i, j int) bool { return slides[i].idx < slides[j].idx })
 
-	fps := make([]string, 0, len(slides))
+	metas := make([]SlideMeta, 0, len(slides))
 	for _, s := range slides {
-		fps = append(fps, parseFingerprint(parts[s.name]))
+		metas = append(metas, parseSlideMeta(parts[s.name]))
 	}
-	return fps, nil
+	return metas, nil
 }
 
 func slideNumFromName(name string) int {
@@ -44,23 +51,24 @@ func slideNumFromName(name string) int {
 	return n
 }
 
-func parseFingerprint(slideXML []byte) string {
+func parseSlideMeta(slideXML []byte) SlideMeta {
 	var s struct {
 		ExtLst struct {
 			Ext []struct {
 				FP struct {
 					V string `xml:"v,attr"`
+					K string `xml:"k,attr"`
 				} `xml:"fp"`
 			} `xml:"ext"`
 		} `xml:"extLst"`
 	}
 	if err := xml.Unmarshal(slideXML, &s); err != nil {
-		return ""
+		return SlideMeta{}
 	}
 	for _, e := range s.ExtLst.Ext {
 		if e.FP.V != "" {
-			return e.FP.V
+			return SlideMeta{Fingerprint: e.FP.V, Key: e.FP.K}
 		}
 	}
-	return ""
+	return SlideMeta{}
 }

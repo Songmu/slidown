@@ -49,7 +49,7 @@ func renderSlide(s *Slide, mediaIdx *int) (xml string, rels []slideRel, media []
 	}
 
 	b.WriteString(`</p:spTree></p:cSld>`)
-	b.WriteString(fingerprintExt(s.Fingerprint))
+	b.WriteString(fingerprintExt(s.Fingerprint, s.Key))
 	b.WriteString(`</p:sld>`)
 	return b.String(), rels, media
 }
@@ -57,23 +57,28 @@ func renderSlide(s *Slide, mediaIdx *int) (xml string, rels []slideRel, media []
 // fingerprintNS / fingerprintURI identify slidown's per-slide source
 // fingerprint extension embedded in the slide's extLst. slidown reads this back
 // on an incremental rebuild to decide whether a slide's source changed (see
-// Slide.Fingerprint in the root package). It is stored in the OOXML extension
-// list so it is invisible to the presentation and preserved verbatim when an
-// unchanged slide is reused. Tools that drop unknown extensions simply cause the
-// affected slide to be regenerated, which is harmless.
+// Slide.Fingerprint in the root package) and to match slides by key across
+// inserts/reordering. It is stored in the OOXML extension list so it is
+// invisible to the presentation and preserved verbatim when an unchanged slide
+// is reused. Tools that drop unknown extensions simply cause the affected slide
+// to be regenerated, which is harmless.
 const (
 	fingerprintNS  = "https://github.com/Songmu/slidown/ns"
 	fingerprintURI = "{6F2A3B40-5C7D-4E21-9A6B-1D3F8C0E7B92}"
 )
 
-// fingerprintExt renders the slide-level extLst carrying the source
-// fingerprint, or an empty string when no fingerprint is set.
-func fingerprintExt(fp string) string {
+// fingerprintExt renders the slide-level extLst carrying the source fingerprint
+// and optional stable key, or an empty string when no fingerprint is set.
+func fingerprintExt(fp, key string) string {
 	if fp == "" {
 		return ""
 	}
+	attrs := ` v="` + escapeXML(fp) + `"`
+	if key != "" {
+		attrs += ` k="` + escapeXML(key) + `"`
+	}
 	return `<p:extLst><p:ext uri="` + fingerprintURI + `">` +
-		`<slidown:fp xmlns:slidown="` + fingerprintNS + `" v="` + escapeXML(fp) + `"/>` +
+		`<slidown:fp xmlns:slidown="` + fingerprintNS + `"` + attrs + `/>` +
 		`</p:ext></p:extLst>`
 }
 

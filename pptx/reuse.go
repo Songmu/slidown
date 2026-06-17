@@ -10,16 +10,16 @@ import (
 )
 
 // MergeReusingUnchangedSlides builds the output package from the freshly
-// generated newPPTX, but restores the existing file's parts verbatim for the
-// given 1-based slide positions (the slide XML, its relationships, any notes
-// slide it references and the media those parts use).
+// generated newPPTX, but restores the existing file's slide for each entry in
+// reuse, a map of new 1-based slide position -> existing 1-based slide position.
+// The restored slide (its XML, relationships, any notes slide it references and
+// the media those parts use) is copied to the new position, rewriting the
+// notes<->slide cross references when the position changes.
 //
-// This preserves manual edits to slides whose source content did not change,
-// mirroring deck's behaviour of leaving unchanged slides untouched. The caller
-// must guarantee that the slide count is identical between the existing file and
-// newPPTX and that positions are stable; otherwise reuse is unsafe and
-// MergeWithExisting should be used instead.
-func MergeReusingUnchangedSlides(existingPath string, newPPTX []byte, reuseSlideNums []int) ([]byte, error) {
+// This preserves slides whose source did not change (or that are frozen) even
+// when other slides are inserted, deleted or reordered, identifying them by
+// their stable key rather than by position.
+func MergeReusingUnchangedSlides(existingPath string, newPPTX []byte, reuse map[int]int) ([]byte, error) {
 	oldParts, _, err := readZipPartsFromPath(existingPath)
 	if err != nil {
 		return nil, err
@@ -46,23 +46,28 @@ func MergeReusingUnchangedSlides(existingPath string, newPPTX []byte, reuseSlide
 	// from the regenerated [Content_Types].xml.
 	neededOverrides := map[string]string{}
 
-	for _, num := range reuseSlideNums {
-		slideName := fmt.Sprintf("ppt/slides/slide%d.xml", num)
-		relsName := fmt.Sprintf("ppt/slides/_rels/slide%d.xml.rels", num)
+	for newPos, oldPos := range reuse {
+		oldSlideName := fmt.Sprintf("ppt/slides/slide%d.xml", oldPos)
+		newSlideName := fmt.Sprintf("ppt/slides/slide%d.xml", newPos)
 
-		oldSlide, ok := oldParts[slideName]
+		oldSlide, ok := oldParts[oldSlideName]
 		if !ok {
-			// The existing file does not carry this slide part; leave the freshly
+			// The existing file does not carry this slide; leave the freshly
 			// generated one in place.
 			continue
 		}
-		addPart(slideName, oldSlide)
+		addPart(newSlideName, oldSlide)
 
-		oldRels, ok := oldParts[relsName]
+		oldRels, ok := oldParts[fmt.Sprintf("ppt/slides/_rels/slide%d.xml.rels", oldPos)]
 		if !ok {
 			continue
 		}
-		addPart(relsName, oldRels)
+		// When the slide moves, its rels reference to the notes slide must be
+		// renumbered to the new position.
+		newRels := rewriteRef(oldRels,
+			fmt.Sprintf("notesSlide%d.xml", oldPos),
+			fmt.Sprintf("notesSlide%d.xml", newPos))
+		addPart(fmt.Sprintf("ppt/slides/_rels/slide%d.xml.rels", newPos), newRels)
 
 		for _, target := range relTargets(oldRels) {
 			resolved := path.Clean(path.Join("ppt/slides", target))
@@ -72,23 +77,29 @@ func MergeReusingUnchangedSlides(existingPath string, newPPTX []byte, reuseSlide
 					addPart(resolved, data)
 				}
 			case strings.HasPrefix(resolved, "ppt/notesSlides/"):
-				data, ok := oldParts[resolved]
+				oldNotes, ok := oldParts[resolved]
 				if !ok {
 					continue
 				}
-				addPart(resolved, data)
-				neededOverrides[resolved] = ctNotesSlide
+				newNotes := fmt.Sprintf("ppt/notesSlides/notesSlide%d.xml", newPos)
+				addPart(newNotes, oldNotes)
+				neededOverrides[newNotes] = ctNotesSlide
 
-				notesRels := relsPath(resolved)
-				rdata, ok := oldParts[notesRels]
+				oldNotesRels, ok := oldParts[relsPath(resolved)]
 				if !ok {
 					continue
 				}
-				addPart(notesRels, rdata)
+				// The notes slide's back-reference to its slide must follow the
+				// move too.
+				newNotesRels := rewriteRef(oldNotesRels,
+					fmt.Sprintf("slide%d.xml", oldPos),
+					fmt.Sprintf("slide%d.xml", newPos))
+				addPart(relsPath(newNotes), newNotesRels)
+
 				// Restore the notes master the notes slide depends on, so the
 				// reused note does not leave a dangling relationship when the
 				// regenerated package has no notes of its own.
-				for _, nt := range relTargets(rdata) {
+				for _, nt := range relTargets(oldNotesRels) {
 					master := path.Clean(path.Join("ppt/notesSlides", nt))
 					if !strings.HasPrefix(master, "ppt/notesMasters/") {
 						continue
@@ -113,6 +124,16 @@ func MergeReusingUnchangedSlides(existingPath string, newPPTX []byte, reuseSlide
 	}
 
 	return zipFromParts(order, result)
+}
+
+// rewriteRef replaces occurrences of the oldRef path segment with newRef in a
+// relationships part. The references are full file names (e.g. "slide3.xml"),
+// so replacement is unambiguous; when oldRef == newRef it is a no-op.
+func rewriteRef(data []byte, oldRef, newRef string) []byte {
+	if oldRef == newRef {
+		return data
+	}
+	return []byte(strings.ReplaceAll(string(data), oldRef, newRef))
 }
 
 const (
