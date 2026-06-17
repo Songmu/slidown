@@ -96,3 +96,88 @@ func TestToPresentationWithTemplate(t *testing.T) {
 
 	_ = os.Remove(tmplPath)
 }
+
+// TestExternalTemplateFixture loads a committed .pptx that was authored by an
+// external tool (LibreOffice) rather than slidown, exercising the template
+// loader against foreign OOXML. The fixture lets this run in CI without
+// LibreOffice installed.
+func TestExternalTemplateFixture(t *testing.T) {
+	const fixture = "../testdata/template_base.pptx"
+	if _, err := os.Stat(fixture); err != nil {
+		t.Skipf("template fixture missing: %v", err)
+	}
+
+	tmpl, err := pptx.LoadTemplate(fixture)
+	if err != nil {
+		t.Fatalf("LoadTemplate(%s): %v", fixture, err)
+	}
+	if len(tmpl.Layouts) == 0 {
+		t.Fatalf("external template has no layouts")
+	}
+
+	parsed, err := md.Parse("", []byte("# External Title\n\n## External Sub\n\n- one\n- two\n"), nil)
+	if err != nil {
+		t.Fatalf("md.Parse: %v", err)
+	}
+	slides, err := parsed.ToSlides(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ToSlides: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if _, err := ToPresentationWithTemplate(slides, tmpl).WriteTo(&buf); err != nil {
+		t.Fatalf("WriteTo: %v", err)
+	}
+
+	// The output must be a valid package that slidown can read back, and the
+	// design parts must originate from the external template (byte-identical
+	// theme), proving the template was actually applied.
+	out, err := os.CreateTemp(t.TempDir(), "*.pptx")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	if _, err := out.Write(buf.Bytes()); err != nil {
+		t.Fatalf("write temp: %v", err)
+	}
+	out.Close()
+	if _, err := pptx.LoadTemplate(out.Name()); err != nil {
+		t.Fatalf("output is not a loadable pptx: %v", err)
+	}
+
+	parts := zipParts(t, buf.Bytes())
+	fixtureParts := zipPartsFromFile(t, fixture)
+	if got, want := parts["ppt/theme/theme1.xml"], fixtureParts["ppt/theme/theme1.xml"]; !bytes.Equal(got, want) {
+		t.Errorf("output theme was not inherited from the external template")
+	}
+	if !bytes.Contains(parts["ppt/slides/slide1.xml"], []byte("<a:t>External Title</a:t>")) {
+		t.Errorf("slide is missing the rendered title content")
+	}
+}
+
+func zipParts(t *testing.T, data []byte) map[string][]byte {
+	t.Helper()
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("zip.NewReader: %v", err)
+	}
+	parts := map[string][]byte{}
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("open %s: %v", f.Name, err)
+		}
+		b, _ := io.ReadAll(rc)
+		rc.Close()
+		parts[f.Name] = b
+	}
+	return parts
+}
+
+func zipPartsFromFile(t *testing.T, path string) map[string][]byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile %s: %v", path, err)
+	}
+	return zipParts(t, b)
+}
