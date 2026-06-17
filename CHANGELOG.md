@@ -1,5 +1,7 @@
 # Changelog
 
+## [v1.24.0](https://github.com/Songmu/slidown/commits/v1.24.0) - 2026-06-17
+
 ## [v1.24.0](https://github.com/k1LoW/deck/compare/v1.23.1...v1.24.0) - 2026-06-01
 ### New Features 🎉
 - feat: reserve "key" field in page configuration for stable slide referencing by @k1LoW in https://github.com/k1LoW/deck/pull/527
