@@ -65,6 +65,18 @@ can override it with `--output`/`-o`, or with the `output` frontmatter field.
 $ slidown build deck.md -o talk.pptx
 ```
 
+### Using a template
+
+Supply a `.pptx` whose theme, slide masters and layouts should be used as the
+design. The first slide uses a title layout and the rest a content layout; a
+specific layout can be selected per page via page configuration.
+
+```console
+$ slidown build deck.md --template theme.pptx
+```
+
+The template can also be set with the `template` frontmatter or config field.
+
 ## Markdown file format
 
 The Markdown used by `slidown` consists of an optional YAML frontmatter and a
@@ -87,8 +99,8 @@ Content...
 
 - `title` (string): The title of the presentation.
 - `output` (string): Output `.pptx` path (used when `--output` is not given).
-- `template` (string): Path to a `.pptx` file to use as the design template
-  *(planned; see Roadmap)*.
+- `template` (string): Path to a `.pptx` file whose theme, slide masters and
+  layouts are used as the design for the generated deck.
 - `breaks` (boolean): Control how single line breaks are rendered. Default
   (`false`) renders them as spaces; `true` preserves them as line breaks.
 - `codeBlockToImageCommand` (string): Command used to convert code blocks to
@@ -174,9 +186,9 @@ as images.
 
 `slidown` is under active development. Planned work:
 
-- External `.pptx` template support (custom layouts, placeholders and themes).
 - Incremental updates to an existing `.pptx`.
-- Inline-syntax style customization and table styling via the template.
+- Inline-syntax style customization and table styling derived from the template.
+- Richer per-slide layout selection and placeholder mapping.
 
 ## Acknowledgements
 
