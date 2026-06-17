@@ -56,6 +56,11 @@ func imagesEquivalent(images1, images2 []*Image) bool {
 }
 
 func blockQuotesEqual(bq1, bq2 []*BlockQuote) bool {
+	sorted1 := make([]*BlockQuote, len(bq1))
+	copy(sorted1, bq1)
+	sorted2 := make([]*BlockQuote, len(bq2))
+	copy(sorted2, bq2)
+
 	f := func(a *BlockQuote, b *BlockQuote) int {
 		if a.Nesting != b.Nesting {
 			return a.Nesting - b.Nesting
@@ -64,10 +69,10 @@ func blockQuotesEqual(bq1, bq2 []*BlockQuote) bool {
 		jsonB, _ := json.Marshal(b.Paragraphs)
 		return bytes.Compare(jsonA, jsonB)
 	}
-	slices.SortFunc(bq1, f)
-	slices.SortFunc(bq2, f)
+	slices.SortFunc(sorted1, f)
+	slices.SortFunc(sorted2, f)
 
-	return slices.EqualFunc(bq1, bq2, func(a, b *BlockQuote) bool {
+	return slices.EqualFunc(sorted1, sorted2, func(a, b *BlockQuote) bool {
 		if a == nil || b == nil {
 			return a == b
 		}
