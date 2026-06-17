@@ -103,3 +103,46 @@ func TestWriteToProducesValidZip(t *testing.T) {
 		t.Errorf("hyperlink relationship id collides with layout rId1")
 	}
 }
+
+func TestWriteToWithSpeakerNotes(t *testing.T) {
+	p := New()
+	s := p.AddSlide()
+	s.AddShape(&Shape{Placeholder: PlaceholderTitle, Paragraphs: []*Paragraph{{Runs: []*Run{{Text: "T"}}}}})
+	s.Note = "line one\nline two"
+
+	var buf bytes.Buffer
+	if _, err := p.WriteTo(&buf); err != nil {
+		t.Fatalf("WriteTo: %v", err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	if err != nil {
+		t.Fatalf("invalid zip: %v", err)
+	}
+	parts := map[string]string{}
+	for _, f := range zr.File {
+		rc, _ := f.Open()
+		b, _ := io.ReadAll(rc)
+		rc.Close()
+		parts[f.Name] = string(b)
+	}
+
+	for _, name := range []string{
+		"ppt/notesMasters/notesMaster1.xml",
+		"ppt/notesSlides/notesSlide1.xml",
+		"ppt/notesSlides/_rels/notesSlide1.xml.rels",
+	} {
+		if _, ok := parts[name]; !ok {
+			t.Errorf("missing notes part %q", name)
+		}
+	}
+	notes := parts["ppt/notesSlides/notesSlide1.xml"]
+	if !strings.Contains(notes, "<a:t>line one</a:t>") || !strings.Contains(notes, "<a:t>line two</a:t>") {
+		t.Errorf("notes slide missing note text: %s", notes)
+	}
+	if !strings.Contains(parts["[Content_Types].xml"], "notesSlide1.xml") {
+		t.Errorf("content types missing notes slide override")
+	}
+	if !strings.Contains(parts["ppt/slides/_rels/slide1.xml.rels"], "notesSlide1.xml") {
+		t.Errorf("slide rels missing notesSlide relationship")
+	}
+}

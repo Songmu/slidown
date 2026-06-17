@@ -3,8 +3,9 @@ package pptx
 import "fmt"
 
 // contentTypes returns the [Content_Types].xml part. slideCount overrides are
-// declared individually because each slide is its own part.
-func contentTypes(slideCount int) string {
+// declared individually because each slide is its own part. notesSlideNums
+// lists the slide numbers (1-based) that have an associated notes slide.
+func contentTypes(slideCount int, notesSlideNums []int) string {
 	var b []byte
 	b = append(b, []byte(xmlDecl+
 		`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">`+
@@ -26,6 +27,13 @@ func contentTypes(slideCount int) string {
 		b = append(b, []byte(fmt.Sprintf(
 			`<Override PartName="/ppt/slides/slide%d.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>`, i))...)
 	}
+	if len(notesSlideNums) > 0 {
+		b = append(b, []byte(`<Override PartName="/ppt/notesMasters/notesMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.notesMaster+xml"/>`)...)
+		for _, n := range notesSlideNums {
+			b = append(b, []byte(fmt.Sprintf(
+				`<Override PartName="/ppt/notesSlides/notesSlide%d.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml"/>`, n))...)
+		}
+	}
 	b = append(b, []byte(`</Types>`)...)
 	return string(b)
 }
@@ -41,14 +49,17 @@ const rootRels = xmlDecl +
 	`</Relationships>`
 
 // presentation builds ppt/presentation.xml referencing the master and slides.
-func presentation(width, height int64, slideCount int) string {
+func presentation(width, height int64, slideCount int, hasNotes bool) string {
 	var b []byte
 	b = append(b, []byte(xmlDecl+
 		`<p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" `+
 		`xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" `+
 		`xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" saveSubsetFonts="1">`+
-		`<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>`+
-		`<p:sldIdLst>`)...)
+		`<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>`)...)
+	if hasNotes {
+		b = append(b, []byte(`<p:notesMasterIdLst><p:notesMasterId r:id="rId902"/></p:notesMasterIdLst>`)...)
+	}
+	b = append(b, []byte(`<p:sldIdLst>`)...)
 	// Slide relationship ids start after master(rId1) and theme(rId2).
 	for i := 0; i < slideCount; i++ {
 		b = append(b, []byte(fmt.Sprintf(`<p:sldId id="%d" r:id="rId%d"/>`, 256+i, 3+i))...)
@@ -60,7 +71,7 @@ func presentation(width, height int64, slideCount int) string {
 }
 
 // presentationRels builds ppt/_rels/presentation.xml.rels.
-func presentationRels(slideCount int) string {
+func presentationRels(slideCount int, hasNotes bool) string {
 	var b []byte
 	b = append(b, []byte(xmlDecl+
 		`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`+
@@ -72,8 +83,11 @@ func presentationRels(slideCount int) string {
 			3+i, i+1))...)
 	}
 	b = append(b, []byte(`<Relationship Id="rId900" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/presProps" Target="presProps.xml"/>`+
-		`<Relationship Id="rId901" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/viewProps" Target="viewProps.xml"/>`+
-		`</Relationships>`)...)
+		`<Relationship Id="rId901" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/viewProps" Target="viewProps.xml"/>`)...)
+	if hasNotes {
+		b = append(b, []byte(`<Relationship Id="rId902" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesMaster" Target="notesMasters/notesMaster1.xml"/>`)...)
+	}
+	b = append(b, []byte(`</Relationships>`)...)
 	return string(b)
 }
 
