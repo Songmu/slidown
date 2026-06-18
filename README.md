@@ -51,20 +51,20 @@ title: Talk about slidown
 A paragraph with a [link](https://example.com).
 ```
 
-Then build a `.pptx`:
+Then apply it to a `.pptx`:
 
 ```console
-$ slidown build deck.md
+$ slidown apply deck.md
 Wrote deck.pptx (2 slide(s))
 ```
 
-If the output `.pptx` already exists, `build` updates it in place. Slides whose
+If the output `.pptx` already exists, `apply` updates it in place. Slides whose
 source content has not changed keep their existing slide parts verbatim, so
 manual edits made in PowerPoint to unchanged slides are preserved; only changed
 slides are regenerated:
 
 ```console
-$ slidown build deck.md -o deck.pptx
+$ slidown apply deck.md -o deck.pptx
 Updated deck.pptx (2 slide(s))
 ```
 
@@ -96,7 +96,7 @@ By default the output file is the input file name with a `.pptx` extension. You
 can override it with `--output`/`-o`, or with the `output` frontmatter field.
 
 ```console
-$ slidown build deck.md -o talk.pptx
+$ slidown apply deck.md -o talk.pptx
 ```
 
 ### Using a template
@@ -106,7 +106,7 @@ design. The first slide uses a title layout and the rest a content layout; a
 specific layout can be selected per page via page configuration.
 
 ```console
-$ slidown build deck.md --template theme.pptx
+$ slidown apply deck.md --template theme.pptx
 ```
 
 The template can also be set with the `template` frontmatter or config field.
@@ -224,7 +224,7 @@ outputs image data (PNG/JPEG/GIF) to standard output, or to a file via the
 `{{output}}` placeholder:
 
 ```console
-$ slidown build deck.md --code-block-to-image-command "some-command"
+$ slidown apply deck.md --code-block-to-image-command "some-command"
 ```
 
 This is useful for rendering diagrams (e.g. Mermaid) or syntax-highlighted code
@@ -235,7 +235,7 @@ as images.
 `slidown` is under active development. See [docs/design.md](docs/design.md) for
 the architecture and the incremental-rebuild design. Planned work:
 
-- Intra-slide (sub-element) incremental diff apply. `build` already reuses
+- Intra-slide (sub-element) incremental diff apply. `apply` already reuses
   unchanged whole slides; finer-grained patching of individual shapes is future
   work.
 - Inline-syntax style customization and table styling derived from the template.

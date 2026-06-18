@@ -54,7 +54,7 @@ pptx.Presentation        in-memory OOXML model
 | `render` | Maps the slide model onto `pptx` placeholders/shapes and computes geometry. |
 | `pptx` | Pure-Go OOXML writer/reader: builds the `.pptx` zip, loads external templates, merges/reuses slides on incremental rebuild. |
 | `config` | Global config loading and XDG paths. |
-| `cmd` | Cobra CLI (`build`, `ls-layouts`). |
+| `cmd` | Cobra CLI (`apply`, `ls-layouts`). |
 | `version` | Build/version metadata. |
 
 ### Generated OOXML package
@@ -155,7 +155,7 @@ stdout, or from the `{{output}}` file when used.
 
 ## Incremental rebuild
 
-When the output `.pptx` already exists, `build` rebuilds **in place**, reusing
+When the output `.pptx` already exists, `apply` rebuilds **in place**, reusing
 the existing slide parts for slides whose source has not meaningfully changed (or
 that are frozen). This preserves manual edits made in PowerPoint to those slides.
 The decision is per slide; there is no shape-level diff.
@@ -213,7 +213,7 @@ a template (e.g. a different `--template` is given), the rebuild falls back to
 
 ## CLI
 
-- `slidown build DECK_FILE [-o OUT.pptx] [--template T.pptx] [--code-block-to-image-command CMD]`
+- `slidown apply DECK_FILE [-o OUT.pptx] [--template T.pptx] [--code-block-to-image-command CMD]`
   — generate (or rebuild) a `.pptx`.
 - `slidown ls-layouts TEMPLATE` — list a template's layout names.
 
@@ -239,5 +239,5 @@ a template (e.g. a different `--template` is given), the rebuild falls back to
   Google Slides object model + batchUpdate; slidown only reuses or regenerates a
   slide as a whole.
 - A `codeBlockToImageCommand` taken from a document's own frontmatter is executed
-  during `build`; processing untrusted Markdown that sets it can run arbitrary
+  during `apply`; processing untrusted Markdown that sets it can run arbitrary
   commands. This mirrors deck and is currently left as-is.
