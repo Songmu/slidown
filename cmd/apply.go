@@ -16,15 +16,15 @@ import (
 )
 
 var (
-	buildOutput              string
-	buildCodeBlockToImageCmd string
-	buildTemplate            string
+	applyOutput              string
+	applyCodeBlockToImageCmd string
+	applyTemplate            string
 )
 
-var buildCmd = &cobra.Command{
-	Use:   "build DECK_FILE",
-	Short: "build a PowerPoint (.pptx) presentation from markdown",
-	Long: `build generates a PowerPoint (.pptx) file from a markdown deck file.
+var applyCmd = &cobra.Command{
+	Use:   "apply DECK_FILE",
+	Short: "apply a markdown deck to a PowerPoint (.pptx) presentation",
+	Long: `apply generates a PowerPoint (.pptx) file from a markdown deck file.
 
 The output path defaults to the input file name with a .pptx extension,
 and can be overridden with the --output/-o flag.
@@ -48,7 +48,7 @@ with --template or the "template" frontmatter/config field.`,
 			return err
 		}
 
-		out := buildOutput
+		out := applyOutput
 		if out == "" && m.Frontmatter != nil && m.Frontmatter.Output != "" {
 			out = m.Frontmatter.Output
 		}
@@ -56,7 +56,7 @@ with --template or the "template" frontmatter/config field.`,
 			out = defaultOutputPath(f)
 		}
 
-		templatePath := buildTemplate
+		templatePath := applyTemplate
 		useExistingAsTemplate := false
 		if templatePath == "" && m.Frontmatter != nil {
 			templatePath = m.Frontmatter.Template
@@ -72,7 +72,7 @@ with --template or the "template" frontmatter/config field.`,
 			}
 		}
 
-		slides, err := m.ToSlides(cmd.Context(), buildCodeBlockToImageCmd)
+		slides, err := m.ToSlides(cmd.Context(), applyCodeBlockToImageCmd)
 		if err != nil {
 			return fmt.Errorf("failed to convert markdown to slides: %w", err)
 		}
@@ -237,8 +237,8 @@ func defaultOutputPath(input string) string {
 }
 
 func init() {
-	buildCmd.Flags().StringVarP(&buildOutput, "output", "o", "", "output .pptx file path (default: DECK_FILE with .pptx extension)")
-	buildCmd.Flags().StringVarP(&buildCodeBlockToImageCmd, "code-block-to-image-command", "", "", "command to convert code blocks to images")
-	buildCmd.Flags().StringVarP(&buildTemplate, "template", "t", "", "path to a .pptx template providing the design")
-	rootCmd.AddCommand(buildCmd)
+	applyCmd.Flags().StringVarP(&applyOutput, "output", "o", "", "output .pptx file path (default: DECK_FILE with .pptx extension)")
+	applyCmd.Flags().StringVarP(&applyCodeBlockToImageCmd, "code-block-to-image-command", "", "", "command to convert code blocks to images")
+	applyCmd.Flags().StringVarP(&applyTemplate, "template", "t", "", "path to a .pptx template providing the design")
+	rootCmd.AddCommand(applyCmd)
 }

@@ -168,10 +168,10 @@ func zipPartsForTest(t *testing.T, data []byte) (map[string]string, error) {
 	return parts, nil
 }
 
-// buildToFileForTest mirrors the build command's template selection: a
+// applyToFileForTest mirrors the apply command's template selection: a
 // pre-existing output is reused as the design template, which enables
 // whole-slide reuse for unchanged positions.
-func buildToFileForTest(t *testing.T, mdText, out string) bool {
+func applyToFileForTest(t *testing.T, mdText, out string) bool {
 	t.Helper()
 	cfg, err := config.Load("")
 	if err != nil {
@@ -247,23 +247,23 @@ func readSlidePartsForTest(t *testing.T, path string) map[string][]byte {
 	return parts
 }
 
-func TestBuildReusesUnchangedSlides(t *testing.T) {
+func TestApplyReusesUnchangedSlides(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "deck.pptx")
 
 	const deck3 = "# One\n\nbody one\n\n---\n\n# Two\n\nbody two\n\n---\n\n# Three\n\nbody three\n"
 	const deck3changed = "# One\n\nbody one\n\n---\n\n# Two\n\nbody two changed\n\n---\n\n# Three\n\nbody three\n"
 
-	if updated := buildToFileForTest(t, deck3, out); updated {
-		t.Fatalf("first build should report a fresh write, got updated=true")
+	if updated := applyToFileForTest(t, deck3, out); updated {
+		t.Fatalf("first apply should report a fresh write, got updated=true")
 	}
 	orig := readSlidePartsForTest(t, out)
 	if len(orig) != 3 {
 		t.Fatalf("expected 3 slide parts, got %d", len(orig))
 	}
 
-	if updated := buildToFileForTest(t, deck3changed, out); !updated {
-		t.Fatalf("second build should report an update, got updated=false")
+	if updated := applyToFileForTest(t, deck3changed, out); !updated {
+		t.Fatalf("second apply should report an update, got updated=false")
 	}
 	now := readSlidePartsForTest(t, out)
 
@@ -284,7 +284,7 @@ func TestBuildReusesUnchangedSlides(t *testing.T) {
 	}
 }
 
-func TestBuildKeepsFrozenSlides(t *testing.T) {
+func TestApplyKeepsFrozenSlides(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "deck.pptx")
 
@@ -292,13 +292,13 @@ func TestBuildKeepsFrozenSlides(t *testing.T) {
 	const base = "# One\n\nbody one\n\n---\n\n# Two\n\nbody two\n\n<!-- {\"freeze\": true} -->\n"
 	const changed = "# One\n\nbody one changed\n\n---\n\n# Two\n\nbody two changed\n\n<!-- {\"freeze\": true} -->\n"
 
-	if updated := buildToFileForTest(t, base, out); updated {
-		t.Fatalf("first build should report a fresh write, got updated=true")
+	if updated := applyToFileForTest(t, base, out); updated {
+		t.Fatalf("first apply should report a fresh write, got updated=true")
 	}
 	orig := readSlidePartsForTest(t, out)
 
-	if updated := buildToFileForTest(t, changed, out); !updated {
-		t.Fatalf("second build should report an update, got updated=false")
+	if updated := applyToFileForTest(t, changed, out); !updated {
+		t.Fatalf("second apply should report an update, got updated=false")
 	}
 	now := readSlidePartsForTest(t, out)
 
@@ -318,7 +318,7 @@ func TestBuildKeepsFrozenSlides(t *testing.T) {
 	}
 }
 
-func TestBuildReusesKeyedSlideAcrossInsert(t *testing.T) {
+func TestApplyReusesKeyedSlideAcrossInsert(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "deck.pptx")
 
@@ -327,13 +327,13 @@ func TestBuildReusesKeyedSlideAcrossInsert(t *testing.T) {
 	// unchanged, so both must be reused at their new positions despite the shift.
 	const v2 = "# New\n\n<!-- {\"key\":\"new\"} -->\n\n---\n\n# A CHANGED\n\n<!-- {\"key\":\"a\",\"freeze\":true} -->\n\n---\n\n# B\n\n<!-- {\"key\":\"b\"} -->\n"
 
-	if updated := buildToFileForTest(t, v1, out); updated {
-		t.Fatalf("first build should be a fresh write")
+	if updated := applyToFileForTest(t, v1, out); updated {
+		t.Fatalf("first apply should be a fresh write")
 	}
 	orig := readSlidePartsForTest(t, out)
 
-	if updated := buildToFileForTest(t, v2, out); !updated {
-		t.Fatalf("second build should report an update")
+	if updated := applyToFileForTest(t, v2, out); !updated {
+		t.Fatalf("second apply should report an update")
 	}
 	now := readSlidePartsForTest(t, out)
 
