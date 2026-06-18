@@ -232,7 +232,8 @@ as images.
 
 ## Roadmap
 
-`slidown` is under active development. Planned work:
+`slidown` is under active development. See [docs/design.md](docs/design.md) for
+the architecture and the incremental-rebuild design. Planned work:
 
 - Intra-slide (sub-element) incremental diff apply. `build` already reuses
   unchanged whole slides; finer-grained patching of individual shapes is future
