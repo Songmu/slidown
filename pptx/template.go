@@ -31,6 +31,11 @@ type Template struct {
 	// partTypes maps design part names to their content types (for emitting
 	// [Content_Types].xml overrides).
 	partTypes map[string]string
+	// defaultTypes maps file-extension Default declarations preserved from the
+	// template's [Content_Types].xml (e.g. "emf" -> "image/x-emf"). PowerPoint
+	// flags the package as needing repair if a media part (copied verbatim from
+	// the template) has neither a Default nor an Override for its extension.
+	defaultTypes map[string]string
 	// slideSize from the template presentation, in EMUs (0 if not found).
 	width, height int64
 }
@@ -91,6 +96,10 @@ type xmlSldLayout struct {
 }
 
 type xmlContentTypes struct {
+	Defaults []struct {
+		Extension   string `xml:"Extension,attr"`
+		ContentType string `xml:"ContentType,attr"`
+	} `xml:"Default"`
 	Overrides []struct {
 		PartName    string `xml:"PartName,attr"`
 		ContentType string `xml:"ContentType,attr"`
@@ -135,7 +144,18 @@ func LoadTemplate(path string) (*Template, error) {
 		return nil, fmt.Errorf("failed to parse template content types: %w", err)
 	}
 
-	t := &Template{designParts: map[string][]byte{}, partTypes: map[string]string{}}
+	t := &Template{designParts: map[string][]byte{}, partTypes: map[string]string{}, defaultTypes: map[string]string{}}
+
+	// Preserve the template's Default extension declarations so verbatim-copied
+	// media (emf, svg, wdp, ...) still has a declared content type in the
+	// emitted [Content_Types].xml.
+	for _, d := range types.Defaults {
+		ext := strings.ToLower(d.Extension)
+		if ext == "" || d.ContentType == "" {
+			continue
+		}
+		t.defaultTypes[ext] = d.ContentType
+	}
 
 	// Classify overrides into design parts we carry over.
 	for _, o := range types.Overrides {

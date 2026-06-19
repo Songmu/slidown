@@ -180,12 +180,35 @@ func (t *Template) contentTypesXML(slideCount int, notesSlideNums []int) string 
 	var b strings.Builder
 	b.WriteString(xmlDecl)
 	b.WriteString(`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">`)
-	b.WriteString(`<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>`)
-	b.WriteString(`<Default Extension="xml" ContentType="application/xml"/>`)
-	b.WriteString(`<Default Extension="png" ContentType="image/png"/>`)
-	b.WriteString(`<Default Extension="jpeg" ContentType="image/jpeg"/>`)
-	b.WriteString(`<Default Extension="jpg" ContentType="image/jpeg"/>`)
-	b.WriteString(`<Default Extension="gif" ContentType="image/gif"/>`)
+	// Slidown's baseline Default extensions. The template may add more (emf,
+	// svg, wdp, ...); those are emitted below and deduped against this set.
+	baseDefaults := []struct{ ext, ct string }{
+		{"rels", "application/vnd.openxmlformats-package.relationships+xml"},
+		{"xml", "application/xml"},
+		{"png", "image/png"},
+		{"jpeg", "image/jpeg"},
+		{"jpg", "image/jpeg"},
+		{"gif", "image/gif"},
+	}
+	seenExt := make(map[string]bool, len(baseDefaults))
+	for _, d := range baseDefaults {
+		b.WriteString(fmt.Sprintf(`<Default Extension="%s" ContentType="%s"/>`, d.ext, d.ct))
+		seenExt[d.ext] = true
+	}
+	// Preserve any extra Default declarations from the template (e.g. emf, svg,
+	// wdp). Without these PowerPoint reports "unknown content type" and offers
+	// to repair the package.
+	extraExts := make([]string, 0, len(t.defaultTypes))
+	for ext := range t.defaultTypes {
+		if seenExt[ext] {
+			continue
+		}
+		extraExts = append(extraExts, ext)
+	}
+	sort.Strings(extraExts)
+	for _, ext := range extraExts {
+		b.WriteString(fmt.Sprintf(`<Default Extension="%s" ContentType="%s"/>`, ext, t.defaultTypes[ext]))
+	}
 	b.WriteString(`<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>`)
 	b.WriteString(`<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>`)
 	b.WriteString(`<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>`)
