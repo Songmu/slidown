@@ -50,11 +50,30 @@ type LayoutInfo struct {
 
 // PlaceholderInfo describes a placeholder within a layout.
 type PlaceholderInfo struct {
-	Type    string // "title", "ctrTitle", "subTitle", "body", "" (default body)
+	Type string // "title", "ctrTitle", "subTitle", "body", "" (default body)
+	// Name is the shape's display name from the layout (the <p:cNvPr name="...">
+	// attribute, e.g. "Subtitle 1" or "Content Placeholder 2"). Available for
+	// heuristics like HasSubtitleHint.
+	Name string
+	// Prompt is the concatenated prompt text stored on the layout placeholder
+	// (<a:t> within <p:txBody>). PowerPoint persists user-edited prompts here
+	// when <p:ph hasCustomPrompt="1"/>. Used by HasSubtitleHint.
+	Prompt  string
 	Idx     int
 	HasGeom bool
 	X, Y    int64
 	W, H    int64
+}
+
+// HasSubtitleHint reports whether this placeholder's display name or prompt
+// text contains the substring "subtitle" (case insensitive). It lets users
+// repurpose an ordinary text placeholder as a subtitle target without resorting
+// to XML editing: editing the placeholder name (via PowerPoint's Selection
+// Pane) or its prompt text in the slide master view is enough to opt in.
+func (p *PlaceholderInfo) HasSubtitleHint() bool {
+	const needle = "subtitle"
+	return strings.Contains(strings.ToLower(p.Name), needle) ||
+		strings.Contains(strings.ToLower(p.Prompt), needle)
 }
 
 // --- XML parsing structs (namespace-agnostic via local names) ---
@@ -72,18 +91,32 @@ type xmlXfrm struct {
 	Ext xmlExt `xml:"ext"`
 }
 type xmlPh struct {
-	Type string `xml:"type,attr"`
-	Idx  string `xml:"idx,attr"`
+	Type            string `xml:"type,attr"`
+	Idx             string `xml:"idx,attr"`
+	HasCustomPrompt string `xml:"hasCustomPrompt,attr"`
+}
+type xmlCNvPr struct {
+	Name string `xml:"name,attr"`
+}
+type xmlRun struct {
+	T string `xml:"t"`
+}
+type xmlPara struct {
+	Runs []xmlRun `xml:"r"`
 }
 type xmlSp struct {
 	NvSpPr struct {
-		NvPr struct {
+		CNvPr xmlCNvPr `xml:"cNvPr"`
+		NvPr  struct {
 			Ph *xmlPh `xml:"ph"`
 		} `xml:"nvPr"`
 	} `xml:"nvSpPr"`
 	SpPr struct {
 		Xfrm *xmlXfrm `xml:"xfrm"`
 	} `xml:"spPr"`
+	TxBody struct {
+		Paras []xmlPara `xml:"p"`
+	} `xml:"txBody"`
 }
 type xmlSldLayout struct {
 	Type string `xml:"type,attr"`
@@ -256,8 +289,10 @@ func parseLayout(partName string, data []byte) *LayoutInfo {
 			continue
 		}
 		ph := &PlaceholderInfo{
-			Type: sp.NvSpPr.NvPr.Ph.Type,
-			Idx:  atoi(sp.NvSpPr.NvPr.Ph.Idx),
+			Type:   sp.NvSpPr.NvPr.Ph.Type,
+			Idx:    atoi(sp.NvSpPr.NvPr.Ph.Idx),
+			Name:   sp.NvSpPr.CNvPr.Name,
+			Prompt: collectPromptText(sp),
 		}
 		if sp.SpPr.Xfrm != nil {
 			x := atoi64(sp.SpPr.Xfrm.Off.X)
@@ -272,6 +307,25 @@ func parseLayout(partName string, data []byte) *LayoutInfo {
 		li.Placeholders = append(li.Placeholders, ph)
 	}
 	return li
+}
+
+// collectPromptText concatenates the placeholder's prompt run text. Only used
+// for heuristics (HasSubtitleHint), so we just join all <a:t> children with
+// spaces; structural details (paragraphs, runs) are irrelevant for matching.
+func collectPromptText(sp xmlSp) string {
+	var b strings.Builder
+	for _, p := range sp.TxBody.Paras {
+		for _, r := range p.Runs {
+			if r.T == "" {
+				continue
+			}
+			if b.Len() > 0 {
+				b.WriteByte(' ')
+			}
+			b.WriteString(r.T)
+		}
+	}
+	return b.String()
 }
 
 // --- Layout selection helpers ---

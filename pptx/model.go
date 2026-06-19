@@ -110,6 +110,13 @@ type Shape struct {
 	IsPlaceholder bool
 	// PlaceholderIdx is the placeholder index; only meaningful for placeholders.
 	PlaceholderIdx int
+	// Role, when set, records slidown's semantic role for this shape (e.g.
+	// "subTitle") independent of its underlying OOXML Placeholder type. It is
+	// emitted as a slidown extension under <p:nvPr> so future incremental shape
+	// updates can match shapes by intent even when the underlying placeholder
+	// type is the generic "body". Unknown to PowerPoint; ignored on read by
+	// tools that don't recognise the extension.
+	Role string
 	// Geometry in EMUs. Used for non-placeholder shapes and as an explicit
 	// override for placeholders.
 	X, Y, W, H int64

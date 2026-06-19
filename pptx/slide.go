@@ -65,6 +65,12 @@ func renderSlide(s *Slide, mediaIdx *int) (xml string, rels []slideRel, media []
 const (
 	fingerprintNS  = "https://github.com/Songmu/slidown/ns"
 	fingerprintURI = "{6F2A3B40-5C7D-4E21-9A6B-1D3F8C0E7B92}"
+	// shapeMetaURI identifies a per-shape slidown metadata extension carried
+	// inside the shape's <p:nvPr>. Currently used to record a semantic Role
+	// (e.g. "subTitle") on shapes whose underlying placeholder type is
+	// repurposed (e.g. an ordinary body placeholder used as a subtitle target
+	// via the layout's subtitle hint).
+	shapeMetaURI = "{A3F7C812-9B4D-4E16-83CA-2D7F1E9B4C58}"
 )
 
 // fingerprintExt renders the slide-level extLst carrying the source fingerprint
@@ -79,6 +85,18 @@ func fingerprintExt(fp, key string) string {
 	}
 	return `<p:extLst><p:ext uri="` + fingerprintURI + `">` +
 		`<slidown:fp xmlns:slidown="` + fingerprintNS + `"` + attrs + `/>` +
+		`</p:ext></p:extLst>`
+}
+
+// shapeMetaExt renders the per-shape slidown extension carrying the shape's
+// semantic Role (e.g. "subTitle"). Returns an empty string when role is empty
+// so callers can drop it into the XML unconditionally.
+func shapeMetaExt(role string) string {
+	if role == "" {
+		return ""
+	}
+	return `<p:extLst><p:ext uri="` + shapeMetaURI + `">` +
+		`<slidown:shape xmlns:slidown="` + fingerprintNS + `" role="` + escapeXML(role) + `"/>` +
 		`</p:ext></p:extLst>`
 }
 
@@ -147,6 +165,7 @@ func renderShape(sh *Shape, id int, relIdx *int, rels *[]slideRel) string {
 		ph += `/>`
 		b.WriteString(ph)
 	}
+	b.WriteString(shapeMetaExt(sh.Role))
 	b.WriteString(`</p:nvPr></p:nvSpPr>`)
 
 	b.WriteString(`<p:spPr>`)

@@ -124,6 +124,17 @@ Section Header
 The argument may also be a markdown deck, in which case its configured template
 is resolved.
 
+#### Repurposing a placeholder as a subtitle target
+
+A layout that has no `subTitle` placeholder can opt one of its text
+placeholders into the subtitle role without XML editing. In PowerPoint's
+slide master view, either rename the placeholder so its name contains
+"subtitle" (via the Selection Pane: Home → Arrange → Selection Pane on macOS,
+or Alt+F10 on Windows), or edit its prompt text to include "subtitle".
+slidown matches case-insensitively, so labels such as `Subtitle 1` or
+`Add subtitle here` all qualify. The first body-shaped placeholder that
+matches is used as the subtitle slot; the rest stay as body placeholders.
+
 ## Markdown file format
 
 The Markdown used by `slidown` consists of an optional YAML frontmatter and a
