@@ -25,7 +25,7 @@ func renderSlideWithLayout(p *pptx.Presentation, s *slidown.Slide, tmpl *pptx.Te
 	sl := p.AddSlide()
 	sl.LayoutName = layout.Name
 
-	titlePH, subPH, bodyPH := classifyPlaceholders(layout)
+	titlePH, subPH, subFromHint, bodyPH := classifyPlaceholders(layout)
 
 	// Title
 	if titlePH != nil {
@@ -45,11 +45,22 @@ func renderSlideWithLayout(p *pptx.Presentation, s *slidown.Slide, tmpl *pptx.Te
 	var bodyParas []*pptx.Paragraph
 	if subPH != nil {
 		if sub := subtitleParagraphs(s); len(sub) > 0 {
+			// When the layout exposes no real subTitle placeholder but a body
+			// placeholder hints at being one (HasSubtitleHint), keep the
+			// underlying OOXML type ("body") so the slide stays
+			// schema-compatible with the layout, and mark the shape with a
+			// slidown Role so future incremental shape updates can identify
+			// the subtitle target by intent.
+			role := ""
+			if subFromHint {
+				role = "subTitle"
+			}
 			sl.AddShape(&pptx.Shape{
 				Name:           "Subtitle",
 				IsPlaceholder:  true,
 				Placeholder:    pptx.PlaceholderType(subPH.Type),
 				PlaceholderIdx: subPH.Idx,
+				Role:           role,
 				Paragraphs:     sub,
 			})
 		}
@@ -98,8 +109,18 @@ func resolveLayout(s *slidown.Slide, tmpl *pptx.Template, first bool) *pptx.Layo
 }
 
 // classifyPlaceholders picks the title, subtitle and body placeholders from a
-// layout.
-func classifyPlaceholders(l *pptx.LayoutInfo) (title, sub, body *pptx.PlaceholderInfo) {
+// layout. Preference order for the subtitle slot:
+//   1. A real <p:ph type="subTitle"/> placeholder.
+//   2. The first body-shaped placeholder whose display name or prompt text
+//      contains "subtitle" (case insensitive). This lets users opt an ordinary
+//      text placeholder into the subtitle role via PowerPoint's Selection Pane
+//      or slide-master prompt edit, without XML editing.
+//
+// subFromHint reports whether the returned sub came from the hint fallback.
+// The hint-promoted placeholder is removed from the body candidate pool, so
+// any remaining body placeholder is used as the body slot.
+func classifyPlaceholders(l *pptx.LayoutInfo) (title, sub *pptx.PlaceholderInfo, subFromHint bool, body *pptx.PlaceholderInfo) {
+	var bodyCandidates []*pptx.PlaceholderInfo
 	for _, ph := range l.Placeholders {
 		switch ph.Type {
 		case "ctrTitle", "title":
@@ -111,12 +132,23 @@ func classifyPlaceholders(l *pptx.LayoutInfo) (title, sub, body *pptx.Placeholde
 				sub = ph
 			}
 		case "body", "obj", "tx", "":
-			if body == nil {
-				body = ph
+			bodyCandidates = append(bodyCandidates, ph)
+		}
+	}
+	if sub == nil {
+		for i, ph := range bodyCandidates {
+			if ph.HasSubtitleHint() {
+				sub = ph
+				subFromHint = true
+				bodyCandidates = append(bodyCandidates[:i], bodyCandidates[i+1:]...)
+				break
 			}
 		}
 	}
-	return title, sub, body
+	if len(bodyCandidates) > 0 {
+		body = bodyCandidates[0]
+	}
+	return title, sub, subFromHint, body
 }
 
 // subtitleParagraphs renders only the subtitle content (without the emphasis

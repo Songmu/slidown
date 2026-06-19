@@ -103,6 +103,18 @@ Mirrors deck (independent of the concrete layout):
 - **Block quotes** → italic, indented body paragraphs.
 - **Speaker notes** (HTML comments) → the slide's notes slide.
 
+Subtitle placeholder resolution prefers a real `<p:ph type="subTitle"/>` on the
+layout. When none is present, slidown falls back to a **subtitle hint** on
+ordinary text placeholders: the first body-shaped placeholder whose
+`<p:cNvPr name="...">` (editable from PowerPoint's Selection Pane) or
+custom prompt text (`<a:t>` in `<p:txBody>` of the layout shape) contains
+"subtitle" (case-insensitive) is treated as the subtitle slot. This lets users
+opt in via GUI without XML editing. Hint-promoted shapes keep their underlying
+`body` placeholder type in the emitted slide and carry a slidown role extension
+(`<p:extLst>` under `<p:nvPr>` with URI
+`{A3F7C812-9B4D-4E16-83CA-2D7F1E9B4C58}`, attribute `role="subTitle"`) so
+future incremental shape updates can identify the subtitle target by intent.
+
 Inline styles map to run properties: bold, italic, monospace (code), underline,
 strikethrough (`del`), and hyperlinks.
 
