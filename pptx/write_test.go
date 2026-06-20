@@ -81,7 +81,7 @@ func TestWriteToProducesValidZip(t *testing.T) {
 		`<p:ph type="body" idx="1"/>`,
 		`<a:t>Hello slidown</a:t>`,
 		`b="1"`,               // bold run
-		`typeface="Consolas"`, // code run
+		`typeface="Noto Sans Mono"`, // code run
 		`<a:buAutoNum`,        // numbered bullet
 		`lvl="1"`,             // nested level
 		`<a:hlinkClick`,       // hyperlink

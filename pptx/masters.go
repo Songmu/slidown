@@ -20,8 +20,8 @@ const theme1 = xmlDecl +
 	`<a:folHlink><a:srgbClr val="954F72"/></a:folHlink>` +
 	`</a:clrScheme>` +
 	`<a:fontScheme name="slidown">` +
-	`<a:majorFont><a:latin typeface="Calibri Light"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>` +
-	`<a:minorFont><a:latin typeface="Calibri"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont>` +
+	`<a:majorFont><a:latin typeface="Noto Sans"/><a:ea typeface="Noto Sans JP"/><a:cs typeface=""/></a:majorFont>` +
+	`<a:minorFont><a:latin typeface="Noto Sans"/><a:ea typeface="Noto Sans JP"/><a:cs typeface=""/></a:minorFont>` +
 	`</a:fontScheme>` +
 	`<a:fmtScheme name="slidown">` +
 	`<a:fillStyleLst>` +
@@ -102,7 +102,7 @@ func bodyStyleLevels() string {
 	for i := 0; i < 9; i++ {
 		out += `<a:lvl` + itoa(i+1) + `pPr marL="` + itoa(indents[i]) + `" indent="-285750" algn="l" defTabSz="914400" rtl="0" eaLnBrk="1" latinLnBrk="0" hangingPunct="1">` +
 			`<a:spcBef><a:spcPct val="20000"/></a:spcBef>` +
-			`<a:buFont typeface="Arial" panose="020B0604020202020204" pitchFamily="34" charset="0"/>` +
+			`<a:buFont typeface="Noto Sans" panose="020B0604020202020204" pitchFamily="34" charset="0"/>` +
 			`<a:buChar char="&#8226;"/>` +
 			`<a:defRPr sz="` + itoa(sizes[i]) + `" kern="1200"><a:solidFill><a:schemeClr val="tx1"/></a:solidFill><a:latin typeface="+mn-lt"/></a:defRPr></a:lvl` + itoa(i+1) + `pPr>`
 	}
