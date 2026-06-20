@@ -48,11 +48,11 @@ const visualHashThreshold = 8
 // TestVisualGolden recreates deck's per-slide visual regression test for
 // slidown: it renders each fixture to a .pptx, rasterizes every slide with
 // LibreOffice + pdftoppm, and compares each page against a committed golden via
-// perceptual hashing. It is opt-in (SLIDOWN_E2E=1) and skipped when the required
-// tools are missing. Set UPDATE_GOLDEN=1 to (re)generate the goldens.
+// perceptual hashing. It is skipped under `go test -short` and when the
+// required tools are missing. Set UPDATE_GOLDEN=1 to (re)generate the goldens.
 func TestVisualGolden(t *testing.T) {
-	if os.Getenv("SLIDOWN_E2E") == "" {
-		t.Skip("set SLIDOWN_E2E=1 to run the LibreOffice visual golden test")
+	if testing.Short() {
+		t.Skip("skipping LibreOffice visual golden test in short mode")
 	}
 	soffice := findSoffice()
 	if soffice == "" {

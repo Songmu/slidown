@@ -237,9 +237,10 @@ a template (e.g. a different `--template` is given), the rebuild falls back to
 - **Golden JSON tests** for the Markdown parser (`md`).
 - **External-template fixture** (`testdata/template_base.pptx`, authored by
   LibreOffice) exercising the template loader against foreign OOXML.
-- **Opt-in visual golden test** (`render/visual_test.go`, run with
-  `SLIDOWN_E2E=1`): renders slides to PNG via LibreOffice + `pdftoppm` and
-  compares against committed goldens with perceptual hashing.
+- **Visual golden test** (`render/visual_test.go`): renders slides to PNG via
+  LibreOffice + `pdftoppm` and compares against committed goldens with
+  perceptual hashing. Runs by default; skipped under `go test -short` or when
+  the required tools are missing.
 - Lint is `go vet` + `staticcheck`, wired through the Go `tool` directive
   (`make lint`), so no extra binary install is required.
 

@@ -74,7 +74,7 @@ func TestMarkdownToPptxEndToEnd(t *testing.T) {
 		`<a:t>alpha</a:t>`,
 		`b="1"`,               // bold item
 		`strike="sngStrike"`,  // strikethrough via ~~ -> del
-		`typeface="Consolas"`, // code item
+		`typeface="Noto Sans Mono"`, // code item
 		`lvl="1"`,             // nested
 		`<a:buChar`,           // bullets
 	} {

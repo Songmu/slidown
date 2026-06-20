@@ -204,7 +204,7 @@ func renderParagraph(p *Paragraph, relIdx *int, rels *[]slideRel) string {
 	case p.Bullet && p.Numbered:
 		bullet = `<a:buFont typeface="+mj-lt"/><a:buAutoNum type="arabicPeriod"/>`
 	case p.Bullet:
-		bullet = `<a:buFont typeface="Arial" panose="020B0604020202020204" pitchFamily="34" charset="0"/><a:buChar char="&#8226;"/>`
+		bullet = `<a:buFont typeface="Noto Sans" panose="020B0604020202020204" pitchFamily="34" charset="0"/><a:buChar char="&#8226;"/>`
 	default:
 		bullet = `<a:buNone/>`
 	}
@@ -244,7 +244,7 @@ func renderRun(r *Run, relIdx *int, rels *[]slideRel) string {
 	// The CT_TextCharacterProperties schema requires latin/cs (the font, set for
 	// code runs) to precede hlinkClick, so emit Code before Link.
 	if r.Code {
-		inner.WriteString(`<a:latin typeface="Consolas" pitchFamily="49" charset="0"/><a:cs typeface="Consolas"/>`)
+		inner.WriteString(`<a:latin typeface="Noto Sans Mono" pitchFamily="49" charset="0"/><a:cs typeface="Noto Sans Mono"/>`)
 	}
 	if r.Link != "" {
 		*relIdx++

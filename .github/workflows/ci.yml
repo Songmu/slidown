@@ -26,6 +26,17 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Install LibreOffice and fonts for visual e2e tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libreoffice \
+            poppler-utils \
+            fonts-noto-core \
+            fonts-noto-mono \
+            fonts-noto-cjk
+          fc-cache -f
+
       - name: Run lint
         run: make lint
 

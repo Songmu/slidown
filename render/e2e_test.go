@@ -20,12 +20,13 @@ func findSoffice() string {
 	return ""
 }
 
-// TestE2ERendersWithLibreOffice is an opt-in visual end-to-end test: it builds a
-// .pptx covering the main element types and verifies LibreOffice can open and
-// convert it to a PDF. It is skipped when LibreOffice is not installed.
+// TestE2ERendersWithLibreOffice is a visual end-to-end test: it builds a .pptx
+// covering the main element types and verifies LibreOffice can open and convert
+// it to a PDF. It is skipped under `go test -short` and when LibreOffice is not
+// installed.
 func TestE2ERendersWithLibreOffice(t *testing.T) {
-	if os.Getenv("SLIDOWN_E2E") == "" {
-		t.Skip("set SLIDOWN_E2E=1 to run the LibreOffice visual e2e test")
+	if testing.Short() {
+		t.Skip("skipping LibreOffice visual e2e test in short mode")
 	}
 	soffice := findSoffice()
 	if soffice == "" {
