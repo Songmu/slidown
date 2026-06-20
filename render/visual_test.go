@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/Songmu/slidown/md"
+	"github.com/Songmu/slidown/pptx"
 	"github.com/corona10/goimagehash"
 )
 
@@ -99,8 +100,10 @@ func TestVisualGolden(t *testing.T) {
 	}
 }
 
-// renderSlidePNGs builds the fixture into a .pptx and rasterizes each slide to a
-// PNG, returning the per-page PNG bytes in slide order.
+// renderSlidePNGs builds the fixture into a .pptx (rendered through the deck
+// template fixture so the visual goldens exercise the external-template code
+// path) and rasterizes each slide to a PNG, returning the per-page PNG bytes
+// in slide order.
 func renderSlidePNGs(t *testing.T, soffice, pdftoppm, name string) [][]byte {
 	t.Helper()
 	src, err := os.ReadFile(filepath.Join("..", "testdata", name))
@@ -116,9 +119,15 @@ func renderSlidePNGs(t *testing.T, soffice, pdftoppm, name string) [][]byte {
 		t.Fatalf("ToSlides %s: %v", name, err)
 	}
 
+	const templateFixture = "../testdata/template_base.pptx"
+	tmpl, err := pptx.LoadTemplate(templateFixture)
+	if err != nil {
+		t.Fatalf("LoadTemplate %s: %v", templateFixture, err)
+	}
+
 	dir := t.TempDir()
 	pptxPath := filepath.Join(dir, "out.pptx")
-	if err := ToPresentation(slides).WriteFile(pptxPath); err != nil {
+	if err := ToPresentationWithTemplate(slides, tmpl).WriteFile(pptxPath); err != nil {
 		t.Fatalf("WriteFile %s: %v", name, err)
 	}
 
