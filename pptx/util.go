@@ -1,6 +1,9 @@
 package pptx
 
-import "strconv"
+import (
+	"strconv"
+	"strings"
+)
 
 func itoa(i int) string     { return strconv.Itoa(i) }
 func itoa64(i int64) string { return strconv.FormatInt(i, 10) }
@@ -9,9 +12,12 @@ func itoa64(i int64) string { return strconv.FormatInt(i, 10) }
 // and attribute values.
 func escapeXML(s string) string {
 	needs := false
-	for i := 0; i < len(s); i++ {
-		switch s[i] {
+	for _, r := range s {
+		switch r {
 		case '&', '<', '>', '"', '\'':
+			needs = true
+		}
+		if isForbiddenXMLRune(r) {
 			needs = true
 		}
 		if needs {
@@ -21,22 +27,47 @@ func escapeXML(s string) string {
 	if !needs {
 		return s
 	}
-	var b []byte
-	for i := 0; i < len(s); i++ {
-		switch s[i] {
+	capacity := len(s)
+	for _, r := range s {
+		switch r {
 		case '&':
-			b = append(b, "&amp;"...)
-		case '<':
-			b = append(b, "&lt;"...)
-		case '>':
-			b = append(b, "&gt;"...)
-		case '"':
-			b = append(b, "&quot;"...)
-		case '\'':
-			b = append(b, "&apos;"...)
-		default:
-			b = append(b, s[i])
+			capacity += 4
+		case '<', '>':
+			capacity += 3
+		case '"', '\'':
+			capacity += 5
 		}
 	}
-	return string(b)
+	var b strings.Builder
+	b.Grow(capacity)
+	for _, r := range s {
+		if isForbiddenXMLRune(r) {
+			continue
+		}
+		switch r {
+		case '&':
+			b.WriteString("&amp;")
+		case '<':
+			b.WriteString("&lt;")
+		case '>':
+			b.WriteString("&gt;")
+		case '"':
+			b.WriteString("&quot;")
+		case '\'':
+			b.WriteString("&apos;")
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func isForbiddenXMLRune(r rune) bool {
+	if r < 0x20 && r != '\t' && r != '\n' && r != '\r' {
+		return true
+	}
+	if r >= 0xD800 && r <= 0xDFFF {
+		return true
+	}
+	return r == 0xFFFE || r == 0xFFFF
 }

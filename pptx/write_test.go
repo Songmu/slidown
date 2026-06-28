@@ -3,6 +3,7 @@ package pptx
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/xml"
 	"io"
 	"strings"
 	"testing"
@@ -80,11 +81,11 @@ func TestWriteToProducesValidZip(t *testing.T) {
 		`<p:ph type="title"/>`,
 		`<p:ph type="body" idx="1"/>`,
 		`<a:t>Hello slidown</a:t>`,
-		`b="1"`,               // bold run
+		`b="1"`,                     // bold run
 		`typeface="Noto Sans Mono"`, // code run
-		`<a:buAutoNum`,        // numbered bullet
-		`lvl="1"`,             // nested level
-		`<a:hlinkClick`,       // hyperlink
+		`<a:buAutoNum`,              // numbered bullet
+		`lvl="1"`,                   // nested level
+		`<a:hlinkClick`,             // hyperlink
 	} {
 		if !strings.Contains(slide, sub) {
 			t.Errorf("slide1.xml missing %q", sub)
@@ -222,4 +223,84 @@ func TestRunCodeLinkRPrOrder(t *testing.T) {
 	if latin > hlink {
 		t.Errorf("latin (%d) must precede hlinkClick (%d) per the schema", latin, hlink)
 	}
+}
+
+func TestWriteToStripsForbiddenXMLChars(t *testing.T) {
+	p := New()
+	p.Title = "Deck\x00Title"
+	s := p.AddSlide()
+	s.AddShape(&Shape{
+		Placeholder: PlaceholderBody,
+		Paragraphs: []*Paragraph{
+			{Runs: []*Run{
+				{Text: "hello\x00world\x07!\x1f"},
+				{Text: "link", Link: "https://example.com/\x00path"},
+			}},
+		},
+	})
+	s.Note = "note\x00line"
+
+	var buf bytes.Buffer
+	if _, err := p.WriteTo(&buf); err != nil {
+		t.Fatalf("WriteTo: %v", err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	if err != nil {
+		t.Fatalf("invalid zip: %v", err)
+	}
+
+	parts := map[string]string{}
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("open %s: %v", f.Name, err)
+		}
+		b, err := io.ReadAll(rc)
+		if err != nil {
+			rc.Close()
+			t.Fatalf("read %s: %v", f.Name, err)
+		}
+		rc.Close()
+		parts[f.Name] = string(b)
+	}
+
+	for _, name := range []string{
+		"ppt/slides/slide1.xml",
+		"ppt/slides/_rels/slide1.xml.rels",
+		"docProps/core.xml",
+		"ppt/notesSlides/notesSlide1.xml",
+	} {
+		xmlPart, ok := parts[name]
+		if !ok {
+			t.Fatalf("missing %s", name)
+		}
+		if err := assertXMLWellFormed(xmlPart); err != nil {
+			t.Fatalf("%s is not well-formed XML: %v", name, err)
+		}
+		if hasForbiddenControl(xmlPart) {
+			t.Fatalf("%s still contains forbidden control characters", name)
+		}
+	}
+}
+
+func assertXMLWellFormed(s string) error {
+	dec := xml.NewDecoder(strings.NewReader(s))
+	for {
+		if _, err := dec.Token(); err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+	}
+}
+
+func hasForbiddenControl(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < 0x20 && c != '\t' && c != '\n' && c != '\r' {
+			return true
+		}
+	}
+	return false
 }
