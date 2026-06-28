@@ -57,7 +57,6 @@ with --template or the "template" frontmatter/config field.`,
 		}
 
 		templatePath := applyTemplate
-		useExistingAsTemplate := false
 		if templatePath == "" && m.Frontmatter != nil {
 			templatePath = m.Frontmatter.Template
 		}
@@ -68,7 +67,6 @@ with --template or the "template" frontmatter/config field.`,
 			}
 			if exists {
 				templatePath = out
-				useExistingAsTemplate = true
 			}
 		}
 
@@ -96,7 +94,7 @@ with --template or the "template" frontmatter/config field.`,
 			return fmt.Errorf("failed to write presentation: %w", err)
 		}
 
-		updated, err := writePresentation(out, buf.Bytes(), slides, useExistingAsTemplate)
+		updated, err := writePresentation(out, buf.Bytes(), slides)
 		if err != nil {
 			return fmt.Errorf("failed to write presentation: %w", err)
 		}
@@ -109,7 +107,7 @@ with --template or the "template" frontmatter/config field.`,
 	},
 }
 
-func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, allowNoOp bool) (bool, error) {
+func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides) (bool, error) {
 	exists, err := pathExists(out)
 	if err != nil {
 		return false, err
@@ -121,30 +119,28 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, 
 		return false, nil
 	}
 
-	// When the existing file is reused as the design template, preserve the
-	// slides that should keep their existing content: slides whose source did
-	// not change (so manual edits survive) and slides explicitly frozen via
-	// configuration. Slides are matched to their existing counterpart by stable
-	// key (falling back to position), so reuse and freeze survive inserts,
-	// deletions and reordering. Change detection compares each slide's embedded
-	// source fingerprint against the freshly computed one.
-	if allowNoOp {
-		if existing, err := pptx.ReadSlideMetas(out); err == nil {
-			reuse := buildReuseMap(sourceSlides, existing)
-			switch {
-			case isIdentityReuse(reuse, len(sourceSlides), len(existing)):
-				// Every slide is reused in place: keep the existing file as is.
-				return true, nil
-			case len(reuse) > 0:
-				merged, err := pptx.MergeReusingUnchangedSlides(out, newPPTX, reuse)
-				if err != nil {
-					return false, err
-				}
-				if err := os.WriteFile(out, merged, 0o600); err != nil {
-					return false, err
-				}
-				return true, nil
+	// When the output file already exists, preserve the slides that should keep
+	// their existing content: slides whose source did not change (so manual
+	// edits survive) and slides explicitly frozen via configuration. Slides are
+	// matched to their existing counterpart by stable key (falling back to
+	// position), so reuse and freeze survive inserts, deletions and reordering.
+	// Change detection compares each slide's embedded source fingerprint against
+	// the freshly computed one.
+	if existing, err := pptx.ReadSlideMetas(out); err == nil {
+		reuse := buildReuseMap(sourceSlides, existing)
+		switch {
+		case isIdentityReuse(reuse, len(sourceSlides), len(existing)):
+			// Every slide is reused in place: keep the existing file as is.
+			return true, nil
+		case len(reuse) > 0:
+			merged, err := pptx.MergeReusingUnchangedSlides(out, newPPTX, reuse)
+			if err != nil {
+				return false, err
 			}
+			if err := os.WriteFile(out, merged, 0o600); err != nil {
+				return false, err
+			}
+			return true, nil
 		}
 	}
 
