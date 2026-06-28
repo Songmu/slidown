@@ -2,6 +2,7 @@ package pptx
 
 import (
 	"encoding/xml"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,6 +25,79 @@ func ReadSlideMetas(path string) ([]SlideMeta, error) {
 		return nil, err
 	}
 
+	slideNames := slideNamesFromPresentationOrder(parts)
+	if len(slideNames) == 0 {
+		slideNames = slideNamesByFileName(parts)
+	}
+
+	metas := make([]SlideMeta, 0, len(slideNames))
+	for _, name := range slideNames {
+		metas = append(metas, parseSlideMeta(parts[name]))
+	}
+	return metas, nil
+}
+
+func slideNamesFromPresentationOrder(parts map[string][]byte) []string {
+	presentationXML, ok := parts["ppt/presentation.xml"]
+	if !ok {
+		return nil
+	}
+	presentationRelsXML, ok := parts["ppt/_rels/presentation.xml.rels"]
+	if !ok {
+		return nil
+	}
+
+	var p struct {
+		SlideIDs []struct {
+			RelID string `xml:"http://schemas.openxmlformats.org/officeDocument/2006/relationships id,attr"`
+		} `xml:"sldIdLst>sldId"`
+	}
+	if err := xml.Unmarshal(presentationXML, &p); err != nil {
+		return nil
+	}
+	var rels struct {
+		Rels []struct {
+			ID     string `xml:"Id,attr"`
+			Type   string `xml:"Type,attr"`
+			Target string `xml:"Target,attr"`
+		} `xml:"Relationship"`
+	}
+	if err := xml.Unmarshal(presentationRelsXML, &rels); err != nil {
+		return nil
+	}
+
+	targetByID := make(map[string]string, len(rels.Rels))
+	for _, r := range rels.Rels {
+		if r.ID == "" || r.Target == "" || !strings.HasSuffix(r.Type, "/slide") {
+			continue
+		}
+		if _, exists := targetByID[r.ID]; exists {
+			return nil
+		}
+		targetByID[r.ID] = r.Target
+	}
+
+	slideNames := make([]string, 0, len(p.SlideIDs))
+	for _, s := range p.SlideIDs {
+		target, ok := targetByID[s.RelID]
+		if !ok {
+			return nil
+		}
+		slideName := target
+		if strings.HasPrefix(slideName, "/") {
+			slideName = strings.TrimPrefix(slideName, "/")
+		} else {
+			slideName = path.Clean(path.Join("ppt", slideName))
+		}
+		if _, ok := parts[slideName]; !ok {
+			return nil
+		}
+		slideNames = append(slideNames, slideName)
+	}
+	return slideNames
+}
+
+func slideNamesByFileName(parts map[string][]byte) []string {
 	type idxName struct {
 		idx  int
 		name string
@@ -36,11 +110,11 @@ func ReadSlideMetas(path string) ([]SlideMeta, error) {
 	}
 	sort.Slice(slides, func(i, j int) bool { return slides[i].idx < slides[j].idx })
 
-	metas := make([]SlideMeta, 0, len(slides))
+	names := make([]string, 0, len(slides))
 	for _, s := range slides {
-		metas = append(metas, parseSlideMeta(parts[s.name]))
+		names = append(names, s.name)
 	}
-	return metas, nil
+	return names
 }
 
 func slideNumFromName(name string) int {

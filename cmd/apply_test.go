@@ -4,9 +4,13 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/xml"
+	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -15,6 +19,17 @@ import (
 	"github.com/Songmu/slidown/pptx"
 	"github.com/Songmu/slidown/render"
 )
+
+const (
+	testManualFirstMarker  = "MANUAL_FIRST"
+	testManualSecondMarker = "MANUAL_SECOND"
+)
+
+type testPresentation struct {
+	SlideIDs []struct {
+		RelID string `xml:"http://schemas.openxmlformats.org/officeDocument/2006/relationships id,attr"`
+	} `xml:"sldIdLst>sldId"`
+}
 
 func TestSlideFingerprintRoundTrip(t *testing.T) {
 	cfg, err := config.Load("")
@@ -351,4 +366,173 @@ func TestApplyReusesKeyedSlideAcrossInsert(t *testing.T) {
 	if !bytes.Equal(orig["ppt/slides/slide2.xml"], now["ppt/slides/slide3.xml"]) {
 		t.Errorf("unchanged keyed slide B was not reused at its new position")
 	}
+}
+
+func TestApplyPreservesVisibleOrderBytesAfterReorderedPresentation(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "deck.pptx")
+
+	const v1 = "# One\n\nbody one\n\n---\n\n# Two\n\nbody two\n"
+	const reorderedSource = "# Two\n\nbody two\n\n---\n\n# One\n\nbody one\n"
+
+	if updated := applyToFileForTest(t, v1, out); updated {
+		t.Fatalf("first apply should be a fresh write")
+	}
+
+	reorderPresentationAndMarkSlidesInFileForTest(t, out)
+	beforeVisible := readVisibleSlidePartsForTest(t, out)
+
+	if updated := applyToFileForTest(t, reorderedSource, out); !updated {
+		t.Fatalf("second apply should report an update")
+	}
+	afterVisible := readVisibleSlidePartsForTest(t, out)
+
+	if !bytes.Equal(beforeVisible[0], afterVisible[0]) {
+		t.Fatalf("first visible slide bytes were not preserved after rebuild")
+	}
+	if !bytes.Equal(beforeVisible[1], afterVisible[1]) {
+		t.Fatalf("second visible slide bytes were not preserved after rebuild")
+	}
+}
+
+func readVisibleSlidePartsForTest(t *testing.T, pptxPath string) [][]byte {
+	t.Helper()
+	data, err := os.ReadFile(pptxPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("zip.NewReader: %v", err)
+	}
+	parts := map[string][]byte{}
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("open %s: %v", f.Name, err)
+		}
+		b, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatalf("read %s: %v", f.Name, err)
+		}
+		parts[f.Name] = b
+	}
+
+	var p testPresentation
+	if err := xml.Unmarshal(parts["ppt/presentation.xml"], &p); err != nil {
+		t.Fatalf("unmarshal presentation.xml: %v", err)
+	}
+	var rels struct {
+		Rels []struct {
+			ID     string `xml:"Id,attr"`
+			Type   string `xml:"Type,attr"`
+			Target string `xml:"Target,attr"`
+		} `xml:"Relationship"`
+	}
+	if err := xml.Unmarshal(parts["ppt/_rels/presentation.xml.rels"], &rels); err != nil {
+		t.Fatalf("unmarshal presentation.xml.rels: %v", err)
+	}
+
+	targetByID := map[string]string{}
+	for _, r := range rels.Rels {
+		if strings.HasSuffix(r.Type, "/slide") {
+			targetByID[r.ID] = r.Target
+		}
+	}
+
+	visible := make([][]byte, 0, len(p.SlideIDs))
+	for _, s := range p.SlideIDs {
+		target, ok := targetByID[s.RelID]
+		if !ok {
+			t.Fatalf("missing rel target for %q", s.RelID)
+		}
+		slideName := target
+		if strings.HasPrefix(slideName, "/") {
+			slideName = strings.TrimPrefix(slideName, "/")
+		} else {
+			slideName = path.Clean(path.Join("ppt", slideName))
+		}
+		b, ok := parts[slideName]
+		if !ok {
+			t.Fatalf("missing slide part %q", slideName)
+		}
+		visible = append(visible, b)
+	}
+	return visible
+}
+
+func reorderPresentationAndMarkSlidesInFileForTest(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("zip.NewReader: %v", err)
+	}
+	parts := map[string][]byte{}
+	order := make([]string, 0, len(zr.File))
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("open %s: %v", f.Name, err)
+		}
+		b, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatalf("read %s: %v", f.Name, err)
+		}
+		parts[f.Name] = b
+		order = append(order, f.Name)
+	}
+
+	parts["ppt/presentation.xml"] = reorderPresentationXMLForApplyTest(t, parts["ppt/presentation.xml"])
+	parts["ppt/slides/slide1.xml"] = bytes.Replace(parts["ppt/slides/slide1.xml"], []byte("body one"), []byte("body one "+testManualSecondMarker), 1)
+	parts["ppt/slides/slide2.xml"] = bytes.Replace(parts["ppt/slides/slide2.xml"], []byte("body two"), []byte("body two "+testManualFirstMarker), 1)
+
+	var outBuf bytes.Buffer
+	zw := zip.NewWriter(&outBuf)
+	for _, name := range order {
+		fw, err := zw.Create(name)
+		if err != nil {
+			t.Fatalf("zip create %s: %v", name, err)
+		}
+		if _, err := fw.Write(parts[name]); err != nil {
+			t.Fatalf("zip write %s: %v", name, err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("zip close: %v", err)
+	}
+	if err := os.WriteFile(path, outBuf.Bytes(), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+}
+
+func reorderPresentationXMLForApplyTest(t *testing.T, presentationXML []byte) []byte {
+	t.Helper()
+	var p testPresentation
+	if err := xml.Unmarshal(presentationXML, &p); err != nil {
+		t.Fatalf("xml.Unmarshal presentation.xml: %v", err)
+	}
+	if len(p.SlideIDs) < 2 {
+		t.Fatalf("presentation.xml has less than 2 slides")
+	}
+	p.SlideIDs[0], p.SlideIDs[1] = p.SlideIDs[1], p.SlideIDs[0]
+
+	var b strings.Builder
+	b.WriteString("<p:sldIdLst>")
+	for i, s := range p.SlideIDs {
+		b.WriteString(fmt.Sprintf(`<p:sldId id="%d" r:id="%s"/>`, 256+i, s.RelID))
+	}
+	b.WriteString("</p:sldIdLst>")
+
+	re := regexp.MustCompile(`(?s)<p:sldIdLst>.*?</p:sldIdLst>`)
+	updated := re.ReplaceAll(presentationXML, []byte(b.String()))
+	if bytes.Equal(updated, presentationXML) {
+		t.Fatalf("failed to rewrite sldIdLst in presentation.xml")
+	}
+	return updated
 }
