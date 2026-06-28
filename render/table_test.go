@@ -146,7 +146,7 @@ func TestRenderTableCellHyperlink(t *testing.T) {
 	if relStart < 0 {
 		t.Fatalf("could not locate <Relationship> for %s: %s", idNeedle, relsXML)
 	}
-	relEnd := strings.Index(relsXML[pos:], "/>" )
+	relEnd := strings.Index(relsXML[pos:], "/>")
 	if relEnd < 0 {
 		t.Fatalf("unterminated <Relationship> for %s: %s", idNeedle, relsXML)
 	}
