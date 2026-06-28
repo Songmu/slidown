@@ -1,12 +1,14 @@
 # Templates
 
 `slidown` can reuse the theme, slide masters and layouts of an existing
-`.pptx` as the design for the generated deck. Supply the template via the
-`--template` flag, the `template` frontmatter field, or the `template` key in
-the [configuration file](../README.md#configuration-file).
+`.pptx` (or `.potx` PowerPoint template) as the design for the generated
+deck. Supply the template via the `--template` flag, the `template`
+frontmatter field, or the `template` key in the
+[configuration file](../README.md#configuration-file).
 
 ```console
 $ slidown apply deck.md --template theme.pptx
+$ slidown apply deck.md --template theme.potx
 ```
 
 The argument may also be a Markdown deck, in which case its configured
