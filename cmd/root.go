@@ -63,9 +63,11 @@ func Execute() {
 			Revision:    version.Revision,
 		}
 		if b, merr := json.Marshal(d); merr == nil {
-			dumpPath := filepath.Join(config.StateHomePath(), "error.json")
-			if werr := os.WriteFile(dumpPath, b, 0o600); werr != nil {
-				rootCmd.Printf("failed to write error.json to %s: %v\n", dumpPath, werr)
+			stateHome := config.StateHomePath()
+			if err := os.MkdirAll(stateHome, 0o700); err == nil {
+				dumpPath := filepath.Join(stateHome, "error.json")
+				// Best-effort dump write for debugging; ignore failures.
+				_ = os.WriteFile(dumpPath, b, 0o600)
 			}
 		}
 		os.Exit(1)
