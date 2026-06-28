@@ -44,7 +44,7 @@ func renderSlide(s *Slide, mediaIdx *int) (xml string, rels []slideRel, media []
 		id++
 	}
 	for _, tbl := range s.Tables {
-		b.WriteString(renderTable(tbl, id))
+		b.WriteString(renderTable(tbl, id, &relIdx, &rels))
 		id++
 	}
 
@@ -296,7 +296,7 @@ const contentWidthEMU int64 = 10515600
 // renderTable serializes a table as a p:graphicFrame containing an a:tbl with
 // explicit per-cell borders and header fill (self-contained, no table style
 // part required).
-func renderTable(t *Table, id int) string {
+func renderTable(t *Table, id int, relIdx *int, rels *[]slideRel) string {
 	rows := t.Rows
 	if len(rows) == 0 {
 		return ""
@@ -344,7 +344,7 @@ func renderTable(t *Table, id int) string {
 			if c < len(r.Cells) {
 				cell = r.Cells[c]
 			}
-			b.WriteString(renderTableCell(cell, r.Header))
+			b.WriteString(renderTableCell(cell, r.Header, relIdx, rels))
 		}
 		b.WriteString(`</a:tr>`)
 	}
@@ -352,7 +352,7 @@ func renderTable(t *Table, id int) string {
 	return b.String()
 }
 
-func renderTableCell(cell *TableCell, header bool) string {
+func renderTableCell(cell *TableCell, header bool, relIdx *int, rels *[]slideRel) string {
 	var b strings.Builder
 	b.WriteString(`<a:tc><a:txBody><a:bodyPr/><a:lstStyle/>`)
 	var paras []*Paragraph
@@ -375,9 +375,7 @@ func renderTableCell(cell *TableCell, header bool) string {
 				run.Bold = true
 			}
 		}
-		var dummy int
-		var dummyRels []slideRel
-		b.WriteString(renderParagraph(p, &dummy, &dummyRels))
+		b.WriteString(renderParagraph(p, relIdx, rels))
 	}
 	b.WriteString(`</a:txBody>`)
 
