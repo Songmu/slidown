@@ -136,10 +136,28 @@ func TestRenderTableCellHyperlink(t *testing.T) {
 	rid := slideXML[ridStart : ridStart+ridEnd]
 
 	// The same Id must appear in the rels tied to the hyperlink target.
-	if !strings.Contains(relsXML, `Id="`+rid+`"`) {
-		t.Errorf("rels XML does not contain Id=%q: %s", rid, relsXML)
+	// Locate the <Relationship .../> element for this Id and validate its attributes.
+	idNeedle := `Id="` + rid + `"`
+	pos := strings.Index(relsXML, idNeedle)
+	if pos < 0 {
+		t.Fatalf("rels XML does not contain %s: %s", idNeedle, relsXML)
 	}
-	if !strings.Contains(relsXML, `Id="`+rid+`" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"`) {
-		t.Errorf("rels XML does not have hyperlink rel for Id=%q: %s", rid, relsXML)
+	relStart := strings.LastIndex(relsXML[:pos], "<Relationship")
+	if relStart < 0 {
+		t.Fatalf("could not locate <Relationship> for %s: %s", idNeedle, relsXML)
+	}
+	relEnd := strings.Index(relsXML[pos:], "/>" )
+	if relEnd < 0 {
+		t.Fatalf("unterminated <Relationship> for %s: %s", idNeedle, relsXML)
+	}
+	rel := relsXML[relStart : pos+relEnd+2]
+	for _, sub := range []string{
+		`Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"`,
+		`Target="https://example.com"`,
+		`TargetMode="External"`,
+	} {
+		if !strings.Contains(rel, sub) {
+			t.Errorf("rels <Relationship> for %s missing %q: %s", idNeedle, sub, rel)
+		}
 	}
 }
