@@ -27,19 +27,8 @@ func escapeXML(s string) string {
 	if !needs {
 		return s
 	}
-	capacity := len(s)
-	for _, r := range s {
-		switch r {
-		case '&':
-			capacity += 4
-		case '<', '>':
-			capacity += 3
-		case '"', '\'':
-			capacity += 5
-		}
-	}
 	var b strings.Builder
-	b.Grow(capacity)
+	b.Grow(len(s))
 	for _, r := range s {
 		if isForbiddenXMLRune(r) {
 			continue
