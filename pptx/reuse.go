@@ -5,8 +5,9 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"maps"
 	"path"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -49,11 +50,7 @@ func MergeReusingUnchangedSlides(existingPath string, newPPTX []byte, reuse map[
 
 	// Iterate in sorted order so that addPart appends to `order` in a
 	// deterministic sequence regardless of map iteration order.
-	newPositions := make([]int, 0, len(reuse))
-	for k := range reuse {
-		newPositions = append(newPositions, k)
-	}
-	sort.Ints(newPositions)
+	newPositions := slices.Sorted(maps.Keys(reuse))
 	for _, newPos := range newPositions {
 		oldPos := reuse[newPos]
 		oldSlideName := fmt.Sprintf("ppt/slides/slide%d.xml", oldPos)
@@ -154,11 +151,7 @@ const (
 // already declared in the [Content_Types].xml document.
 func ensureContentTypeOverrides(contentTypes []byte, overrides map[string]string) []byte {
 	s := string(contentTypes)
-	parts := make([]string, 0, len(overrides))
-	for part := range overrides {
-		parts = append(parts, part)
-	}
-	sort.Strings(parts)
+	parts := slices.Sorted(maps.Keys(overrides))
 	var inject strings.Builder
 	for _, part := range parts {
 		ct := overrides[part]
