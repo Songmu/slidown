@@ -593,13 +593,10 @@ func genCodeImage(ctx context.Context, codeBlockToImageCmd string, codeBlock *Co
 	env := environToMap()
 	env["CODEBLOCK_LANG"] = codeBlock.Language
 	env["CODEBLOCK_CONTENT"] = codeBlock.Content
-	env["CODEBLOCK_VALUE"] = codeBlock.Content // Deprecated, use CODEBLOCK_CONTENT.
-	// I am unsure whether to set this as an environment variable, but I will set it for consistency.
 	env["CODEBLOCK_OUTPUT"] = output
 	store := map[string]any{
 		"lang":    codeBlock.Language,
 		"content": codeBlock.Content,
-		"value":   codeBlock.Content, // Deprecated, use `content`.
 		"output":  output,
 		"env":     env,
 	}
