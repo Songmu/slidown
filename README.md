@@ -98,8 +98,8 @@ changed — useful for pinning a slide you have hand-tuned in PowerPoint:
 
 ### Using a template
 
-Supply a `.pptx` whose theme, slide masters and layouts should be used as
-the design:
+Supply a `.pptx` (or `.potx`) whose theme, slide masters and layouts should
+be used as the design:
 
 ```console
 $ slidown apply deck.md --template theme.pptx
@@ -133,8 +133,8 @@ Content...
 - `title` (string): The title of the presentation, written to the generated
   `.pptx` document properties (metadata).
 - `output` (string): Output `.pptx` path (used when `--output` is not given).
-- `template` (string): Path to a `.pptx` file whose theme, slide masters and
-  layouts are used as the design for the generated deck.
+- `template` (string): Path to a `.pptx` or `.potx` file whose theme, slide
+  masters and layouts are used as the design for the generated deck.
 - `breaks` (boolean): Control how single line breaks are rendered. Default
   (`false`) renders them as spaces; `true` preserves them as line breaks.
 - `codeBlockToImageCommand` (string): Command used to convert code blocks

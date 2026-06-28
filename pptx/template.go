@@ -146,7 +146,10 @@ type xmlPresentation struct {
 	} `xml:"sldSz"`
 }
 
-// LoadTemplate reads a .pptx file and extracts its reusable design parts.
+// LoadTemplate reads a PowerPoint template package (a .pptx presentation or
+// .potx template) and extracts its reusable design parts. Both formats share
+// the same OOXML structure for theme, slide masters and slide layouts, so the
+// loader treats them interchangeably.
 func LoadTemplate(path string) (*Template, error) {
 	zr, err := zip.OpenReader(path)
 	if err != nil {

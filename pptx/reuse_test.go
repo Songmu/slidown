@@ -26,6 +26,36 @@ func presentationWithNote(t *testing.T, note string) []byte {
 	return buf.Bytes()
 }
 
+// TestMergeReusingUnchangedSlidesDeterministic verifies that repeated calls
+// with identical inputs produce byte-identical output, regardless of map
+// iteration order.
+func TestMergeReusingUnchangedSlidesDeterministic(t *testing.T) {
+	existing := presentationWithNote(t, "speaker note")
+	newPPTX := presentationWithNote(t, "")
+
+	dir := t.TempDir()
+	existingPath := filepath.Join(dir, "existing.pptx")
+	if err := os.WriteFile(existingPath, existing, 0o600); err != nil {
+		t.Fatalf("write existing: %v", err)
+	}
+
+	reuse := map[int]int{1: 1}
+	first, err := MergeReusingUnchangedSlides(existingPath, newPPTX, reuse)
+	if err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+
+	for i := 2; i <= 5; i++ {
+		got, err := MergeReusingUnchangedSlides(existingPath, newPPTX, reuse)
+		if err != nil {
+			t.Fatalf("call %d: %v", i, err)
+		}
+		if !bytes.Equal(first, got) {
+			t.Errorf("call %d produced different bytes (output is non-deterministic)", i)
+		}
+	}
+}
+
 // TestMergeReusingUnchangedSlidesRestoresNotesInfra reproduces the case where a
 // reused slide kept its note but the regenerated package has no notes at all:
 // the notes master and the content-type overrides must be restored so the
