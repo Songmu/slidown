@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/Songmu/slidown/config"
@@ -12,12 +13,14 @@ import (
 
 var lsLayoutsCmd = &cobra.Command{
 	Use:   "ls-layouts TEMPLATE",
-	Short: "list the slide layouts available in a .pptx template",
-	Long: `ls-layouts prints the layout names available in a .pptx template, so
-they can be referenced from a page configuration such as <!-- {"layout":"..."} -->.
+	Short: "list the slide layouts available in a .pptx/.potx template",
+	Long: `ls-layouts prints the layout names available in a .pptx or .potx
+template, so they can be referenced from a page configuration such as
+<!-- {"layout":"..."} -->.
 
-The argument may be a .pptx template directly, or a markdown deck file whose
-template is resolved from the --template flag, its frontmatter, or the config.`,
+The argument may be a .pptx or .potx template directly, or a markdown deck file
+whose template is resolved from the --template flag, its frontmatter, or the
+config.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		tmpl, err := resolveTemplate(args[0])
@@ -38,11 +41,12 @@ template is resolved from the --template flag, its frontmatter, or the config.`,
 	},
 }
 
-// resolveTemplate loads a template from a path that is either a .pptx file or a
-// markdown deck whose template is configured. It returns (nil, nil) when the
-// argument is a markdown deck with no template (the built-in design is used).
+// resolveTemplate loads a template from a path that is either a PowerPoint
+// template file (.pptx / .potx) or a markdown deck whose template is
+// configured. It returns (nil, nil) when the argument is a markdown deck with
+// no template (the built-in design is used).
 func resolveTemplate(path string) (*pptx.Template, error) {
-	if strings.HasSuffix(strings.ToLower(path), ".pptx") {
+	if isTemplateFile(path) {
 		tmpl, err := pptx.LoadTemplate(path)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load template %q: %w", path, err)
@@ -74,7 +78,14 @@ func resolveTemplate(path string) (*pptx.Template, error) {
 
 var lsLayoutsTemplate string
 
+// isTemplateFile reports whether path looks like a PowerPoint template that
+// LoadTemplate can read directly (a .pptx presentation or .potx template).
+func isTemplateFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return ext == ".pptx" || ext == ".potx"
+}
+
 func init() {
-	lsLayoutsCmd.Flags().StringVarP(&lsLayoutsTemplate, "template", "t", "", "path to a .pptx template (overrides the deck's configured template)")
+	lsLayoutsCmd.Flags().StringVarP(&lsLayoutsTemplate, "template", "t", "", "path to a .pptx or .potx template (overrides the deck's configured template)")
 	rootCmd.AddCommand(lsLayoutsCmd)
 }

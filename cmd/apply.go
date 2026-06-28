@@ -32,8 +32,8 @@ and can be overridden with the --output/-o flag.
 A pre-existing output file is treated as the update target and reused as the
 template when no explicit template is supplied.
 
-A .pptx template (its theme, slide masters and layouts) can be supplied
-with --template or the "template" frontmatter/config field.`,
+A .pptx or .potx template (its theme, slide masters and layouts) can be
+supplied with --template or the "template" frontmatter/config field.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		f := args[0]
@@ -239,6 +239,6 @@ func defaultOutputPath(input string) string {
 func init() {
 	applyCmd.Flags().StringVarP(&applyOutput, "output", "o", "", "output .pptx file path (default: DECK_FILE with .pptx extension)")
 	applyCmd.Flags().StringVarP(&applyCodeBlockToImageCmd, "code-block-to-image-command", "", "", "command to convert code blocks to images")
-	applyCmd.Flags().StringVarP(&applyTemplate, "template", "t", "", "path to a .pptx template providing the design")
+	applyCmd.Flags().StringVarP(&applyTemplate, "template", "t", "", "path to a .pptx or .potx template providing the design")
 	rootCmd.AddCommand(applyCmd)
 }
