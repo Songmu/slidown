@@ -83,10 +83,9 @@ func slideNamesFromPresentationOrder(parts map[string][]byte) []string {
 		if !ok {
 			return nil
 		}
-		slideName := target
-		if strings.HasPrefix(slideName, "/") {
-			slideName = strings.TrimPrefix(slideName, "/")
-		} else {
+		slideName := strings.TrimPrefix(target, "/")
+		slideName = path.Clean(slideName)
+		if !strings.HasPrefix(target, "/") && !strings.HasPrefix(slideName, "ppt/") {
 			slideName = path.Clean(path.Join("ppt", slideName))
 		}
 		if _, ok := parts[slideName]; !ok {
