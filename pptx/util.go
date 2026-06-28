@@ -28,7 +28,6 @@ func escapeXML(s string) string {
 		return s
 	}
 	var b strings.Builder
-	b.Grow(len(s))
 	for _, r := range s {
 		if isForbiddenXMLRune(r) {
 			continue
