@@ -20,7 +20,14 @@ func TestExecuteWritesErrorDumpOnFreshStateHome(t *testing.T) {
 	tmpDir := t.TempDir()
 	stateHome := filepath.Join(tmpDir, "state")
 	helper := exec.Command(os.Args[0], "-test.run=TestExecuteWritesErrorDumpOnFreshStateHome")
-	helper.Env = append(os.Environ(),
+	env := make([]string, 0, len(os.Environ())+2)
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "XDG_STATE_HOME=") || strings.HasPrefix(e, "GO_WANT_HELPER_PROCESS=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	helper.Env = append(env,
 		"GO_WANT_HELPER_PROCESS=1",
 		"XDG_STATE_HOME="+stateHome,
 	)
