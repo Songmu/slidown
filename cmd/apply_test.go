@@ -489,8 +489,20 @@ func reorderPresentationAndMarkSlidesInFileForTest(t *testing.T, path string) {
 	}
 
 	parts["ppt/presentation.xml"] = reorderPresentationXMLForApplyTest(t, parts["ppt/presentation.xml"])
-	parts["ppt/slides/slide1.xml"] = bytes.Replace(parts["ppt/slides/slide1.xml"], []byte("body one"), []byte("body one "+testManualSecondMarker), 1)
-	parts["ppt/slides/slide2.xml"] = bytes.Replace(parts["ppt/slides/slide2.xml"], []byte("body two"), []byte("body two "+testManualFirstMarker), 1)
+
+	s1 := parts["ppt/slides/slide1.xml"]
+	s1Updated := bytes.Replace(s1, []byte("body one"), []byte("body one "+testManualSecondMarker), 1)
+	if bytes.Equal(s1Updated, s1) {
+		t.Fatalf("failed to mark slide1.xml with %q", testManualSecondMarker)
+	}
+	parts["ppt/slides/slide1.xml"] = s1Updated
+
+	s2 := parts["ppt/slides/slide2.xml"]
+	s2Updated := bytes.Replace(s2, []byte("body two"), []byte("body two "+testManualFirstMarker), 1)
+	if bytes.Equal(s2Updated, s2) {
+		t.Fatalf("failed to mark slide2.xml with %q", testManualFirstMarker)
+	}
+	parts["ppt/slides/slide2.xml"] = s2Updated
 
 	var outBuf bytes.Buffer
 	zw := zip.NewWriter(&outBuf)
