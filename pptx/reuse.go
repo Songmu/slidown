@@ -61,6 +61,11 @@ func MergeReusingUnchangedSlides(existingPath string, newPPTX []byte, reuse map[
 			continue
 		}
 		newSlideName := fmt.Sprintf("ppt/slides/slide%d.xml", newPos)
+		// Skip if newPos is out of range (<=0 or not present in the new PPTX);
+		// otherwise we would create an orphan part not referenced by presentation.xml.
+		if _, ok := newParts[newSlideName]; !ok {
+			continue
+		}
 		// Derive the numeric part of the old slide name for rewriting
 		// cross-references in rels (e.g. notesSlide back-links).
 		oldPos := slideNumFromName(oldSlideName)
