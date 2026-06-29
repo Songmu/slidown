@@ -238,8 +238,8 @@ func TestMultiBodyPlaceholderDistribution(t *testing.T) {
 	}
 	// The second placeholder (idx=2) must be referenced — confirming that
 	// distributeBodyContent wrote to both placeholders, not just the first.
-	if !strings.Contains(slideXML, `idx="2"`) {
-		t.Errorf("slide XML missing second placeholder (idx=2); multi-body distribution did not occur")
+	if !strings.Contains(slideXML, `<p:ph type="body" idx="2"/>`) {
+		t.Errorf("slide XML missing second body placeholder (idx=2); multi-body distribution did not occur")
 	}
 	// "Left column" must precede "Right column" in the XML, confirming the
 	// correct ordering across the two placeholder shapes.
