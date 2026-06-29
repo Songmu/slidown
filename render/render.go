@@ -224,20 +224,10 @@ func titleParagraphs(s *slidown.Slide) []*pptx.Paragraph {
 // paragraphs, used when folding subtitles into a body placeholder because the
 // layout has no dedicated subtitle slot.
 func subtitleBoldParagraphs(s *slidown.Slide) []*pptx.Paragraph {
-	var out []*pptx.Paragraph
-	switch {
-	case len(s.SubtitleBodies) > 0:
-		for _, b := range s.SubtitleBodies {
-			for _, para := range convertBody(b) {
-				for _, r := range para.Runs {
-					r.Bold = true
-				}
-				out = append(out, para)
-			}
-		}
-	default:
-		for _, st := range s.Subtitles {
-			out = append(out, &pptx.Paragraph{Runs: []*pptx.Run{{Text: st, Bold: true}}})
+	out := subtitleParagraphs(s)
+	for _, para := range out {
+		for _, r := range para.Runs {
+			r.Bold = true
 		}
 	}
 	return out
@@ -247,16 +237,7 @@ func subtitleBoldParagraphs(s *slidown.Slide) []*pptx.Paragraph {
 // Because the built-in layout has no dedicated subtitle placeholder, subtitles
 // are rendered as emphasized lead paragraphs so no content is lost.
 func bodyParagraphs(s *slidown.Slide) []*pptx.Paragraph {
-	out := subtitleBoldParagraphs(s)
-
-	for _, b := range s.Bodies {
-		out = append(out, convertBody(b)...)
-	}
-
-	for _, bq := range s.BlockQuotes {
-		out = append(out, convertBlockQuote(bq)...)
-	}
-	return out
+	return append(subtitleBoldParagraphs(s), contentParagraphs(s)...)
 }
 
 // convertBlockQuote renders a block quote as italic, indented paragraphs so it
