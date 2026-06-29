@@ -238,14 +238,25 @@ func TestMultiBodyPlaceholderDistribution(t *testing.T) {
 	}
 	// The second placeholder (idx=2) must be referenced — confirming that
 	// distributeBodyContent wrote to both placeholders, not just the first.
-	if !strings.Contains(slideXML, `<p:ph type="body" idx="2"/>`) {
-		t.Errorf("slide XML missing second body placeholder (idx=2); multi-body distribution did not occur")
+	const ph2Tag = "<p:ph type=\"body\" idx=\"2\"/>"
+	ph2Pos := strings.Index(slideXML, ph2Tag)
+	if ph2Pos == -1 {
+		t.Fatalf("slide XML missing second body placeholder (idx=2); multi-body distribution did not occur")
 	}
-	// "Left column" must precede "Right column" in the XML, confirming the
-	// correct ordering across the two placeholder shapes.
-	leftPos := strings.Index(slideXML, "Left column")
-	rightPos := strings.Index(slideXML, "Right column")
-	if leftPos >= rightPos {
-		t.Errorf("'Left column' (%d) does not appear before 'Right column' (%d) in slide XML", leftPos, rightPos)
+	spEndRel := strings.Index(slideXML[ph2Pos:], "</p:sp>")
+	if spEndRel == -1 {
+		t.Fatalf("could not find closing </p:sp> for second body placeholder")
+	}
+	ph2Shape := slideXML[ph2Pos : ph2Pos+spEndRel+len("</p:sp>")]
+
+	// Ensure each content group is in the intended placeholder.
+	if !strings.Contains(slideXML[:ph2Pos], "Left column") {
+		t.Errorf("first body content 'Left column' not found before the idx=2 placeholder shape")
+	}
+	if !strings.Contains(ph2Shape, "Right column") {
+		t.Errorf("second body content 'Right column' not found in the idx=2 placeholder shape")
+	}
+	if strings.Contains(ph2Shape, "Left column") {
+		t.Errorf("first body content 'Left column' unexpectedly found in the idx=2 placeholder shape")
 	}
 }
