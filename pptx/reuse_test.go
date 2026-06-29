@@ -60,12 +60,12 @@ func TestMergeReusingUnchangedSlidesDeterministic(t *testing.T) {
 // TestMergeReusingUnchangedSlidesNoMediaCollision reproduces the bug where a
 // reused slide's media overwrites a freshly-generated image with the same name.
 //
-// Scenario: "existing" has one slide with imageX (→ image1.png).  "newPPTX"
+// Scenario: "existing" has one slide with imageX (-> image1.png).  "newPPTX"
 // renders a different imageY into image1.png.  Reusing slide 1 from existing
 // must not clobber the new image1.png=Y; instead the old bytes must be stored
 // under a freshly allocated name and the reused slide's rels rewritten to match.
 func TestMergeReusingUnchangedSlidesNoMediaCollision(t *testing.T) {
-	// Distinct fake image payloads — content intentionally differs so a
+	// Distinct fake image payloads -- content intentionally differs so a
 	// collision is detectable.
 	imageX := []byte("fake-png-X")
 	imageY := []byte("fake-png-Y")

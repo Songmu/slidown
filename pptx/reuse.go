@@ -95,8 +95,8 @@ func MergeReusingUnchangedSlides(existingPath string, newPPTX []byte, reuse map[
 			}
 		}
 
-		// When the slide moves, its rels reference to the notes slide must be
-		// renumbered to the new position.  Any media renames are applied here
+		// When the slide moves, its reference to the notes slide in the rels
+		// must be renumbered to the new position.  Any media renames are applied here
 		// too so the rels stay consistent with the actual part names.
 		newRels := rewriteRef(oldRels,
 			fmt.Sprintf("notesSlide%d.xml", oldPos),
