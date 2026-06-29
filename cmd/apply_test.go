@@ -651,3 +651,176 @@ func reorderPresentationXMLForApplyTest(t *testing.T, presentationXML []byte) []
 	}
 	return updated
 }
+
+// buildAltTemplateFileForTest creates a template .pptx that is visually and
+// content-hash distinct from the default built-in design by swapping the accent1
+// color in the theme XML.
+func buildAltTemplateFileForTest(t *testing.T) string {
+	t.Helper()
+	basePath := buildTemplateFileForTest(t)
+
+	// Open the base template zip, modify the theme part, write a new zip.
+	zr, err := zip.OpenReader(basePath)
+	if err != nil {
+		t.Fatalf("buildAltTemplateFileForTest OpenReader: %v", err)
+	}
+	defer zr.Close()
+
+	parts := map[string][]byte{}
+	order := make([]string, 0, len(zr.File))
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("buildAltTemplateFileForTest open %s: %v", f.Name, err)
+		}
+		b, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatalf("buildAltTemplateFileForTest read %s: %v", f.Name, err)
+		}
+		parts[f.Name] = b
+		order = append(order, f.Name)
+	}
+
+	// Patch the theme: replace the default accent1 blue with red.
+	const (
+		origColor = "4472C4"
+		newColor  = "FF0000"
+	)
+	themeKey := "ppt/theme/theme1.xml"
+	patched := bytes.ReplaceAll(parts[themeKey], []byte(origColor), []byte(newColor))
+	if bytes.Equal(patched, parts[themeKey]) {
+		t.Fatalf("buildAltTemplateFileForTest: accent1 color %q not found in %s", origColor, themeKey)
+	}
+	parts[themeKey] = patched
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, name := range order {
+		fw, err := zw.Create(name)
+		if err != nil {
+			t.Fatalf("buildAltTemplateFileForTest zip create %s: %v", name, err)
+		}
+		if _, err := fw.Write(parts[name]); err != nil {
+			t.Fatalf("buildAltTemplateFileForTest zip write %s: %v", name, err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("buildAltTemplateFileForTest zip close: %v", err)
+	}
+
+	altPath := filepath.Join(t.TempDir(), "alt_template.pptx")
+	if err := os.WriteFile(altPath, buf.Bytes(), 0o600); err != nil {
+		t.Fatalf("buildAltTemplateFileForTest WriteFile: %v", err)
+	}
+	return altPath
+}
+
+func mustReadFileForTest(t *testing.T, filePath string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("mustReadFileForTest: %v", err)
+	}
+	return data
+}
+
+// assertSlideRelsResolveInPackage checks that every internal relationship
+// target in each slide's .rels file resolves to a part that exists in the
+// package, guarding against dangling rels after a template switch.
+func assertSlideRelsResolveInPackage(t *testing.T, parts map[string]string) {
+	t.Helper()
+	var relDoc struct {
+		Rels []struct {
+			Type       string `xml:"Type,attr"`
+			Target     string `xml:"Target,attr"`
+			TargetMode string `xml:"TargetMode,attr"`
+		} `xml:"Relationship"`
+	}
+	for i := 1; ; i++ {
+		relsName := fmt.Sprintf("ppt/slides/_rels/slide%d.xml.rels", i)
+		relsXML, ok := parts[relsName]
+		if !ok {
+			break
+		}
+		if err := xml.Unmarshal([]byte(relsXML), &relDoc); err != nil {
+			t.Errorf("failed to parse %s: %v", relsName, err)
+			continue
+		}
+		for _, r := range relDoc.Rels {
+			if strings.EqualFold(r.TargetMode, "External") || r.Target == "" {
+				continue
+			}
+			resolved := path.Clean(path.Join("ppt/slides", r.Target))
+			if _, ok := parts[resolved]; !ok {
+				t.Errorf("slide%d rel Target=%q resolves to %q which does not exist in the package",
+					i, r.Target, resolved)
+			}
+		}
+	}
+}
+
+// TestApplySkipsReuseOnTemplateSwitch verifies that when an explicit template
+// differs from the one used to build the existing file, slides are fully
+// regenerated rather than reused verbatim. This prevents reused slides from
+// carrying .rels references to layout parts that no longer exist in the new
+// package (dangling rels) or that have mismatched placeholder structure.
+func TestApplySkipsReuseOnTemplateSwitch(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "deck.pptx")
+
+	// templateA: the default built-in design.
+	// templateB: same structure, different theme color → distinct template hash.
+	templateA := buildTemplateFileForTest(t)
+	templateB := buildAltTemplateFileForTest(t)
+
+	const deck = "# One\n\nbody one\n\n---\n\n# Two\n\nbody two\n\n---\n\n# Three\n\nbody three\n"
+
+	// First apply: template A.
+	if updated := applyToFileForTest(t, deck, out, templateA); updated {
+		t.Fatalf("first apply should report a fresh write, got updated=true")
+	}
+	partsA, err := zipPartsForTest(t, mustReadFileForTest(t, out))
+	if err != nil {
+		t.Fatalf("zipPartsForTest after A: %v", err)
+	}
+	if !strings.Contains(partsA["ppt/theme/theme1.xml"], "4472C4") {
+		t.Fatalf("after template A, theme should contain accent color 4472C4")
+	}
+
+	// Second apply: same slide content (unchanged), but template B.
+	// Without the fix: all slides match their fingerprints → identity reuse →
+	// existing file returned unchanged (still template A's design).
+	// With the fix: template hash mismatch → reuse skipped → rebuilt with B.
+	if updated := applyToFileForTest(t, deck, out, templateB); !updated {
+		t.Fatalf("second apply with different template should report an update, got updated=false")
+	}
+	partsB, err := zipPartsForTest(t, mustReadFileForTest(t, out))
+	if err != nil {
+		t.Fatalf("zipPartsForTest after B: %v", err)
+	}
+
+	// The output must now carry template B's theme, not A's.
+	if strings.Contains(partsB["ppt/theme/theme1.xml"], "4472C4") {
+		t.Errorf("after template switch, theme still contains A's accent color 4472C4 (expected FF0000)")
+	}
+	if !strings.Contains(partsB["ppt/theme/theme1.xml"], "FF0000") {
+		t.Errorf("after template switch, theme does not contain B's accent color FF0000")
+	}
+
+	// No slide may have a layout rel that resolves to a missing part.
+	assertSlideRelsResolveInPackage(t, partsB)
+
+	// Third apply: same template B, same slides — must re-enable normal reuse.
+	applyToFileForTest(t, deck, out, templateB)
+	partsB2, err := zipPartsForTest(t, mustReadFileForTest(t, out))
+	if err != nil {
+		t.Fatalf("zipPartsForTest after second B: %v", err)
+	}
+	for i := 1; i <= 3; i++ {
+		name := fmt.Sprintf("ppt/slides/slide%d.xml", i)
+		if partsB[name] != partsB2[name] {
+			t.Errorf("slide %d was needlessly rewritten on third apply (same template, same content)", i)
+		}
+	}
+}
