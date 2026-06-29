@@ -83,9 +83,9 @@ func renderSlideWithLayout(p *pptx.Presentation, s *slidown.Slide, tmpl *pptx.Te
 // distributeBodyContent places body paragraphs into the available body
 // placeholders and reports whether any body content was added.
 //
-// When there is only one body placeholder (or none), all content is
-// concatenated into it — the original behaviour.  When the layout declares
-// two or more body placeholders, consecutive s.Bodies groups (each separated
+// When there is only one body placeholder, all content is concatenated into it —
+// the original behaviour. When the layout declares no body placeholders, no body
+// content is rendered.
 // by an intra-slide thematic break in the markdown source) are distributed
 // one-per-placeholder; the last placeholder absorbs any overflow bodies and
 // all block quotes.
