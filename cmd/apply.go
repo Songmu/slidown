@@ -136,7 +136,7 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides) 
 	if existing, err := pptx.ReadSlideMetas(out); err == nil {
 		existingTemplateHash, _ := pptx.ReadPresentationTemplateHash(out)
 		newTemplateHash := pptx.ReadPresentationTemplateHashFromBytes(newPPTX)
-		templateUnchanged := existingTemplateHash == newTemplateHash
+		templateUnchanged := existingTemplateHash != "" && newTemplateHash != "" && existingTemplateHash == newTemplateHash
 
 		if templateUnchanged {
 			reuse := buildReuseMap(sourceSlides, existing)
