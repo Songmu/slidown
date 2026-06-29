@@ -51,6 +51,10 @@ func MergeReusingUnchangedSlides(existingPath string, newPPTX []byte, reuse map[
 	// from the regenerated [Content_Types].xml.
 	neededOverrides := map[string]string{}
 
+	// nextMediaIdx tracks the next free imageN index to allocate when a reused
+	// slide's media name collides with an already-present part.
+	nextMediaIdx := mediaMaxIndex(result)
+
 	// Iterate in sorted order so that addPart appends to `order` in a
 	// deterministic sequence regardless of map iteration order.
 	newPositions := slices.Sorted(maps.Keys(reuse))
@@ -84,19 +88,80 @@ func MergeReusingUnchangedSlides(existingPath string, newPPTX []byte, reuse map[
 		if !ok {
 			continue
 		}
-		// When the slide moves, its rels reference to the notes slide must be
-		// renumbered to the new position.
+
+		// First pass: build a rename map for any media parts whose name is
+		// already taken in result by different bytes.  We must compute this
+		// before writing the rels so the rels can reference the new names.
+		mediaRename := map[string]string{} // old resolved path -> new resolved path
+		for _, target := range relTargets(oldRels) {
+			resolved := path.Clean(path.Join("ppt/slides", target))
+			if !strings.HasPrefix(resolved, "ppt/media/") {
+				continue
+			}
+			oldData, ok := oldParts[resolved]
+			if !ok {
+				continue
+			}
+			if existing, exists := result[resolved]; exists && !bytes.Equal(existing, oldData) {
+				// Collision: the name is already used for different content.
+				// Allocate a fresh name that is guaranteed to be absent.
+				ext := path.Ext(resolved)
+				for {
+					nextMediaIdx++
+					candidate := fmt.Sprintf("ppt/media/image%d%s", nextMediaIdx, ext)
+					if _, exists := result[candidate]; exists {
+						continue
+					}
+					if _, exists := oldParts[candidate]; exists {
+						continue
+					}
+					// Avoid allocating the same candidate for multiple renames in this pass.
+					alreadyAllocated := false
+					for _, v := range mediaRename {
+						if v == candidate {
+							alreadyAllocated = true
+							break
+						}
+					}
+					if alreadyAllocated {
+						continue
+					}
+					mediaRename[resolved] = candidate
+					break
+				}
+			}
+		}
+
+		// When the slide moves, its reference to the notes slide in the rels
+		// must be renumbered to the new position.  Any media renames are applied
+		// here too so the rels stay consistent with the actual part names.
 		newRels := rewriteRef(oldRels,
 			fmt.Sprintf("notesSlide%d.xml", oldPos),
 			fmt.Sprintf("notesSlide%d.xml", newPos))
+		for oldResolved, newResolved := range mediaRename {
+			oldTarget := "../media/" + path.Base(oldResolved)
+			newTarget := "../media/" + path.Base(newResolved)
+			newRels = []byte(strings.ReplaceAll(string(newRels), oldTarget, newTarget))
+		}
 		addPart(fmt.Sprintf("ppt/slides/_rels/slide%d.xml.rels", newPos), newRels)
 
 		for _, target := range relTargets(oldRels) {
 			resolved := path.Clean(path.Join("ppt/slides", target))
 			switch {
 			case strings.HasPrefix(resolved, "ppt/media/"):
-				if data, ok := oldParts[resolved]; ok {
-					addPart(resolved, data)
+				data, ok := oldParts[resolved]
+				if !ok {
+					continue
+				}
+				destName := resolved
+				if newName, ok := mediaRename[resolved]; ok {
+					destName = newName
+				}
+				// Only add if the destination slot is still empty; identical
+				// bytes at the same name are already present and need no action.
+				if _, exists := result[destName]; !exists {
+					order = append(order, destName)
+					result[destName] = data
 				}
 			case strings.HasPrefix(resolved, "ppt/notesSlides/"):
 				oldNotes, ok := oldParts[resolved]
@@ -209,6 +274,25 @@ func relTargets(relsXML []byte) []string {
 		targets = append(targets, r.Target)
 	}
 	return targets
+}
+
+// mediaMaxIndex returns the highest imageN index already present in parts so
+// fresh names can be allocated starting above that watermark.
+func mediaMaxIndex(parts map[string][]byte) int {
+	max := 0
+	for name := range parts {
+		if !strings.HasPrefix(name, "ppt/media/image") {
+			continue
+		}
+		base := strings.TrimPrefix(path.Base(name), "image")
+		if dot := strings.IndexByte(base, '.'); dot >= 0 {
+			base = base[:dot]
+		}
+		if v := atoi(base); v > max {
+			max = v
+		}
+	}
+	return max
 }
 
 // zipFromParts serializes parts into a .pptx ZIP archive following the given
