@@ -32,6 +32,7 @@ type testPresentation struct {
 }
 
 func TestSlideFingerprintRoundTrip(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cfg, err := config.Load("")
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
@@ -71,6 +72,7 @@ func TestSlideFingerprintRoundTrip(t *testing.T) {
 }
 
 func TestWritePresentationUpdatesExistingFile(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cfg, err := config.Load("")
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
@@ -205,6 +207,7 @@ func buildTemplateFileForTest(t *testing.T) string {
 // reused as the design template.
 func applyToFileForTest(t *testing.T, mdText, out, templatePath string) bool {
 	t.Helper()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cfg, err := config.Load("")
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
@@ -485,6 +488,11 @@ func TestApplyPreservesVisibleOrderBytesAfterReorderedPresentation(t *testing.T)
 	reorderPresentationAndMarkSlidesInFileForTest(t, out)
 	beforeVisible := readVisibleSlidePartsForTest(t, out)
 
+	// NOTE: this second apply hits the isIdentityReuse short-circuit (all 2
+	// slides match their same visible position) and returns early without
+	// running MergeReusingUnchangedSlides. The test below
+	// (TestApplyCorrectlyReusesSlideAfterReorderAndNonIdentityRebuild) covers
+	// the merge path explicitly.
 	if updated := applyToFileForTest(t, reorderedSource, out, ""); !updated {
 		t.Fatalf("second apply should report an update")
 	}
@@ -497,6 +505,85 @@ func TestApplyPreservesVisibleOrderBytesAfterReorderedPresentation(t *testing.T)
 		t.Fatalf("second visible slide bytes were not preserved after rebuild")
 	}
 }
+
+// TestApplyCorrectlyReusesSlideAfterReorderAndNonIdentityRebuild is the
+// regression test for the bug introduced in PR #26: when a presentation has
+// sldIdLst order different from filename order (e.g. after a PowerPoint
+// drag-reorder), and the rebuild is non-identity (slide count changes), the
+// merge must copy the slide identified by its on-disk part name — NOT the part
+// whose filename number matches the visible position.
+//
+// This test MUST NOT hit the isIdentityReuse short-circuit; it exercises
+// MergeReusingUnchangedSlides directly.
+func TestApplyCorrectlyReusesSlideAfterReorderAndNonIdentityRebuild(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "deck.pptx")
+
+	// Step 1: generate a 2-slide deck.
+	//   slide1.xml = "One" content, slide2.xml = "Two" content.
+	const v1 = "# One\n\nbody one\n\n---\n\n# Two\n\nbody two\n"
+	if updated := applyToFileForTest(t, v1, out, ""); updated {
+		t.Fatalf("first apply should be a fresh write")
+	}
+
+	// Step 2: simulate a PowerPoint reorder + manual edits.
+	//   - sldIdLst is flipped to [rId2, rId1]:
+	//       visible position 1 → on-disk slide2.xml (Two content)
+	//       visible position 2 → on-disk slide1.xml (One content)
+	//   - testManualFirstMarker is injected into on-disk slide2.xml (visible-first)
+	//   - testManualSecondMarker is injected into on-disk slide1.xml (visible-second)
+	reorderPresentationAndMarkSlidesInFileForTest(t, out)
+
+	// Step 3: rebuild with 3 slides — Two first, One second, Three new.
+	//   Source slides 1 and 2 still match the fingerprints of visible positions
+	//   1 and 2 respectively, so they are candidates for reuse. Slide 3 is
+	//   new, so len(reuse)=2 ≠ sourceLen=3: isIdentityReuse is false and
+	//   MergeReusingUnchangedSlides is invoked.
+	const v3 = "# Two\n\nbody two\n\n---\n\n# One\n\nbody one\n\n---\n\n# Three\n\nbody three\n"
+	if updated := applyToFileForTest(t, v3, out, ""); !updated {
+		t.Fatalf("third apply should report an update")
+	}
+
+	// Step 4: assertions.
+	// The new presentation has 3 slides in natural order (slide1, slide2, slide3).
+	// Because the reuse map is {1: "ppt/slides/slide2.xml", 2: "ppt/slides/slide1.xml"}:
+	//   new slide1.xml ← old slide2.xml  (has testManualFirstMarker)
+	//   new slide2.xml ← old slide1.xml  (has testManualSecondMarker)
+	//   new slide3.xml ← freshly generated (no marker)
+	// Before the fix, slide1.xml ← old slide1.xml (wrong: testManualSecondMarker
+	// appears at visible position 1, and the user's manual edit on slide2 is lost).
+	now := readSlidePartsForTest(t, out)
+	if len(now) != 3 {
+		t.Fatalf("expected 3 slide parts after rebuild, got %d", len(now))
+	}
+
+	slide1 := string(now["ppt/slides/slide1.xml"])
+	slide2 := string(now["ppt/slides/slide2.xml"])
+	slide3 := string(now["ppt/slides/slide3.xml"])
+
+	// slide1.xml must come from old slide2.xml → must contain testManualFirstMarker.
+	if !strings.Contains(slide1, testManualFirstMarker) {
+		t.Errorf("slide1.xml missing %q: the wrong on-disk file was reused.\n"+
+			"slide1.xml content (truncated): %.200s", testManualFirstMarker, slide1)
+	}
+	// slide1.xml must NOT contain testManualSecondMarker (that belongs to slide2).
+	if strings.Contains(slide1, testManualSecondMarker) {
+		t.Errorf("slide1.xml contains %q: old slide1.xml was copied instead of slide2.xml",
+			testManualSecondMarker)
+	}
+
+	// slide2.xml must come from old slide1.xml → must contain testManualSecondMarker.
+	if !strings.Contains(slide2, testManualSecondMarker) {
+		t.Errorf("slide2.xml missing %q: the wrong on-disk file was reused.\n"+
+			"slide2.xml content (truncated): %.200s", testManualSecondMarker, slide2)
+	}
+
+	// slide3.xml is freshly generated and must not carry either manual marker.
+	if strings.Contains(slide3, testManualFirstMarker) || strings.Contains(slide3, testManualSecondMarker) {
+		t.Errorf("slide3.xml should be freshly generated but contains a manual marker")
+	}
+}
+
 
 func readVisibleSlidePartsForTest(t *testing.T, pptxPath string) [][]byte {
 	t.Helper()

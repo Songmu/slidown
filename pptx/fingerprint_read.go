@@ -13,6 +13,11 @@ import (
 type SlideMeta struct {
 	Fingerprint string
 	Key         string
+	// PartName is the ZIP entry path of the slide this meta was read from,
+	// e.g. "ppt/slides/slide3.xml". It reflects the actual on-disk filename,
+	// which may differ from the visible (sldIdLst) position when slides have
+	// been reordered in PowerPoint.
+	PartName string
 }
 
 // ReadSlideMetas reads the per-slide slidown metadata embedded in an existing
@@ -32,7 +37,9 @@ func ReadSlideMetas(path string) ([]SlideMeta, error) {
 
 	metas := make([]SlideMeta, 0, len(slideNames))
 	for _, name := range slideNames {
-		metas = append(metas, parseSlideMeta(parts[name]))
+		m := parseSlideMeta(parts[name])
+		m.PartName = name
+		metas = append(metas, m)
 	}
 	return metas, nil
 }
