@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/md"
 	"github.com/Songmu/slidown/pptx"
 )
@@ -258,5 +259,42 @@ func TestMultiBodyPlaceholderDistribution(t *testing.T) {
 	}
 	if strings.Contains(ph2Shape, "Left column") {
 		t.Errorf("first body content 'Left column' unexpectedly found in the idx=2 placeholder shape")
+	}
+}
+
+// TestToPresentationWithTemplateSkippedLeadingSlide guards the contract that
+// "first slide" means "first rendered slide" — a leading Skip slide must not
+// consume the title-layout slot so the first visible slide still gets
+// TitleLayout instead of ContentLayout.
+func TestToPresentationWithTemplateSkippedLeadingSlide(t *testing.T) {
+	const fixture = "../testdata/template_base.pptx"
+	if _, err := os.Stat(fixture); err != nil {
+		t.Skipf("template fixture missing: %v", err)
+	}
+	tmpl, err := pptx.LoadTemplate(fixture)
+	if err != nil {
+		t.Fatalf("LoadTemplate(%s): %v", fixture, err)
+	}
+	titleName := tmpl.TitleLayout().Name
+	contentName := tmpl.ContentLayout().Name
+	if titleName == contentName {
+		t.Skipf("template does not distinguish title vs content layouts (both %q)", titleName)
+	}
+
+	slides := slidown.Slides{
+		{Skip: true, Titles: []string{"hidden"}},
+		{Titles: []string{"first visible"}},
+		{Titles: []string{"second visible"}},
+	}
+
+	pres := ToPresentationWithTemplate(slides, tmpl)
+	if got, want := len(pres.Slides), 2; got != want {
+		t.Fatalf("rendered slide count = %d, want %d", got, want)
+	}
+	if got := pres.Slides[0].LayoutName; got != titleName {
+		t.Errorf("first rendered slide layout = %q, want %q (TitleLayout)", got, titleName)
+	}
+	if got := pres.Slides[1].LayoutName; got != contentName {
+		t.Errorf("second rendered slide layout = %q, want %q (ContentLayout)", got, contentName)
 	}
 }

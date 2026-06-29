@@ -11,11 +11,13 @@ import (
 func ToPresentationWithTemplate(ss slidown.Slides, tmpl *pptx.Template) *pptx.Presentation {
 	p := pptx.New()
 	p.Template = tmpl
-	for i, s := range ss {
+	firstRendered := true
+	for _, s := range ss {
 		if s.Skip {
 			continue
 		}
-		renderSlideWithLayout(p, s, tmpl, i == 0)
+		renderSlideWithLayout(p, s, tmpl, firstRendered)
+		firstRendered = false
 	}
 	return p
 }
