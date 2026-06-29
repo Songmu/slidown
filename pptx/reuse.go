@@ -115,8 +115,8 @@ func MergeReusingUnchangedSlides(existingPath string, newPPTX []byte, reuse map[
 					mediaRename[resolved] = candidate
 					break
 				}
+			}
 		}
-
 		// When the slide moves, its reference to the notes slide in the rels
 		// must be renumbered to the new position.  Any media renames are applied here
 		// too so the rels stay consistent with the actual part names.
