@@ -126,21 +126,37 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides) 
 	// position), so reuse and freeze survive inserts, deletions and reordering.
 	// Change detection compares each slide's embedded source fingerprint against
 	// the freshly computed one.
-	if existing, err := pptx.ReadSlideMetas(out); err == nil {
-		reuse := buildReuseMap(sourceSlides, existing)
-		switch {
-		case isIdentityReuse(reuse, existing, len(sourceSlides)):
-			// Every slide is reused in place: keep the existing file as is.
-			return true, nil
-		case len(reuse) > 0:
-			merged, err := pptx.MergeReusingUnchangedSlides(out, newPPTX, reuse)
-			if err != nil {
-				return false, err
+	//
+	// Reuse is only safe when the template has not changed: a reused slide's
+	// .rels file is copied verbatim from the existing package and may reference
+	// layouts by file name (e.g. ../slideLayouts/slideLayout7.xml). If the new
+	// package was built from a different template, those layout files may not
+	// exist or may have completely different content, causing PowerPoint to
+	// report a dangling relationship or silently apply the wrong layout.
+	//
+	// Check template hash before reading slide metadata to avoid unnecessary
+	// work when the template has changed.
+	existingTemplateHash, _ := pptx.ReadPresentationTemplateHash(out)
+	newTemplateHash := pptx.ReadPresentationTemplateHashFromBytes(newPPTX)
+	templateUnchanged := existingTemplateHash != "" && newTemplateHash != "" && existingTemplateHash == newTemplateHash
+
+	if templateUnchanged {
+		if existing, err := pptx.ReadSlideMetas(out); err == nil {
+			reuse := buildReuseMap(sourceSlides, existing)
+			switch {
+			case isIdentityReuse(reuse, existing, len(sourceSlides)):
+				// Every slide is reused in place: keep the existing file as is.
+				return true, nil
+			case len(reuse) > 0:
+				merged, err := pptx.MergeReusingUnchangedSlides(out, newPPTX, reuse)
+				if err != nil {
+					return false, err
+				}
+				if err := os.WriteFile(out, merged, 0o600); err != nil {
+					return false, err
+				}
+				return true, nil
 			}
-			if err := os.WriteFile(out, merged, 0o600); err != nil {
-				return false, err
-			}
-			return true, nil
 		}
 	}
 
