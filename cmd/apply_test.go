@@ -32,6 +32,7 @@ type testPresentation struct {
 }
 
 func TestSlideFingerprintRoundTrip(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cfg, err := config.Load("")
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
@@ -71,6 +72,7 @@ func TestSlideFingerprintRoundTrip(t *testing.T) {
 }
 
 func TestWritePresentationUpdatesExistingFile(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cfg, err := config.Load("")
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
@@ -205,6 +207,7 @@ func buildTemplateFileForTest(t *testing.T) string {
 // reused as the design template.
 func applyToFileForTest(t *testing.T, mdText, out, templatePath string) bool {
 	t.Helper()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cfg, err := config.Load("")
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)

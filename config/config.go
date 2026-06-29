@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 
 	"github.com/goccy/go-yaml"
 )
@@ -68,26 +67,26 @@ func Load(profile string) (*Config, error) {
 // On macOS, we use directories that conform to the XDG Base Directory instead of `os.UserConfigDir`
 // or `os.UserDataDir`, etc. It is more intuitive for CLI applications.
 
-var configHomePath = sync.OnceValue(func() string {
+func configHomePath() string {
 	if v := os.Getenv("XDG_CONFIG_HOME"); v != "" {
 		return filepath.Join(v, "slidown")
 	}
 	return filepath.Join(homeDir, ".config", "slidown")
-})
+}
 
-var dataHomePath = sync.OnceValue(func() string {
+func dataHomePath() string {
 	if v := os.Getenv("XDG_DATA_HOME"); v != "" {
 		return filepath.Join(v, "slidown")
 	}
 	return filepath.Join(homeDir, ".local", "share", "slidown")
-})
+}
 
-var stateHomePath = sync.OnceValue(func() string {
+func stateHomePath() string {
 	if v := os.Getenv("XDG_STATE_HOME"); v != "" {
 		return filepath.Join(v, "slidown")
 	}
 	return filepath.Join(homeDir, ".local", "state", "slidown")
-})
+}
 
 // DataHomePath returns the path to the data home directory.
 func DataHomePath() string {
