@@ -181,3 +181,82 @@ func zipPartsFromFile(t *testing.T, path string) map[string][]byte {
 	}
 	return zipParts(t, b)
 }
+
+// TestMultiBodyPlaceholderDistribution verifies that when a layout has two body
+// placeholders and the markdown contains an intra-slide thematic break (- - -),
+// the content before the break goes into the first placeholder and the content
+// after goes into the second placeholder.
+func TestMultiBodyPlaceholderDistribution(t *testing.T) {
+	tmplPath := buildTemplateFile(t)
+	tmpl, err := pptx.LoadTemplate(tmplPath)
+	if err != nil {
+		t.Fatalf("LoadTemplate: %v", err)
+	}
+
+	// Inject a second body placeholder into the content layout to simulate a
+	// two-column (or similar) slide design.
+	layout := tmpl.ContentLayout()
+	if layout == nil {
+		t.Fatal("template has no content layout")
+	}
+	layout.Placeholders = append(layout.Placeholders, &pptx.PlaceholderInfo{
+		Type: "body",
+		Idx:  2,
+		Name: "Content Placeholder 2",
+	})
+
+	const markdown = "# Title\n\nLeft column\n\n- - -\n\nRight column\n"
+	parsed, err := md.Parse("", []byte(markdown), nil)
+	if err != nil {
+		t.Fatalf("md.Parse: %v", err)
+	}
+	slides, err := parsed.ToSlides(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ToSlides: %v", err)
+	}
+	if len(slides) != 1 {
+		t.Fatalf("expected 1 slide, got %d", len(slides))
+	}
+
+	var buf bytes.Buffer
+	if _, err := ToPresentationWithTemplate(slides, tmpl).WriteTo(&buf); err != nil {
+		t.Fatalf("WriteTo: %v", err)
+	}
+
+	parts := zipParts(t, buf.Bytes())
+	slideXML := string(parts["ppt/slides/slide1.xml"])
+	if slideXML == "" {
+		t.Fatal("ppt/slides/slide1.xml missing from output")
+	}
+
+	// Both content sections must appear in the rendered slide.
+	if !strings.Contains(slideXML, "Left column") {
+		t.Errorf("slide XML missing first body content 'Left column'")
+	}
+	if !strings.Contains(slideXML, "Right column") {
+		t.Errorf("slide XML missing second body content 'Right column'")
+	}
+	// The second placeholder (idx=2) must be referenced — confirming that
+	// distributeBodyContent wrote to both placeholders, not just the first.
+	const ph2Tag = "<p:ph type=\"body\" idx=\"2\"/>"
+	ph2Pos := strings.Index(slideXML, ph2Tag)
+	if ph2Pos == -1 {
+		t.Fatalf("slide XML missing second body placeholder (idx=2); multi-body distribution did not occur")
+	}
+	spEndRel := strings.Index(slideXML[ph2Pos:], "</p:sp>")
+	if spEndRel == -1 {
+		t.Fatalf("could not find closing </p:sp> for second body placeholder")
+	}
+	ph2Shape := slideXML[ph2Pos : ph2Pos+spEndRel+len("</p:sp>")]
+
+	// Ensure each content group is in the intended placeholder.
+	if !strings.Contains(slideXML[:ph2Pos], "Left column") {
+		t.Errorf("first body content 'Left column' not found before the idx=2 placeholder shape")
+	}
+	if !strings.Contains(ph2Shape, "Right column") {
+		t.Errorf("second body content 'Right column' not found in the idx=2 placeholder shape")
+	}
+	if strings.Contains(ph2Shape, "Left column") {
+		t.Errorf("first body content 'Left column' unexpectedly found in the idx=2 placeholder shape")
+	}
+}

@@ -18,7 +18,7 @@ func TestClassifyPlaceholdersPrefersRealSubTitle(t *testing.T) {
 			{Type: "body", Idx: 2, Name: "Content 1"},
 		},
 	}
-	title, sub, fromHint, body := classifyPlaceholders(l)
+	title, sub, fromHint, bodies := classifyPlaceholders(l)
 	if title == nil || title.Type != "title" {
 		t.Errorf("title = %+v, want type=title", title)
 	}
@@ -28,8 +28,8 @@ func TestClassifyPlaceholdersPrefersRealSubTitle(t *testing.T) {
 	if fromHint {
 		t.Errorf("fromHint = true; expected real subTitle to not be marked as hint-derived")
 	}
-	if body == nil || body.Idx != 2 {
-		t.Errorf("body = %+v, want idx=2", body)
+	if len(bodies) != 1 || bodies[0].Idx != 2 {
+		t.Errorf("bodies = %+v, want one entry with idx=2", bodies)
 	}
 }
 
@@ -41,7 +41,7 @@ func TestClassifyPlaceholdersPromotesSubtitleHintByName(t *testing.T) {
 			{Type: "body", Idx: 2, Name: "Content Placeholder 2"},
 		},
 	}
-	title, sub, fromHint, body := classifyPlaceholders(l)
+	title, sub, fromHint, bodies := classifyPlaceholders(l)
 	if title == nil || title.Type != "title" {
 		t.Errorf("title = %+v", title)
 	}
@@ -51,8 +51,8 @@ func TestClassifyPlaceholdersPromotesSubtitleHintByName(t *testing.T) {
 	if !fromHint {
 		t.Errorf("fromHint = false; expected hint-promoted sub")
 	}
-	if body == nil || body.Idx != 2 {
-		t.Errorf("body = %+v, want remaining body with idx=2", body)
+	if len(bodies) != 1 || bodies[0].Idx != 2 {
+		t.Errorf("bodies = %+v, want one entry with idx=2", bodies)
 	}
 }
 
@@ -63,15 +63,15 @@ func TestClassifyPlaceholdersPromotesSubtitleHintByPrompt(t *testing.T) {
 			{Type: "body", Idx: 1, Name: "Text Placeholder 2", Prompt: "Please enter the SUBTITLE here"},
 		},
 	}
-	_, sub, fromHint, body := classifyPlaceholders(l)
+	_, sub, fromHint, bodies := classifyPlaceholders(l)
 	if sub == nil || sub.Idx != 1 {
 		t.Errorf("sub = %+v, want hint-promoted body via prompt", sub)
 	}
 	if !fromHint {
 		t.Errorf("fromHint = false; expected hint-derived sub")
 	}
-	if body != nil {
-		t.Errorf("body = %+v, want nil (only one candidate, consumed by hint)", body)
+	if len(bodies) != 0 {
+		t.Errorf("bodies = %+v, want empty (only one candidate, consumed by hint)", bodies)
 	}
 }
 
@@ -82,15 +82,35 @@ func TestClassifyPlaceholdersNoSubtitleHint(t *testing.T) {
 			{Type: "body", Idx: 1, Name: "Content Placeholder 1", Prompt: "Click to edit"},
 		},
 	}
-	_, sub, fromHint, body := classifyPlaceholders(l)
+	_, sub, fromHint, bodies := classifyPlaceholders(l)
 	if sub != nil {
 		t.Errorf("sub = %+v, want nil with no hint", sub)
 	}
 	if fromHint {
 		t.Errorf("fromHint = true; expected false")
 	}
-	if body == nil || body.Idx != 1 {
-		t.Errorf("body = %+v, want idx=1", body)
+	if len(bodies) != 1 || bodies[0].Idx != 1 {
+		t.Errorf("bodies = %+v, want one entry with idx=1", bodies)
+	}
+}
+
+func TestClassifyPlaceholdersMultipleBodies(t *testing.T) {
+	l := &pptx.LayoutInfo{
+		Placeholders: []*pptx.PlaceholderInfo{
+			{Type: "title", Name: "Title 1"},
+			{Type: "body", Idx: 1, Name: "Content Placeholder 1"},
+			{Type: "body", Idx: 2, Name: "Content Placeholder 2"},
+		},
+	}
+	_, sub, _, bodies := classifyPlaceholders(l)
+	if sub != nil {
+		t.Errorf("sub = %+v, want nil", sub)
+	}
+	if len(bodies) != 2 {
+		t.Fatalf("bodies = %+v, want 2 entries", bodies)
+	}
+	if bodies[0].Idx != 1 || bodies[1].Idx != 2 {
+		t.Errorf("bodies idx = %d, %d; want 1, 2", bodies[0].Idx, bodies[1].Idx)
 	}
 }
 
