@@ -180,7 +180,7 @@ title: New Title
 			// Run the function
 			err := applyFrontmatterToMD(tmpFile, tt.title)
 			if err != nil {
-				t.Fatalf("ApplyFrontmatterToMD failed: %v", err)
+				t.Fatalf("applyFrontmatterToMD failed: %v", err)
 			}
 
 			// Read the result
