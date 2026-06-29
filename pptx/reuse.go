@@ -89,21 +89,32 @@ func MergeReusingUnchangedSlides(existingPath string, newPPTX []byte, reuse map[
 			if existing, exists := result[resolved]; exists && !bytes.Equal(existing, oldData) {
 				// Collision: the name is already used for different content.
 				// Allocate a fresh name that is guaranteed to be absent.
-ext := path.Ext(resolved)
-for {
-	nextMediaIdx++
-	candidate := fmt.Sprintf("ppt/media/image%d%s", nextMediaIdx, ext)
-	// Ensure the allocated name doesn't collide with parts we've already merged
-	// or with existing-deck part names that may be referenced by other reused slides.
-	if _, exists := result[candidate]; exists {
-		continue
-	}
-	if _, exists := oldParts[candidate]; exists {
-		continue
-	}
-	mediaRename[resolved] = candidate
-	break
-}
+				ext := path.Ext(resolved)
+				for {
+					nextMediaIdx++
+					candidate := fmt.Sprintf("ppt/media/image%d%s", nextMediaIdx, ext)
+					// Ensure the allocated name doesn't collide with parts we've already merged
+					// or with existing-deck part names that may be referenced by other reused slides.
+					if _, exists := result[candidate]; exists {
+						continue
+					}
+					if _, exists := oldParts[candidate]; exists {
+						continue
+					}
+					// Avoid allocating the same candidate for multiple renames in this pass.
+					alreadyAllocated := false
+					for _, v := range mediaRename {
+						if v == candidate {
+							alreadyAllocated = true
+							break
+						}
+					}
+					if alreadyAllocated {
+						continue
+					}
+					mediaRename[resolved] = candidate
+					break
+				}
 		}
 
 		// When the slide moves, its reference to the notes slide in the rels
