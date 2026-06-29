@@ -193,11 +193,11 @@ func buildTemplateFileForTest(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("ToSlides: %v", err)
 	}
-	path := filepath.Join(t.TempDir(), "template.pptx")
-	if err := render.ToPresentation(slides).WriteFile(path); err != nil {
+	templatePath := filepath.Join(t.TempDir(), "template.pptx")
+	if err := render.ToPresentation(slides).WriteFile(templatePath); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	return path
+	return templatePath
 }
 
 // applyToFileForTest mirrors the apply command's template selection: an
