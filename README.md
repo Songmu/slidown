@@ -108,7 +108,9 @@ $ slidown apply deck.md --template theme.pptx
 The template can also be set with the `template` frontmatter or config
 field. See [docs/templates.md](docs/templates.md) for layout selection,
 inspecting available layouts with `ls-layouts`, and repurposing existing
-placeholders as subtitle targets.
+placeholders as subtitle targets. Template selection only controls the
+design source; incremental updates still reuse unchanged slides from the
+existing output file and still honor `freeze: true`.
 
 ## Markdown file format
 
