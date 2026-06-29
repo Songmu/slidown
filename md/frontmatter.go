@@ -12,8 +12,8 @@ import (
 	"github.com/k1LoW/errors"
 )
 
-// ApplyFrontmatterToMD updates or creates a markdown file with frontmatter.
-func ApplyFrontmatterToMD(mdFile, title string) (err error) {
+// applyFrontmatterToMD updates or creates a markdown file with frontmatter.
+func applyFrontmatterToMD(mdFile, title string) (err error) {
 	defer func() {
 		err = errors.WithStack(err)
 	}()

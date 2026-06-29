@@ -220,12 +220,11 @@ func titleParagraphs(s *slidown.Slide) []*pptx.Paragraph {
 	return out
 }
 
-// bodyParagraphs collects subtitles and body content into the body placeholder.
-// Because the built-in layout has no dedicated subtitle placeholder, subtitles
-// are rendered as emphasized lead paragraphs so no content is lost.
-func bodyParagraphs(s *slidown.Slide) []*pptx.Paragraph {
+// subtitleBoldParagraphs returns the subtitle content rendered as bold
+// paragraphs, used when folding subtitles into a body placeholder because the
+// layout has no dedicated subtitle slot.
+func subtitleBoldParagraphs(s *slidown.Slide) []*pptx.Paragraph {
 	var out []*pptx.Paragraph
-
 	switch {
 	case len(s.SubtitleBodies) > 0:
 		for _, b := range s.SubtitleBodies {
@@ -241,6 +240,14 @@ func bodyParagraphs(s *slidown.Slide) []*pptx.Paragraph {
 			out = append(out, &pptx.Paragraph{Runs: []*pptx.Run{{Text: st, Bold: true}}})
 		}
 	}
+	return out
+}
+
+// bodyParagraphs collects subtitles and body content into the body placeholder.
+// Because the built-in layout has no dedicated subtitle placeholder, subtitles
+// are rendered as emphasized lead paragraphs so no content is lost.
+func bodyParagraphs(s *slidown.Slide) []*pptx.Paragraph {
+	out := subtitleBoldParagraphs(s)
 
 	for _, b := range s.Bodies {
 		out = append(out, convertBody(b)...)

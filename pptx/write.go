@@ -3,10 +3,49 @@ package pptx
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
+	"sort"
 )
+
+// builtInTemplateHash is the Template.TemplateHash() value that would be
+// computed if the built-in design were loaded back via LoadTemplate. Embedding
+// this value in ppt/slidownMeta allows subsequent runs to confirm that the
+// template has not changed without needing to re-hash the template file.
+// The hash is stable as long as the built-in design constants in masters.go
+// are not modified.
+var builtInTemplateHash = computeBuiltInTemplateHash()
+
+// computeBuiltInTemplateHash replicates Template.TemplateHash() for the
+// fixed set of design parts emitted by the built-in renderer.
+func computeBuiltInTemplateHash() string {
+	designParts := map[string][]byte{
+		"ppt/slideLayouts/_rels/slideLayout1.xml.rels": []byte(slideLayout1Rels),
+		"ppt/slideLayouts/slideLayout1.xml":            []byte(slideLayout1()),
+		"ppt/slideMasters/_rels/slideMaster1.xml.rels": []byte(slideMaster1Rels),
+		"ppt/slideMasters/slideMaster1.xml":            []byte(slideMaster1()),
+		"ppt/theme/theme1.xml":                         []byte(theme1),
+		// LoadTemplate also copies presProps and viewProps into designParts.
+		"ppt/presProps.xml": []byte(presProps),
+		"ppt/viewProps.xml": []byte(viewProps),
+	}
+	names := make([]string, 0, len(designParts))
+	for name := range designParts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	h := sha256.New()
+	for _, name := range names {
+		h.Write([]byte(name))
+		h.Write([]byte{0})
+		h.Write(designParts[name])
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
 
 // part is a single text file entry within the .pptx ZIP package.
 type part struct {
@@ -57,6 +96,11 @@ func (p *Presentation) WriteTo(w io.Writer) (int64, error) {
 		{"ppt/slideMasters/_rels/slideMaster1.xml.rels", slideMaster1Rels},
 		{"ppt/slideLayouts/slideLayout1.xml", slideLayout1()},
 		{"ppt/slideLayouts/_rels/slideLayout1.xml.rels", slideLayout1Rels},
+		// Template-tracking sentinel: allows the incremental rebuild to detect
+		// a template switch and avoid reusing slides whose layout relationships
+		// would become dangling in the new package. Not declared in
+		// [Content_Types].xml so PowerPoint ignores the file.
+		{"ppt/slidownMeta", builtInTemplateHash},
 	}
 	if hasNotes {
 		parts = append(parts,

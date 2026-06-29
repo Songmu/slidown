@@ -32,6 +32,7 @@ type testPresentation struct {
 }
 
 func TestSlideFingerprintRoundTrip(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cfg, err := config.Load("")
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
@@ -71,6 +72,7 @@ func TestSlideFingerprintRoundTrip(t *testing.T) {
 }
 
 func TestWritePresentationUpdatesExistingFile(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cfg, err := config.Load("")
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
@@ -205,6 +207,7 @@ func buildTemplateFileForTest(t *testing.T) string {
 // reused as the design template.
 func applyToFileForTest(t *testing.T, mdText, out, templatePath string) bool {
 	t.Helper()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cfg, err := config.Load("")
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
@@ -485,6 +488,11 @@ func TestApplyPreservesVisibleOrderBytesAfterReorderedPresentation(t *testing.T)
 	reorderPresentationAndMarkSlidesInFileForTest(t, out)
 	beforeVisible := readVisibleSlidePartsForTest(t, out)
 
+	// NOTE: this second apply hits the isIdentityReuse short-circuit (all 2
+	// slides match their same visible position) and returns early without
+	// running MergeReusingUnchangedSlides. The test below
+	// (TestApplyCorrectlyReusesSlideAfterReorderAndNonIdentityRebuild) covers
+	// the merge path explicitly.
 	if updated := applyToFileForTest(t, reorderedSource, out, ""); !updated {
 		t.Fatalf("second apply should report an update")
 	}
@@ -497,6 +505,85 @@ func TestApplyPreservesVisibleOrderBytesAfterReorderedPresentation(t *testing.T)
 		t.Fatalf("second visible slide bytes were not preserved after rebuild")
 	}
 }
+
+// TestApplyCorrectlyReusesSlideAfterReorderAndNonIdentityRebuild is the
+// regression test for the bug introduced in PR #26: when a presentation has
+// sldIdLst order different from filename order (e.g. after a PowerPoint
+// drag-reorder), and the rebuild is non-identity (slide count changes), the
+// merge must copy the slide identified by its on-disk part name — NOT the part
+// whose filename number matches the visible position.
+//
+// This test MUST NOT hit the isIdentityReuse short-circuit; it exercises
+// MergeReusingUnchangedSlides directly.
+func TestApplyCorrectlyReusesSlideAfterReorderAndNonIdentityRebuild(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "deck.pptx")
+
+	// Step 1: generate a 2-slide deck.
+	//   slide1.xml = "One" content, slide2.xml = "Two" content.
+	const v1 = "# One\n\nbody one\n\n---\n\n# Two\n\nbody two\n"
+	if updated := applyToFileForTest(t, v1, out, ""); updated {
+		t.Fatalf("first apply should be a fresh write")
+	}
+
+	// Step 2: simulate a PowerPoint reorder + manual edits.
+	//   - sldIdLst is flipped to [rId2, rId1]:
+	//       visible position 1 → on-disk slide2.xml (Two content)
+	//       visible position 2 → on-disk slide1.xml (One content)
+	//   - testManualFirstMarker is injected into on-disk slide2.xml (visible-first)
+	//   - testManualSecondMarker is injected into on-disk slide1.xml (visible-second)
+	reorderPresentationAndMarkSlidesInFileForTest(t, out)
+
+	// Step 3: rebuild with 3 slides — Two first, One second, Three new.
+	//   Source slides 1 and 2 still match the fingerprints of visible positions
+	//   1 and 2 respectively, so they are candidates for reuse. Slide 3 is
+	//   new, so len(reuse)=2 ≠ sourceLen=3: isIdentityReuse is false and
+	//   MergeReusingUnchangedSlides is invoked.
+	const v3 = "# Two\n\nbody two\n\n---\n\n# One\n\nbody one\n\n---\n\n# Three\n\nbody three\n"
+	if updated := applyToFileForTest(t, v3, out, ""); !updated {
+		t.Fatalf("third apply should report an update")
+	}
+
+	// Step 4: assertions.
+	// The new presentation has 3 slides in natural order (slide1, slide2, slide3).
+	// Because the reuse map is {1: "ppt/slides/slide2.xml", 2: "ppt/slides/slide1.xml"}:
+	//   new slide1.xml ← old slide2.xml  (has testManualFirstMarker)
+	//   new slide2.xml ← old slide1.xml  (has testManualSecondMarker)
+	//   new slide3.xml ← freshly generated (no marker)
+	// Before the fix, slide1.xml ← old slide1.xml (wrong: testManualSecondMarker
+	// appears at visible position 1, and the user's manual edit on slide2 is lost).
+	now := readSlidePartsForTest(t, out)
+	if len(now) != 3 {
+		t.Fatalf("expected 3 slide parts after rebuild, got %d", len(now))
+	}
+
+	slide1 := string(now["ppt/slides/slide1.xml"])
+	slide2 := string(now["ppt/slides/slide2.xml"])
+	slide3 := string(now["ppt/slides/slide3.xml"])
+
+	// slide1.xml must come from old slide2.xml → must contain testManualFirstMarker.
+	if !strings.Contains(slide1, testManualFirstMarker) {
+		t.Errorf("slide1.xml missing %q: the wrong on-disk file was reused.\n"+
+			"slide1.xml content (truncated): %.200s", testManualFirstMarker, slide1)
+	}
+	// slide1.xml must NOT contain testManualSecondMarker (that belongs to slide2).
+	if strings.Contains(slide1, testManualSecondMarker) {
+		t.Errorf("slide1.xml contains %q: old slide1.xml was copied instead of slide2.xml",
+			testManualSecondMarker)
+	}
+
+	// slide2.xml must come from old slide1.xml → must contain testManualSecondMarker.
+	if !strings.Contains(slide2, testManualSecondMarker) {
+		t.Errorf("slide2.xml missing %q: the wrong on-disk file was reused.\n"+
+			"slide2.xml content (truncated): %.200s", testManualSecondMarker, slide2)
+	}
+
+	// slide3.xml is freshly generated and must not carry either manual marker.
+	if strings.Contains(slide3, testManualFirstMarker) || strings.Contains(slide3, testManualSecondMarker) {
+		t.Errorf("slide3.xml should be freshly generated but contains a manual marker")
+	}
+}
+
 
 func readVisibleSlidePartsForTest(t *testing.T, pptxPath string) [][]byte {
 	t.Helper()
@@ -650,4 +737,177 @@ func reorderPresentationXMLForApplyTest(t *testing.T, presentationXML []byte) []
 		t.Fatalf("failed to rewrite sldIdLst in presentation.xml")
 	}
 	return updated
+}
+
+// buildAltTemplateFileForTest creates a template .pptx that is visually and
+// content-hash distinct from the default built-in design by swapping the accent1
+// color in the theme XML.
+func buildAltTemplateFileForTest(t *testing.T) string {
+	t.Helper()
+	basePath := buildTemplateFileForTest(t)
+
+	// Open the base template zip, modify the theme part, write a new zip.
+	zr, err := zip.OpenReader(basePath)
+	if err != nil {
+		t.Fatalf("buildAltTemplateFileForTest OpenReader: %v", err)
+	}
+	defer zr.Close()
+
+	parts := map[string][]byte{}
+	order := make([]string, 0, len(zr.File))
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("buildAltTemplateFileForTest open %s: %v", f.Name, err)
+		}
+		b, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatalf("buildAltTemplateFileForTest read %s: %v", f.Name, err)
+		}
+		parts[f.Name] = b
+		order = append(order, f.Name)
+	}
+
+	// Patch the theme: replace the default accent1 blue with red.
+	const (
+		origColor = "4472C4"
+		newColor  = "FF0000"
+	)
+	themeKey := "ppt/theme/theme1.xml"
+	patched := bytes.ReplaceAll(parts[themeKey], []byte(origColor), []byte(newColor))
+	if bytes.Equal(patched, parts[themeKey]) {
+		t.Fatalf("buildAltTemplateFileForTest: accent1 color %q not found in %s", origColor, themeKey)
+	}
+	parts[themeKey] = patched
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, name := range order {
+		fw, err := zw.Create(name)
+		if err != nil {
+			t.Fatalf("buildAltTemplateFileForTest zip create %s: %v", name, err)
+		}
+		if _, err := fw.Write(parts[name]); err != nil {
+			t.Fatalf("buildAltTemplateFileForTest zip write %s: %v", name, err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("buildAltTemplateFileForTest zip close: %v", err)
+	}
+
+	altPath := filepath.Join(t.TempDir(), "alt_template.pptx")
+	if err := os.WriteFile(altPath, buf.Bytes(), 0o600); err != nil {
+		t.Fatalf("buildAltTemplateFileForTest WriteFile: %v", err)
+	}
+	return altPath
+}
+
+func mustReadFileForTest(t *testing.T, filePath string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("mustReadFileForTest: %v", err)
+	}
+	return data
+}
+
+// assertSlideRelsResolveInPackage checks that every internal relationship
+// target in each slide's .rels file resolves to a part that exists in the
+// package, guarding against dangling rels after a template switch.
+func assertSlideRelsResolveInPackage(t *testing.T, parts map[string]string) {
+	t.Helper()
+	var relDoc struct {
+		Rels []struct {
+			Type       string `xml:"Type,attr"`
+			Target     string `xml:"Target,attr"`
+			TargetMode string `xml:"TargetMode,attr"`
+		} `xml:"Relationship"`
+	}
+	for i := 1; ; i++ {
+		relsName := fmt.Sprintf("ppt/slides/_rels/slide%d.xml.rels", i)
+		relsXML, ok := parts[relsName]
+		if !ok {
+			break
+		}
+		if err := xml.Unmarshal([]byte(relsXML), &relDoc); err != nil {
+			t.Errorf("failed to parse %s: %v", relsName, err)
+			continue
+		}
+		for _, r := range relDoc.Rels {
+			if strings.EqualFold(r.TargetMode, "External") || r.Target == "" {
+				continue
+			}
+			resolved := path.Clean(path.Join("ppt/slides", r.Target))
+			if _, ok := parts[resolved]; !ok {
+				t.Errorf("slide%d rel Target=%q resolves to %q which does not exist in the package",
+					i, r.Target, resolved)
+			}
+		}
+	}
+}
+
+// TestApplySkipsReuseOnTemplateSwitch verifies that when an explicit template
+// differs from the one used to build the existing file, slides are fully
+// regenerated rather than reused verbatim. This prevents reused slides from
+// carrying .rels references to layout parts that no longer exist in the new
+// package (dangling rels) or that have mismatched placeholder structure.
+func TestApplySkipsReuseOnTemplateSwitch(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "deck.pptx")
+
+	// templateA: the default built-in design.
+	// templateB: same structure, different theme color → distinct template hash.
+	templateA := buildTemplateFileForTest(t)
+	templateB := buildAltTemplateFileForTest(t)
+
+	const deck = "# One\n\nbody one\n\n---\n\n# Two\n\nbody two\n\n---\n\n# Three\n\nbody three\n"
+
+	// First apply: template A.
+	if updated := applyToFileForTest(t, deck, out, templateA); updated {
+		t.Fatalf("first apply should report a fresh write, got updated=true")
+	}
+	partsA, err := zipPartsForTest(t, mustReadFileForTest(t, out))
+	if err != nil {
+		t.Fatalf("zipPartsForTest after A: %v", err)
+	}
+	if !strings.Contains(partsA["ppt/theme/theme1.xml"], "4472C4") {
+		t.Fatalf("after template A, theme should contain accent color 4472C4")
+	}
+
+	// Second apply: same slide content (unchanged), but template B.
+	// Without the fix: all slides match their fingerprints → identity reuse →
+	// existing file returned unchanged (still template A's design).
+	// With the fix: template hash mismatch → reuse skipped → rebuilt with B.
+	if updated := applyToFileForTest(t, deck, out, templateB); !updated {
+		t.Fatalf("second apply with different template should report an update, got updated=false")
+	}
+	partsB, err := zipPartsForTest(t, mustReadFileForTest(t, out))
+	if err != nil {
+		t.Fatalf("zipPartsForTest after B: %v", err)
+	}
+
+	// The output must now carry template B's theme, not A's.
+	if strings.Contains(partsB["ppt/theme/theme1.xml"], "4472C4") {
+		t.Errorf("after template switch, theme still contains A's accent color 4472C4 (expected FF0000)")
+	}
+	if !strings.Contains(partsB["ppt/theme/theme1.xml"], "FF0000") {
+		t.Errorf("after template switch, theme does not contain B's accent color FF0000")
+	}
+
+	// No slide may have a layout rel that resolves to a missing part.
+	assertSlideRelsResolveInPackage(t, partsB)
+
+	// Third apply: same template B, same slides — must re-enable normal reuse.
+	applyToFileForTest(t, deck, out, templateB)
+	partsB2, err := zipPartsForTest(t, mustReadFileForTest(t, out))
+	if err != nil {
+		t.Fatalf("zipPartsForTest after second B: %v", err)
+	}
+	for i := 1; i <= 3; i++ {
+		name := fmt.Sprintf("ppt/slides/slide%d.xml", i)
+		if partsB[name] != partsB2[name] {
+			t.Errorf("slide %d was needlessly rewritten on third apply (same template, same content)", i)
+		}
+	}
 }

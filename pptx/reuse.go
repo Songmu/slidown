@@ -13,7 +13,10 @@ import (
 
 // MergeReusingUnchangedSlides builds the output package from the freshly
 // generated newPPTX, but restores the existing file's slide for each entry in
-// reuse, a map of new 1-based slide position -> existing 1-based slide position.
+// reuse, a map of new 1-based slide position -> existing slide part name
+// (e.g. "ppt/slides/slide3.xml"). Using the part name directly avoids the
+// filename-vs-visible-position confusion that arises when slides have been
+// reordered in PowerPoint (sldIdLst order ≠ filename order).
 // The restored slide (its XML, relationships, any notes slide it references and
 // the media those parts use) is copied to the new position, rewriting the
 // notes<->slide cross references when the position changes.
@@ -21,7 +24,7 @@ import (
 // This preserves slides whose source did not change (or that are frozen) even
 // when other slides are inserted, deleted or reordered, identifying them by
 // their stable key rather than by position.
-func MergeReusingUnchangedSlides(existingPath string, newPPTX []byte, reuse map[int]int) ([]byte, error) {
+func MergeReusingUnchangedSlides(existingPath string, newPPTX []byte, reuse map[int]string) ([]byte, error) {
 	oldParts, _, err := readZipPartsFromPath(existingPath)
 	if err != nil {
 		return nil, err
@@ -56,10 +59,23 @@ func MergeReusingUnchangedSlides(existingPath string, newPPTX []byte, reuse map[
 	// deterministic sequence regardless of map iteration order.
 	newPositions := slices.Sorted(maps.Keys(reuse))
 	for _, newPos := range newPositions {
-		oldPos := reuse[newPos]
-		oldSlideName := fmt.Sprintf("ppt/slides/slide%d.xml", oldPos)
+		oldSlideName := strings.TrimPrefix(reuse[newPos], "/")
+		// Only reuse standard slide parts we can safely remap.
+		if !strings.HasPrefix(oldSlideName, "ppt/slides/slide") || !strings.HasSuffix(oldSlideName, ".xml") {
+			continue
+		}
 		newSlideName := fmt.Sprintf("ppt/slides/slide%d.xml", newPos)
-
+		// Skip if newPos is out of range (<=0 or not present in the new PPTX);
+		// otherwise we would create an orphan part not referenced by presentation.xml.
+		if _, ok := newParts[newSlideName]; !ok {
+			continue
+		}
+		// Derive the numeric part of the old slide name for rewriting
+		// cross-references in rels (e.g. notesSlide back-links).
+		oldPos := slideNumFromName(oldSlideName)
+		if oldPos <= 0 {
+			continue
+		}
 		oldSlide, ok := oldParts[oldSlideName]
 		if !ok {
 			// The existing file does not carry this slide; leave the freshly
@@ -93,8 +109,6 @@ func MergeReusingUnchangedSlides(existingPath string, newPPTX []byte, reuse map[
 				for {
 					nextMediaIdx++
 					candidate := fmt.Sprintf("ppt/media/image%d%s", nextMediaIdx, ext)
-					// Ensure the allocated name doesn't collide with parts we've already merged
-					// or with existing-deck part names that may be referenced by other reused slides.
 					if _, exists := result[candidate]; exists {
 						continue
 					}
@@ -117,9 +131,10 @@ func MergeReusingUnchangedSlides(existingPath string, newPPTX []byte, reuse map[
 				}
 			}
 		}
+
 		// When the slide moves, its reference to the notes slide in the rels
-		// must be renumbered to the new position.  Any media renames are applied here
-		// too so the rels stay consistent with the actual part names.
+		// must be renumbered to the new position.  Any media renames are applied
+		// here too so the rels stay consistent with the actual part names.
 		newRels := rewriteRef(oldRels,
 			fmt.Sprintf("notesSlide%d.xml", oldPos),
 			fmt.Sprintf("notesSlide%d.xml", newPos))

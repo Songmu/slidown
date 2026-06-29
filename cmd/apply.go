@@ -126,21 +126,37 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides) 
 	// position), so reuse and freeze survive inserts, deletions and reordering.
 	// Change detection compares each slide's embedded source fingerprint against
 	// the freshly computed one.
-	if existing, err := pptx.ReadSlideMetas(out); err == nil {
-		reuse := buildReuseMap(sourceSlides, existing)
-		switch {
-		case isIdentityReuse(reuse, len(sourceSlides), len(existing)):
-			// Every slide is reused in place: keep the existing file as is.
-			return true, nil
-		case len(reuse) > 0:
-			merged, err := pptx.MergeReusingUnchangedSlides(out, newPPTX, reuse)
-			if err != nil {
-				return false, err
+	//
+	// Reuse is only safe when the template has not changed: a reused slide's
+	// .rels file is copied verbatim from the existing package and may reference
+	// layouts by file name (e.g. ../slideLayouts/slideLayout7.xml). If the new
+	// package was built from a different template, those layout files may not
+	// exist or may have completely different content, causing PowerPoint to
+	// report a dangling relationship or silently apply the wrong layout.
+	//
+	// Check template hash before reading slide metadata to avoid unnecessary
+	// work when the template has changed.
+	existingTemplateHash, _ := pptx.ReadPresentationTemplateHash(out)
+	newTemplateHash := pptx.ReadPresentationTemplateHashFromBytes(newPPTX)
+	templateUnchanged := existingTemplateHash != "" && newTemplateHash != "" && existingTemplateHash == newTemplateHash
+
+	if templateUnchanged {
+		if existing, err := pptx.ReadSlideMetas(out); err == nil {
+			reuse := buildReuseMap(sourceSlides, existing)
+			switch {
+			case isIdentityReuse(reuse, existing, len(sourceSlides)):
+				// Every slide is reused in place: keep the existing file as is.
+				return true, nil
+			case len(reuse) > 0:
+				merged, err := pptx.MergeReusingUnchangedSlides(out, newPPTX, reuse)
+				if err != nil {
+					return false, err
+				}
+				if err := os.WriteFile(out, merged, 0o600); err != nil {
+					return false, err
+				}
+				return true, nil
 			}
-			if err := os.WriteFile(out, merged, 0o600); err != nil {
-				return false, err
-			}
-			return true, nil
 		}
 	}
 
@@ -155,16 +171,21 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides) 
 }
 
 // buildReuseMap matches source slides to slides in the existing presentation and
-// returns a map of new 1-based position -> existing 1-based position for slides
-// whose existing part should be kept. A source slide is matched to an existing
-// slide by stable key when both carry one, otherwise positionally (same index)
-// when neither does. A matched slide is reused when it is frozen or when its
-// source fingerprint still matches the existing slide's embedded fingerprint.
+// returns a map of new 1-based position -> existing slide part name (e.g.
+// "ppt/slides/slide3.xml") for slides whose existing part should be kept. A
+// source slide is matched to an existing slide by stable key when both carry
+// one, otherwise positionally (same index) when neither does. A matched slide
+// is reused when it is frozen or when its source fingerprint still matches the
+// existing slide's embedded fingerprint.
+//
+// Using the part name (rather than a position integer) avoids the
+// filename-vs-visible-position mismatch that arises when slides have been
+// reordered in PowerPoint (sldIdLst order ≠ filename order).
 //
 // Matching by key means reuse and freeze survive inserts, deletions and
 // reordering; an empty fingerprint (e.g. stripped by another editor) never
 // matches, forcing a safe regenerate.
-func buildReuseMap(source slidown.Slides, existing []pptx.SlideMeta) map[int]int {
+func buildReuseMap(source slidown.Slides, existing []pptx.SlideMeta) map[int]string {
 	byKey := map[string]int{}
 	for i, m := range existing {
 		if m.Key != "" {
@@ -172,7 +193,7 @@ func buildReuseMap(source slidown.Slides, existing []pptx.SlideMeta) map[int]int
 		}
 	}
 
-	reuse := map[int]int{}
+	reuse := map[int]string{}
 	usedOld := make([]bool, len(existing))
 	for i := range source {
 		s := source[i]
@@ -193,22 +214,27 @@ func buildReuseMap(source slidown.Slides, existing []pptx.SlideMeta) map[int]int
 			continue
 		}
 		if s.Freeze || s.MatchesFingerprint(existing[oldIdx].Fingerprint) {
-			reuse[i+1] = oldIdx + 1
+			reuse[i+1] = existing[oldIdx].PartName
 			usedOld[oldIdx] = true
 		}
 	}
 	return reuse
 }
 
-// isIdentityReuse reports whether every slide is reused at its original
+// isIdentityReuse reports whether every slide is reused at its original visible
 // position and the slide count is unchanged, in which case the existing file is
-// already correct and need not be rewritten.
-func isIdentityReuse(reuse map[int]int, sourceLen, existingLen int) bool {
-	if sourceLen == 0 || sourceLen != existingLen || len(reuse) != sourceLen {
+// already correct and need not be rewritten. The existing slice is needed to
+// compare part names rather than position integers, since sldIdLst order may
+// differ from filename order after a PowerPoint reorder.
+func isIdentityReuse(reuse map[int]string, existing []pptx.SlideMeta, sourceLen int) bool {
+	if sourceLen == 0 || sourceLen != len(existing) || len(reuse) != sourceLen {
 		return false
 	}
-	for newPos, oldPos := range reuse {
-		if newPos != oldPos {
+	for newPos, oldPartName := range reuse {
+		if newPos < 1 || newPos > len(existing) {
+			return false
+		}
+		if oldPartName != existing[newPos-1].PartName {
 			return false
 		}
 	}

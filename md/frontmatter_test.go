@@ -178,9 +178,9 @@ title: New Title
 			}
 
 			// Run the function
-			err := ApplyFrontmatterToMD(tmpFile, tt.title)
+			err := applyFrontmatterToMD(tmpFile, tt.title)
 			if err != nil {
-				t.Fatalf("ApplyFrontmatterToMD failed: %v", err)
+				t.Fatalf("applyFrontmatterToMD failed: %v", err)
 			}
 
 			// Read the result
@@ -204,7 +204,7 @@ func TestApplyFrontmatterToMD_CreateDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 	nestedFile := filepath.Join(tmpDir, "nested", "dir", "test.md")
 
-	err := ApplyFrontmatterToMD(nestedFile, "Test")
+	err := applyFrontmatterToMD(nestedFile, "Test")
 	if err != nil {
 		t.Fatalf("Failed to create nested directory: %v", err)
 	}

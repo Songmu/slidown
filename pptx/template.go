@@ -2,9 +2,12 @@ package pptx
 
 import (
 	"archive/zip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"io"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -202,6 +205,7 @@ func LoadTemplate(path string) (*Template, error) {
 				t.themePart = name
 			}
 			t.copyPart(parts, name)
+			t.copyRels(parts, name)
 			t.partTypes[name] = o.ContentType
 		case strings.Contains(o.ContentType, "slideMaster+xml"):
 			t.masterParts = append(t.masterParts, name)
@@ -230,11 +234,13 @@ func LoadTemplate(path string) (*Template, error) {
 		}
 	}
 
-	// Copy theme media and any media referenced by masters/layouts (best effort:
-	// copy the whole ppt/media tree).
-	for name, data := range parts {
-		if strings.HasPrefix(name, "ppt/media/") {
-			t.designParts[name] = data
+	// Copy only ppt/media/* parts that are actually referenced by the design
+	// .rels files collected above (theme, masters, layouts). Copying the whole
+	// ppt/media tree would accumulate orphaned slide-level media across
+	// incremental rebuilds when an existing output is reused as a template.
+	for media := range referencedDesignMedia(t.designParts) {
+		if data, ok := parts[media]; ok {
+			t.designParts[media] = data
 		}
 	}
 
@@ -279,6 +285,40 @@ func relsPath(part string) string {
 		return "_rels/" + part + ".rels"
 	}
 	return part[:i] + "/_rels/" + part[i+1:] + ".rels"
+}
+
+// referencedDesignMedia returns the set of ppt/media/* part names that are
+// directly referenced by any .rels file already collected in designParts
+// (theme, slide masters, slide layouts). It is used to restrict media copying
+// to only design-related assets, so that orphaned slide-level media from a
+// previous build does not accumulate when an existing .pptx is reused as a
+// template.
+func referencedDesignMedia(designParts map[string][]byte) map[string]struct{} {
+	refs := make(map[string]struct{})
+	for name, data := range designParts {
+		if !strings.HasSuffix(name, ".rels") {
+			continue
+		}
+		dir := relsOwnerDir(name)
+		for _, target := range relTargets(data) {
+			resolved := path.Clean(path.Join(dir, target))
+			if strings.HasPrefix(resolved, "ppt/media/") {
+				refs[resolved] = struct{}{}
+			}
+		}
+	}
+	return refs
+}
+
+// relsOwnerDir returns the directory that conceptually "owns" a .rels file,
+// which is the base for resolving relative relationship targets.
+// For example, "ppt/slideMasters/_rels/sm1.xml.rels" -> "ppt/slideMasters".
+// For root-level rels like "_rels/.rels" it returns "".
+func relsOwnerDir(relsName string) string {
+	if i := strings.LastIndex(relsName, "/_rels/"); i >= 0 {
+		return relsName[:i]
+	}
+	return ""
 }
 
 func parseLayout(partName string, data []byte) *LayoutInfo {
@@ -332,6 +372,30 @@ func collectPromptText(sp xmlSp) string {
 }
 
 // --- Layout selection helpers ---
+
+// TemplateHash returns a stable SHA-256 hex digest of all the template's design
+// parts (theme, slide masters, slide layouts, associated media and rels). Two
+// templates produce the same hash only when every design part — its path and its
+// byte content — is identical. The incremental rebuild uses this to detect a
+// template switch and refuse to reuse old slides whose layout relationships may
+// no longer be valid in the new package.
+func (t *Template) TemplateHash() string {
+	names := make([]string, 0, len(t.designParts))
+	for name := range t.designParts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	h := sha256.New()
+	for _, name := range names {
+		// Include the part path in the hash so that renames alone (same
+		// content, different file name) still produce a different hash.
+		h.Write([]byte(name))
+		h.Write([]byte{0})
+		h.Write(t.designParts[name])
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
 
 // LayoutByName returns the layout whose (case-insensitive) name matches, or nil.
 func (t *Template) LayoutByName(name string) *LayoutInfo {

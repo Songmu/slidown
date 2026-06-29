@@ -100,7 +100,12 @@ All other horizontal rule syntaxes remain as visual separators within slides:
 - `- - -`, `***`, `___` (with or without spaces)
 - Indented horizontal rules (`   ---`)
 
-These separate multiple body placeholders within a single slide.
+These separate multiple body placeholders within a single slide. When the
+slide layout provides two or more body placeholders, each content group fills
+the next available placeholder in document order. If the layout has fewer
+placeholders than content groups, the last placeholder absorbs all overflow
+content so nothing is silently dropped. When the layout provides only one
+body placeholder all groups are concatenated into it.
 
 ## Line Break Handling
 
@@ -173,4 +178,9 @@ Body content (→ body placeholder)
 
 ### Placeholder Insertion Order
 
-Content is inserted into placeholders in the order it appears in the markdown, filling placeholders from top to bottom (or left to right for same-height placeholders). If there are insufficient placeholders, remaining content will not be rendered.
+Content is inserted into placeholders in the order it appears in the markdown.
+The title placeholder is filled first, then the subtitle (if the layout has
+one), and finally the body placeholder(s). When a layout declares multiple body
+placeholders, consecutive body groups (separated by intra-slide thematic breaks)
+are distributed across them from top to bottom (or left to right for
+same-height placeholders).
