@@ -55,12 +55,18 @@ func MergeReusingUnchangedSlides(existingPath string, newPPTX []byte, reuse map[
 	// deterministic sequence regardless of map iteration order.
 	newPositions := slices.Sorted(maps.Keys(reuse))
 	for _, newPos := range newPositions {
-		oldSlideName := reuse[newPos]
+		oldSlideName := strings.TrimPrefix(reuse[newPos], "/")
+		// Only reuse standard slide parts we can safely remap.
+		if !strings.HasPrefix(oldSlideName, "ppt/slides/slide") || !strings.HasSuffix(oldSlideName, ".xml") {
+			continue
+		}
 		newSlideName := fmt.Sprintf("ppt/slides/slide%d.xml", newPos)
 		// Derive the numeric part of the old slide name for rewriting
 		// cross-references in rels (e.g. notesSlide back-links).
 		oldPos := slideNumFromName(oldSlideName)
-
+		if oldPos <= 0 {
+			continue
+		}
 		oldSlide, ok := oldParts[oldSlideName]
 		if !ok {
 			// The existing file does not carry this slide; leave the freshly
