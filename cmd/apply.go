@@ -215,6 +215,9 @@ func isIdentityReuse(reuse map[int]string, existing []pptx.SlideMeta, sourceLen 
 		return false
 	}
 	for newPos, oldPartName := range reuse {
+		if newPos < 1 || newPos > len(existing) {
+			return false
+		}
 		if oldPartName != existing[newPos-1].PartName {
 			return false
 		}
