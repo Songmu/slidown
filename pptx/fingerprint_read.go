@@ -54,7 +54,7 @@ func ReadCoreTitle(path string) string {
 	return coreTitle(parts["docProps/core.xml"])
 }
 
-// CoreTitleFromBytes returns the dc:title recorded in in-memory .pptx bytes.
+// CoreTitleFromBytes returns the dc:title recorded in the in-memory .pptx bytes.
 func CoreTitleFromBytes(data []byte) string {
 	parts, _, err := readZipPartsFromBytes(data)
 	if err != nil {
