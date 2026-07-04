@@ -29,8 +29,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/config"
-	"github.com/Songmu/slidown/version"
 	"github.com/k1LoW/errors"
 	"github.com/spf13/cobra"
 )
@@ -42,7 +42,7 @@ var rootCmd = &cobra.Command{
 	Short:        "slidown is a tool for creating PowerPoint presentations from Markdown",
 	Long:         `slidown is a tool for creating PowerPoint (.pptx) presentations from Markdown.`,
 	SilenceUsage: true,
-	Version:      fmt.Sprintf("%s (rev:%s)", version.Version, version.Revision),
+	Version:      fmt.Sprintf("%s (rev:%s)", slidown.Version, slidown.Revision),
 }
 
 type errorData struct {
@@ -59,8 +59,8 @@ func Execute() {
 		d := &errorData{
 			StackTraces: errors.StackTraces(err),
 			CreatedAt:   time.Now(),
-			Version:     version.Version,
-			Revision:    version.Revision,
+			Version:     slidown.Version,
+			Revision:    slidown.Revision,
 		}
 		if b, merr := json.Marshal(d); merr == nil {
 			stateHome := config.StateHomePath()

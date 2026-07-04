@@ -1,4 +1,4 @@
-package version
+package slidown
 
 const (
 	Name    = "slidown"
