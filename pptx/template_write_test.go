@@ -4,8 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -140,10 +138,7 @@ func TestLoadTemplateGCsOrphanedMedia(t *testing.T) {
 	if err := zw.Close(); err != nil {
 		t.Fatalf("zip close: %v", err)
 	}
-	tmplPath := filepath.Join(t.TempDir(), "template_with_media.pptx")
-	if err := os.WriteFile(tmplPath, buf.Bytes(), 0o644); err != nil {
-		t.Fatalf("write template: %v", err)
-	}
+	tmplPath := writeTempPPTX(t, buf.Bytes())
 
 	tmpl, err := LoadTemplate(tmplPath)
 	if err != nil {
@@ -233,9 +228,5 @@ func writeMinimalTemplate(t *testing.T, extras map[string]string) string {
 		t.Fatalf("zip close: %v", err)
 	}
 
-	path := filepath.Join(t.TempDir(), "template.pptx")
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
-		t.Fatalf("write template: %v", err)
-	}
-	return path
+	return writeTempPPTX(t, buf.Bytes())
 }

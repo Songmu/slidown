@@ -2,6 +2,8 @@ package pptx
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -26,4 +28,15 @@ func writeToParts(t *testing.T, p *Presentation) map[string]string {
 		t.Fatalf("WriteTo: %v", err)
 	}
 	return unzipToStringMap(t, buf.Bytes())
+}
+
+// writeTempPPTX writes pptx bytes to a fresh temporary file and returns its
+// path, for APIs (e.g. MergeWithExisting, LoadTemplate) that take a file path.
+func writeTempPPTX(t *testing.T, data []byte) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "deck.pptx")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	return path
 }
