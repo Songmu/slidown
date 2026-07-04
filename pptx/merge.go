@@ -12,23 +12,27 @@ import (
 
 // regeneratedPartPrefixes enumerates the package namespaces that slidown fully
 // regenerates from the deck source and the configured template on every apply:
-// slides, slide layouts/masters, notes, themes and media. An old-only part
-// under one of these prefixes (i.e. present in the existing file but not in the
-// freshly generated package) is stale — typically a leftover slide layout /
-// master / theme / media from a previous template, or an orphan slide from a
-// shrunk deck. Carrying it over would leave the part undeclared in the
-// regenerated [Content_Types].xml and unreferenced by the new master and
-// presentation, which PowerPoint reports as unreadable content and strips
-// during a repair. The freshly generated package is authoritative for the
-// presentation's structure, so these old-only parts must be dropped.
+// slides, slide layouts/masters, notes and handout masters, themes and media,
+// plus the loose template-hash sentinel written by older versions. An old-only
+// part under one of these prefixes (i.e. present in the existing file but not in
+// the freshly generated package) is stale — typically a leftover slide layout /
+// master / theme / media from a previous template, an orphan slide from a shrunk
+// deck, or the legacy ppt/slidownMeta part now embedded in presentation.xml.
+// Carrying it over would leave the part undeclared in the regenerated
+// [Content_Types].xml and unreferenced by the new master and presentation, which
+// PowerPoint reports as unreadable content and strips during a repair. The
+// freshly generated package is authoritative for the presentation's structure,
+// so these old-only parts must be dropped.
 var regeneratedPartPrefixes = []string{
 	"ppt/slides/",
 	"ppt/slideLayouts/",
 	"ppt/slideMasters/",
 	"ppt/notesSlides/",
 	"ppt/notesMasters/",
+	"ppt/handoutMasters/",
 	"ppt/theme/",
 	"ppt/media/",
+	"ppt/slidownMeta",
 }
 
 // isRegeneratedPart reports whether name belongs to a namespace that slidown
