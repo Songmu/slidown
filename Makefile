@@ -1,7 +1,7 @@
 PKG = github.com/Songmu/slidown
 COMMIT = $(shell git rev-parse --short HEAD)
 
-BUILD_LDFLAGS = "-s -w -X $(PKG)/version.Revision=$(COMMIT)"
+BUILD_LDFLAGS = "-s -w -X $(PKG).Revision=$(COMMIT)"
 
 default: test
 
