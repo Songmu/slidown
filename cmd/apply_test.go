@@ -202,9 +202,11 @@ func buildTemplateFileForTest(t *testing.T) string {
 	return templatePath
 }
 
-// applyToFileForTest mirrors the apply command's template selection: an
-// explicit template wins, then frontmatter, then a pre-existing output is
-// reused as the design template.
+// applyToFileForTest mirrors apply's template selection via resolveApplyTemplate.
+// The templatePath argument is treated like the --template flag: it only seeds a
+// newly created output file. When the output already exists, this helper clears
+// the flag so the update reuses the existing output as its own template (the real
+// CLI would reject --template in that situation).
 func applyToFileForTest(t *testing.T, mdText, out, templatePath string) bool {
 	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -225,20 +227,22 @@ func applyToFileForTest(t *testing.T, mdText, out, templatePath string) bool {
 		t.Fatalf("ToSlides: %v", err)
 	}
 
-	if templatePath == "" && m.Frontmatter != nil {
-		templatePath = m.Frontmatter.Template
+	// The passed template is only a seed for a new file; on update it is ignored
+	// and the existing output serves as its own template.
+	flagTemplate := templatePath
+	if exists, err := pathExists(out); err != nil {
+		t.Fatalf("pathExists: %v", err)
+	} else if exists {
+		flagTemplate = ""
 	}
-	if templatePath == "" {
-		if exists, err := pathExists(out); err != nil {
-			t.Fatalf("pathExists: %v", err)
-		} else if exists {
-			templatePath = out
-		}
+	resolved, err := resolveApplyTemplate(out, flagTemplate, "")
+	if err != nil {
+		t.Fatalf("resolveApplyTemplate: %v", err)
 	}
 
 	var pres *pptx.Presentation
-	if templatePath != "" {
-		tmpl, err := pptx.LoadTemplate(templatePath)
+	if resolved != "" {
+		tmpl, err := pptx.LoadTemplate(resolved)
 		if err != nil {
 			t.Fatalf("LoadTemplate: %v", err)
 		}
@@ -445,33 +449,84 @@ func TestApplyKeepsFrozenSlidesWithExplicitTemplate(t *testing.T) {
 	}
 }
 
-func TestApplyKeepsUnchangedAndFrozenSlidesWithFrontmatterTemplate(t *testing.T) {
+func TestResolveApplyTemplate(t *testing.T) {
+	dir := t.TempDir()
+	existing := filepath.Join(dir, "existing.pptx")
+	if err := os.WriteFile(existing, []byte("x"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	missing := filepath.Join(dir, "missing.pptx")
+
+	t.Run("flag on existing output errors", func(t *testing.T) {
+		if _, err := resolveApplyTemplate(existing, "theme.pptx", ""); err == nil {
+			t.Fatal("expected an error when --template is given for an existing output")
+		}
+	})
+	t.Run("flag on new output seeds from flag", func(t *testing.T) {
+		got, err := resolveApplyTemplate(missing, "theme.pptx", "cfg.pptx")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "theme.pptx" {
+			t.Errorf("got %q, want the flag template", got)
+		}
+	})
+	t.Run("existing output self-templates and ignores config", func(t *testing.T) {
+		got, err := resolveApplyTemplate(existing, "", "cfg.pptx")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != existing {
+			t.Errorf("got %q, want the existing output %q", got, existing)
+		}
+	})
+	t.Run("config seeds a new output", func(t *testing.T) {
+		got, err := resolveApplyTemplate(missing, "", "cfg.pptx")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "cfg.pptx" {
+			t.Errorf("got %q, want the config template", got)
+		}
+	})
+	t.Run("no template for a new output", func(t *testing.T) {
+		got, err := resolveApplyTemplate(missing, "", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "" {
+			t.Errorf("got %q, want built-in design (empty)", got)
+		}
+	})
+}
+
+// TestApplyIgnoresFrontmatterTemplate verifies that a "template" field in a
+// deck's frontmatter is silently ignored: the generated file uses the built-in
+// design rather than the frontmatter-referenced template.
+func TestApplyIgnoresFrontmatterTemplate(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "deck.pptx")
-	templatePath := buildTemplateFileForTest(t)
+	// An alternate template with a distinctive accent color (FF0000). If the
+	// frontmatter template were honored, the output theme would carry it.
+	altTemplate := buildAltTemplateFileForTest(t)
 
-	base := fmt.Sprintf("---\ntemplate: %s\n---\n\n# One\n\nbody one\n\n---\n\n# Two\n\nbody two\n\n---\n\n# Three\n\nbody three\n\n<!-- {\"freeze\": true} -->\n", templatePath)
-	changed := fmt.Sprintf("---\ntemplate: %s\n---\n\n# One\n\nbody one\n\n---\n\n# Two\n\nbody two changed\n\n---\n\n# Three\n\nbody three changed\n\n<!-- {\"freeze\": true} -->\n", templatePath)
+	deck := fmt.Sprintf("---\ntemplate: %s\n---\n\n# One\n\nbody one\n", altTemplate)
 
-	if updated := applyToFileForTest(t, base, out, ""); updated {
+	if updated := applyToFileForTest(t, deck, out, ""); updated {
 		t.Fatalf("first apply should report a fresh write, got updated=true")
 	}
-	orig := readSlidePartsForTest(t, out)
 
-	if updated := applyToFileForTest(t, changed, out, ""); !updated {
-		t.Fatalf("second apply should report an update, got updated=false")
+	parts, err := zipPartsForTest(t, mustReadFileForTest(t, out))
+	if err != nil {
+		t.Fatalf("zipPartsForTest: %v", err)
 	}
-	now := readSlidePartsForTest(t, out)
-
-	if !bytes.Equal(orig["ppt/slides/slide1.xml"], now["ppt/slides/slide1.xml"]) {
-		t.Errorf("unchanged slide 1 was rewritten with frontmatter template")
+	if strings.Contains(parts["ppt/theme/theme1.xml"], "FF0000") {
+		t.Errorf("frontmatter template was honored: theme carries the alt template accent color FF0000")
 	}
-	if bytes.Equal(orig["ppt/slides/slide2.xml"], now["ppt/slides/slide2.xml"]) {
-		t.Errorf("changed slide 2 was not updated with frontmatter template")
+	if !strings.Contains(parts["ppt/theme/theme1.xml"], "4472C4") {
+		t.Errorf("expected built-in design accent color 4472C4 when frontmatter template is ignored")
 	}
-	if !bytes.Equal(orig["ppt/slides/slide3.xml"], now["ppt/slides/slide3.xml"]) {
-		t.Errorf("frozen slide 3 was rewritten with frontmatter template")
-	}
+	assertSlideRelsResolveInPackage(t, parts)
 }
 
 func TestApplyPreservesVisibleOrderBytesAfterReorderedPresentation(t *testing.T) {
@@ -813,7 +868,7 @@ func mustReadFileForTest(t *testing.T, filePath string) []byte {
 
 // assertSlideRelsResolveInPackage checks that every internal relationship
 // target in each slide's .rels file resolves to a part that exists in the
-// package, guarding against dangling rels after a template switch.
+// package, guarding against dangling rels.
 func assertSlideRelsResolveInPackage(t *testing.T, parts map[string]string) {
 	t.Helper()
 	var relDoc struct {
@@ -842,71 +897,6 @@ func assertSlideRelsResolveInPackage(t *testing.T, parts map[string]string) {
 				t.Errorf("slide%d rel Target=%q resolves to %q which does not exist in the package",
 					i, r.Target, resolved)
 			}
-		}
-	}
-}
-
-// TestApplySkipsReuseOnTemplateSwitch verifies that when an explicit template
-// differs from the one used to build the existing file, slides are fully
-// regenerated rather than reused verbatim. This prevents reused slides from
-// carrying .rels references to layout parts that no longer exist in the new
-// package (dangling rels) or that have mismatched placeholder structure.
-func TestApplySkipsReuseOnTemplateSwitch(t *testing.T) {
-	dir := t.TempDir()
-	out := filepath.Join(dir, "deck.pptx")
-
-	// templateA: the default built-in design.
-	// templateB: same structure, different theme color → distinct template hash.
-	templateA := buildTemplateFileForTest(t)
-	templateB := buildAltTemplateFileForTest(t)
-
-	const deck = "# One\n\nbody one\n\n---\n\n# Two\n\nbody two\n\n---\n\n# Three\n\nbody three\n"
-
-	// First apply: template A.
-	if updated := applyToFileForTest(t, deck, out, templateA); updated {
-		t.Fatalf("first apply should report a fresh write, got updated=true")
-	}
-	partsA, err := zipPartsForTest(t, mustReadFileForTest(t, out))
-	if err != nil {
-		t.Fatalf("zipPartsForTest after A: %v", err)
-	}
-	if !strings.Contains(partsA["ppt/theme/theme1.xml"], "4472C4") {
-		t.Fatalf("after template A, theme should contain accent color 4472C4")
-	}
-
-	// Second apply: same slide content (unchanged), but template B.
-	// Without the fix: all slides match their fingerprints → identity reuse →
-	// existing file returned unchanged (still template A's design).
-	// With the fix: template hash mismatch → reuse skipped → rebuilt with B.
-	if updated := applyToFileForTest(t, deck, out, templateB); !updated {
-		t.Fatalf("second apply with different template should report an update, got updated=false")
-	}
-	partsB, err := zipPartsForTest(t, mustReadFileForTest(t, out))
-	if err != nil {
-		t.Fatalf("zipPartsForTest after B: %v", err)
-	}
-
-	// The output must now carry template B's theme, not A's.
-	if strings.Contains(partsB["ppt/theme/theme1.xml"], "4472C4") {
-		t.Errorf("after template switch, theme still contains A's accent color 4472C4 (expected FF0000)")
-	}
-	if !strings.Contains(partsB["ppt/theme/theme1.xml"], "FF0000") {
-		t.Errorf("after template switch, theme does not contain B's accent color FF0000")
-	}
-
-	// No slide may have a layout rel that resolves to a missing part.
-	assertSlideRelsResolveInPackage(t, partsB)
-
-	// Third apply: same template B, same slides — must re-enable normal reuse.
-	applyToFileForTest(t, deck, out, templateB)
-	partsB2, err := zipPartsForTest(t, mustReadFileForTest(t, out))
-	if err != nil {
-		t.Fatalf("zipPartsForTest after second B: %v", err)
-	}
-	for i := 1; i <= 3; i++ {
-		name := fmt.Sprintf("ppt/slides/slide%d.xml", i)
-		if partsB[name] != partsB2[name] {
-			t.Errorf("slide %d was needlessly rewritten on third apply (same template, same content)", i)
 		}
 	}
 }

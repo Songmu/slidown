@@ -62,7 +62,8 @@ func TestResolveTemplate(t *testing.T) {
 		t.Fatalf("expected nil template for a deck without a template, got %v", tmpl)
 	}
 
-	// A markdown deck pointing at a template resolves it.
+	// A markdown deck's frontmatter "template" is now ignored: with no config
+	// template and no --template flag, it resolves to the built-in design (nil).
 	mdPath2 := filepath.Join(t.TempDir(), "deck2.md")
 	absFixture, err := filepath.Abs(fixture)
 	if err != nil {
@@ -74,10 +75,32 @@ func TestResolveTemplate(t *testing.T) {
 	}
 	tmpl, err = resolveTemplate(mdPath2)
 	if err != nil {
-		t.Fatalf("resolveTemplate(md+template): %v", err)
+		t.Fatalf("resolveTemplate(md+frontmatter template): %v", err)
+	}
+	if tmpl != nil {
+		t.Fatalf("frontmatter template should be ignored, expected nil, got %v", tmpl)
+	}
+
+	// A config "template" field resolves the deck's template.
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	cfgDir := filepath.Join(xdg, "slidown")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.yml"), []byte("template: "+absFixture+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	mdPath3 := filepath.Join(t.TempDir(), "deck3.md")
+	if err := os.WriteFile(mdPath3, []byte("# Hello\n\nbody\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	tmpl, err = resolveTemplate(mdPath3)
+	if err != nil {
+		t.Fatalf("resolveTemplate(md+config template): %v", err)
 	}
 	if tmpl == nil || len(tmpl.Layouts) == 0 {
-		t.Fatalf("expected layouts from the deck's configured template, got %v", tmpl)
+		t.Fatalf("expected layouts from the config template, got %v", tmpl)
 	}
 }
 

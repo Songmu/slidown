@@ -60,8 +60,6 @@ type Frontmatter struct {
 	Title string `yaml:"title,omitempty" json:"title,omitempty"` // title of the presentation
 	// Output is the path to the generated .pptx file.
 	Output string `yaml:"output,omitempty" json:"output,omitempty"`
-	// Template is the path to a .pptx file used as the design template.
-	Template string `yaml:"template,omitempty" json:"template,omitempty"`
 	// Whether to display line breaks in the document as line breaks
 	Breaks *bool `yaml:"breaks,omitempty" json:"breaks,omitempty"`
 	// Conditions for default

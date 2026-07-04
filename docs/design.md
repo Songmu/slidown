@@ -76,8 +76,9 @@ names, hyperlink targets, colors) is XML-escaped.
 
 ### Template mode
 
-When a `.pptx` template is supplied (`--template`, `template` frontmatter/config,
-or an existing output file reused as its own template), `pptx.LoadTemplate`
+When a `.pptx` template is supplied (`--template` or the `template` config
+field when creating a new file, or an existing output file reused as its own
+template), `pptx.LoadTemplate`
 extracts the template's **design parts** — theme, slide master(s), slide layouts
 (with their placeholders) and the `ppt/media` tree — and copies them verbatim.
 Generated slides reference the template's layouts; newly generated media is
@@ -130,7 +131,6 @@ title/subtitle/body placeholders), pictures (`p:pic`) and tables
 | --- | --- |
 | `title` | Presentation title; written to `docProps/core.xml`. |
 | `output` | Output `.pptx` path (used when `--output` is absent). |
-| `template` | Path to a `.pptx` whose design is reused. |
 | `breaks` | Render single line breaks as line breaks (default: as spaces). |
 | `codeBlockToImageCommand` | Command used to convert code blocks to images. |
 | `defaults` | CEL-based conditional page configuration. |
@@ -139,7 +139,9 @@ title/subtitle/body placeholders), pictures (`p:pic`) and tables
 
 `${XDG_CONFIG_HOME:-~/.config}/slidown/config[-{profile}].yml` supports
 `breaks`, `defaults`, `codeBlockToImageCommand`, `template`. Precedence:
-command-line > frontmatter > config > built-in defaults.
+command-line > frontmatter > config > built-in defaults. The `template`
+field is config-only (not a frontmatter field) and seeds only newly created
+output files.
 
 ### Page configuration
 
@@ -219,9 +221,12 @@ package and, for each reused slide:
   injecting the notes content-type overrides so the package stays valid.
 
 If every slide is reused at its original position and the count is unchanged, the
-existing file is left untouched (a no-op). When the existing file is not usable as
-a template (e.g. a different `--template` is given), the rebuild falls back to
-`pptx.MergeWithExisting`, a plain ZIP overlay.
+existing file is left untouched (a no-op). When no slides can be reused (e.g. the
+whole deck changed), the rebuild falls back to `pptx.MergeWithExisting`, a plain
+ZIP overlay that preserves non-regenerated parts (such as `docProps`) while
+dropping stale regenerated parts. An existing output is always rebuilt using
+itself as the template — `apply` rejects `--template` when the output already
+exists — so a reused slide's layout relationships remain valid.
 
 ## CLI
 

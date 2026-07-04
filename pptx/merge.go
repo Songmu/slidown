@@ -17,7 +17,7 @@ import (
 // part under one of these prefixes (i.e. present in the existing file but not in
 // the freshly generated package) is stale — typically a leftover slide layout /
 // master / theme / media from a previous template, an orphan slide from a shrunk
-// deck, or the legacy ppt/slidownMeta part now embedded in presentation.xml.
+// deck, or the legacy ppt/slidownMeta part written by older versions.
 // Carrying it over would leave the part undeclared in the regenerated
 // [Content_Types].xml and unreferenced by the new master and presentation, which
 // PowerPoint reports as unreadable content and strips during a repair. The

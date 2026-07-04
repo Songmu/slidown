@@ -95,9 +95,6 @@ func (fm *Frontmatter) applyConfig(cfg *config.Config) *Frontmatter {
 	if fm.CodeBlockToImageCommand == "" {
 		fm.CodeBlockToImageCommand = cfg.CodeBlockToImageCommand
 	}
-	if fm.Template == "" {
-		fm.Template = cfg.Template
-	}
 	// append default conditions from config
 	for _, cond := range cfg.Defaults {
 		fm.Defaults = append(fm.Defaults, DefaultCondition{

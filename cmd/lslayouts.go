@@ -19,8 +19,7 @@ template, so they can be referenced from a page configuration such as
 <!-- {"layout":"..."} -->.
 
 The argument may be a .pptx or .potx template directly, or a markdown deck file
-whose template is resolved from the --template flag, its frontmatter, or the
-config.`,
+whose template is resolved from the --template flag or the config.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		tmpl, err := resolveTemplate(args[0])
@@ -58,13 +57,14 @@ func resolveTemplate(path string) (*pptx.Template, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
-	m, err := md.ParseFile(path, cfg)
-	if err != nil {
+	// Parse the deck to validate it; the template itself now comes from the
+	// --template flag or the config field.
+	if _, err := md.ParseFile(path, cfg); err != nil {
 		return nil, err
 	}
 	templatePath := lsLayoutsTemplate
-	if templatePath == "" && m.Frontmatter != nil {
-		templatePath = m.Frontmatter.Template
+	if templatePath == "" && cfg != nil {
+		templatePath = cfg.Template
 	}
 	if templatePath == "" {
 		return nil, nil

@@ -29,11 +29,14 @@ var applyCmd = &cobra.Command{
 The output path defaults to the input file name with a .pptx extension,
 and can be overridden with the --output/-o flag.
 
-A pre-existing output file is treated as the update target and reused as the
-template when no explicit template is supplied.
+When the output file does not yet exist it is created. A .pptx or .potx
+template (its theme, slide masters and layouts) may seed a newly created file
+via the --template flag or the "template" config field; a template can only be
+supplied when creating a new file.
 
-A .pptx or .potx template (its theme, slide masters and layouts) can be
-supplied with --template or the "template" frontmatter/config field.`,
+When the output file already exists it is updated in place, reusing itself as
+the template. Passing --template while the output already exists is an error:
+choose a different --output, or remove the existing file first.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		f := args[0]
@@ -56,18 +59,13 @@ supplied with --template or the "template" frontmatter/config field.`,
 			out = defaultOutputPath(f)
 		}
 
-		templatePath := applyTemplate
-		if templatePath == "" && m.Frontmatter != nil {
-			templatePath = m.Frontmatter.Template
+		var cfgTemplate string
+		if cfg != nil {
+			cfgTemplate = cfg.Template
 		}
-		if templatePath == "" {
-			exists, err := pathExists(out)
-			if err != nil {
-				return fmt.Errorf("failed to inspect output path: %w", err)
-			}
-			if exists {
-				templatePath = out
-			}
+		templatePath, err := resolveApplyTemplate(out, applyTemplate, cfgTemplate)
+		if err != nil {
+			return err
 		}
 
 		slides, err := m.ToSlides(cmd.Context(), applyCodeBlockToImageCmd)
@@ -107,6 +105,37 @@ supplied with --template or the "template" frontmatter/config field.`,
 	},
 }
 
+// resolveApplyTemplate decides which template (if any) apply should use, given
+// the resolved output path, the --template flag value and the config template.
+//
+// A template may only seed a newly created file:
+//   - flagTemplate set + output exists -> error (choose -o or remove the file)
+//   - flagTemplate set + new output    -> create from flagTemplate
+//   - output exists                    -> reuse the output as its own template
+//   - cfgTemplate set + new output     -> create from cfgTemplate
+//   - otherwise                        -> "" (built-in design)
+func resolveApplyTemplate(out, flagTemplate, cfgTemplate string) (string, error) {
+	outExists, err := pathExists(out)
+	if err != nil {
+		return "", fmt.Errorf("failed to inspect output path: %w", err)
+	}
+	switch {
+	case flagTemplate != "":
+		if outExists {
+			return "", fmt.Errorf("output %q already exists; --template can only be used when creating a new file. "+
+				"Specify a different output with -o, or remove the existing file first", out)
+		}
+		return flagTemplate, nil
+	case outExists:
+		// Update in place: reuse the existing presentation as its own template.
+		return out, nil
+	case cfgTemplate != "":
+		return cfgTemplate, nil
+	default:
+		return "", nil
+	}
+}
+
 func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides) (bool, error) {
 	exists, err := pathExists(out)
 	if err != nil {
@@ -127,36 +156,26 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides) 
 	// Change detection compares each slide's embedded source fingerprint against
 	// the freshly computed one.
 	//
-	// Reuse is only safe when the template has not changed: a reused slide's
-	// .rels file is copied verbatim from the existing package and may reference
-	// layouts by file name (e.g. ../slideLayouts/slideLayout7.xml). If the new
-	// package was built from a different template, those layout files may not
-	// exist or may have completely different content, causing PowerPoint to
-	// report a dangling relationship or silently apply the wrong layout.
-	//
-	// Check template hash before reading slide metadata to avoid unnecessary
-	// work when the template has changed.
-	existingTemplateHash, _ := pptx.ReadPresentationTemplateHash(out)
-	newTemplateHash := pptx.ReadPresentationTemplateHashFromBytes(newPPTX)
-	templateUnchanged := existingTemplateHash != "" && newTemplateHash != "" && existingTemplateHash == newTemplateHash
-
-	if templateUnchanged {
-		if existing, err := pptx.ReadSlideMetas(out); err == nil {
-			reuse := buildReuseMap(sourceSlides, existing)
-			switch {
-			case isIdentityReuse(reuse, existing, len(sourceSlides)):
-				// Every slide is reused in place: keep the existing file as is.
-				return true, nil
-			case len(reuse) > 0:
-				merged, err := pptx.MergeReusingUnchangedSlides(out, newPPTX, reuse)
-				if err != nil {
-					return false, err
-				}
-				if err := os.WriteFile(out, merged, 0o600); err != nil {
-					return false, err
-				}
-				return true, nil
+	// Reuse copies a slide's .rels verbatim from the existing package, which may
+	// reference layouts by file name (e.g. ../slideLayouts/slideLayout7.xml).
+	// This is safe here because an existing output is always rebuilt using
+	// itself as the template (apply refuses --template when the output already
+	// exists), so its design parts are unchanged.
+	if existing, err := pptx.ReadSlideMetas(out); err == nil {
+		reuse := buildReuseMap(sourceSlides, existing)
+		switch {
+		case isIdentityReuse(reuse, existing, len(sourceSlides)):
+			// Every slide is reused in place: keep the existing file as is.
+			return true, nil
+		case len(reuse) > 0:
+			merged, err := pptx.MergeReusingUnchangedSlides(out, newPPTX, reuse)
+			if err != nil {
+				return false, err
 			}
+			if err := os.WriteFile(out, merged, 0o600); err != nil {
+				return false, err
+			}
+			return true, nil
 		}
 	}
 
