@@ -92,7 +92,7 @@ choose a different --output, or remove the existing file first.`,
 			return fmt.Errorf("failed to write presentation: %w", err)
 		}
 
-		updated, err := writePresentation(out, buf.Bytes(), slides)
+		updated, err := writePresentation(out, buf.Bytes(), slides, pres.Title)
 		if err != nil {
 			return fmt.Errorf("failed to write presentation: %w", err)
 		}
@@ -136,7 +136,7 @@ func resolveApplyTemplate(out, flagTemplate, cfgTemplate string) (string, error)
 	}
 }
 
-func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides) (bool, error) {
+func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, desiredTitle string) (bool, error) {
 	exists, err := pathExists(out)
 	if err != nil {
 		return false, err
@@ -161,11 +161,25 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides) 
 	// This is safe here because an existing output is always rebuilt using
 	// itself as the template (apply refuses --template when the output already
 	// exists), so its design parts are unchanged.
-	if existing, err := pptx.ReadSlideMetas(out); err == nil {
+	if existing, existingTitle, err := pptx.ReadSlideMetasAndCoreTitle(out); err == nil {
 		reuse := buildReuseMap(sourceSlides, existing)
 		switch {
 		case isIdentityReuse(reuse, existing, len(sourceSlides)):
-			// Every slide is reused in place: keep the existing file as is.
+			// Every slide is reused in place. The file is already correct unless
+			// a deck-level property that the per-slide fingerprints do not cover
+			// changed — currently the title in docProps/core.xml. When only the
+			// title changed, swap in the freshly generated core.xml while keeping
+			// every other part (slides, media, customXml, …) verbatim.
+			if existingTitle == desiredTitle {
+				return true, nil
+			}
+			merged, err := pptx.ReplaceCoreProps(out, newPPTX)
+			if err != nil {
+				return false, err
+			}
+			if err := os.WriteFile(out, merged, 0o600); err != nil {
+				return false, err
+			}
 			return true, nil
 		case len(reuse) > 0:
 			merged, err := pptx.MergeReusingUnchangedSlides(out, newPPTX, reuse)

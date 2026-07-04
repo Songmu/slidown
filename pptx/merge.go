@@ -15,9 +15,9 @@ import (
 // slides, slide layouts/masters, notes and handout masters, themes and media,
 // plus the loose template-hash sentinel written by older versions. An old-only
 // part under one of these prefixes (i.e. present in the existing file but not in
-// the freshly generated package) is stale — typically a leftover slide layout /
-// master / theme / media from a previous template, an orphan slide from a shrunk
-// deck, or the legacy ppt/slidownMeta part written by older versions.
+// the freshly generated package) is stale — typically an orphan slide, notes
+// slide, layout or media part from a shrunk or restructured deck, or the legacy
+// ppt/slidownMeta part written by older versions.
 // Carrying it over would leave the part undeclared in the regenerated
 // [Content_Types].xml and unreferenced by the new master and presentation, which
 // PowerPoint reports as unreadable content and strips during a repair. The
@@ -51,7 +51,7 @@ func isRegeneratedPart(name string) bool {
 // and any old entries missing from the new package are preserved, except for
 // parts under the namespaces slidown fully regenerates (see isRegeneratedPart):
 // those old-only parts are stale design/content leftovers and are dropped so
-// they cannot accumulate across template switches and corrupt the package. This
+// they cannot accumulate across rebuilds and corrupt the package. This
 // keeps the update path stable for slidown-generated decks without requiring a
 // fragile reverse parser.
 func MergeWithExisting(existingPath string, newPPTX []byte) ([]byte, error) {
@@ -94,25 +94,37 @@ func MergeWithExisting(existingPath string, newPPTX []byte) ([]byte, error) {
 	sort.Strings(extras)
 	newOrder = append(newOrder, extras...)
 
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-	for _, name := range newOrder {
-		data, ok := merged[name]
-		if !ok {
-			continue
-		}
-		fw, err := zw.Create(name)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := fw.Write(data); err != nil {
-			return nil, err
-		}
-	}
-	if err := zw.Close(); err != nil {
+	return zipFromParts(newOrder, merged)
+}
+
+// ReplaceCoreProps returns the existing pptx package with its
+// docProps/core.xml replaced by the one from the freshly generated newPPTX,
+// preserving every other part verbatim (slides, media, customXml, thumbnails,
+// notes, …) and the original part order. It applies a deck-level metadata
+// change (e.g. a new title) when every slide is otherwise reused unchanged, so
+// the update touches as little of the package as possible.
+func ReplaceCoreProps(existingPath string, newPPTX []byte) ([]byte, error) {
+	oldParts, oldOrder, err := readZipPartsFromPath(existingPath)
+	if err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
+	newParts, _, err := readZipPartsFromBytes(newPPTX)
+	if err != nil {
+		return nil, err
+	}
+	const coreName = "docProps/core.xml"
+	newCore, ok := newParts[coreName]
+	if !ok {
+		// slidown always generates docProps/core.xml, so its absence signals a
+		// broken generated package rather than a normal case.
+		return nil, fmt.Errorf("generated package is missing %s", coreName)
+	}
+	order := oldOrder
+	if _, existed := oldParts[coreName]; !existed {
+		order = append(append([]string(nil), oldOrder...), coreName)
+	}
+	oldParts[coreName] = newCore
+	return zipFromParts(order, oldParts)
 }
 
 func readZipPartsFromPath(path string) (map[string][]byte, []string, error) {
