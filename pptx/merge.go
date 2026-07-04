@@ -15,9 +15,9 @@ import (
 // slides, slide layouts/masters, notes and handout masters, themes and media,
 // plus the loose template-hash sentinel written by older versions. An old-only
 // part under one of these prefixes (i.e. present in the existing file but not in
-// the freshly generated package) is stale — typically a leftover slide layout /
-// master / theme / media from a previous template, an orphan slide from a shrunk
-// deck, or the legacy ppt/slidownMeta part written by older versions.
+// the freshly generated package) is stale — typically an orphan slide, notes
+// slide, layout or media part from a shrunk or restructured deck, or the legacy
+// ppt/slidownMeta part written by older versions.
 // Carrying it over would leave the part undeclared in the regenerated
 // [Content_Types].xml and unreferenced by the new master and presentation, which
 // PowerPoint reports as unreadable content and strips during a repair. The
@@ -51,7 +51,7 @@ func isRegeneratedPart(name string) bool {
 // and any old entries missing from the new package are preserved, except for
 // parts under the namespaces slidown fully regenerates (see isRegeneratedPart):
 // those old-only parts are stale design/content leftovers and are dropped so
-// they cannot accumulate across template switches and corrupt the package. This
+// they cannot accumulate across rebuilds and corrupt the package. This
 // keeps the update path stable for slidown-generated decks without requiring a
 // fragile reverse parser.
 func MergeWithExisting(existingPath string, newPPTX []byte) ([]byte, error) {

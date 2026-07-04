@@ -44,6 +44,38 @@ func ReadSlideMetas(path string) ([]SlideMeta, error) {
 	return metas, nil
 }
 
+// ReadCoreTitle returns the dc:title recorded in a .pptx file's
+// docProps/core.xml, or "" when absent or unreadable.
+func ReadCoreTitle(path string) string {
+	parts, _, err := readZipPartsFromPath(path)
+	if err != nil {
+		return ""
+	}
+	return coreTitle(parts["docProps/core.xml"])
+}
+
+// CoreTitleFromBytes returns the dc:title recorded in in-memory .pptx bytes.
+func CoreTitleFromBytes(data []byte) string {
+	parts, _, err := readZipPartsFromBytes(data)
+	if err != nil {
+		return ""
+	}
+	return coreTitle(parts["docProps/core.xml"])
+}
+
+func coreTitle(coreXML []byte) string {
+	if len(coreXML) == 0 {
+		return ""
+	}
+	var c struct {
+		Title string `xml:"title"`
+	}
+	if err := xml.Unmarshal(coreXML, &c); err != nil {
+		return ""
+	}
+	return c.Title
+}
+
 func slideNamesFromPresentationOrder(parts map[string][]byte) []string {
 	presentationXML, ok := parts["ppt/presentation.xml"]
 	if !ok {

@@ -164,8 +164,13 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides) 
 	if existing, err := pptx.ReadSlideMetas(out); err == nil {
 		reuse := buildReuseMap(sourceSlides, existing)
 		switch {
-		case isIdentityReuse(reuse, existing, len(sourceSlides)):
-			// Every slide is reused in place: keep the existing file as is.
+		case isIdentityReuse(reuse, existing, len(sourceSlides)) &&
+			pptx.ReadCoreTitle(out) == pptx.CoreTitleFromBytes(newPPTX):
+			// Every slide is reused in place and the deck title is unchanged:
+			// the existing file is already correct. The title lives in
+			// docProps/core.xml, which the per-slide fingerprints do not cover,
+			// so it must be compared separately to avoid dropping a title-only
+			// edit.
 			return true, nil
 		case len(reuse) > 0:
 			merged, err := pptx.MergeReusingUnchangedSlides(out, newPPTX, reuse)

@@ -250,6 +250,9 @@ func applyToFileForTest(t *testing.T, mdText, out, templatePath string) bool {
 	} else {
 		pres = render.ToPresentation(slides)
 	}
+	if m.Frontmatter != nil {
+		pres.Title = m.Frontmatter.Title
+	}
 
 	var buf bytes.Buffer
 	if _, err := pres.WriteTo(&buf); err != nil {
@@ -498,6 +501,38 @@ func TestResolveApplyTemplate(t *testing.T) {
 			t.Errorf("got %q, want built-in design (empty)", got)
 		}
 	})
+}
+
+// TestApplyUpdatesTitleOnlyChange verifies that editing only the deck title
+// (frontmatter "title", stored in docProps/core.xml) is reflected on rebuild
+// even though every slide's source is unchanged. The per-slide fingerprints do
+// not cover the deck title, so the identity fast-path must compare it.
+func TestApplyUpdatesTitleOnlyChange(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "deck.pptx")
+
+	const body = "\n\n# One\n\nbody one\n\n---\n\n# Two\n\nbody two\n"
+	base := "---\ntitle: First Title\n---" + body
+	changed := "---\ntitle: Second Title\n---" + body
+
+	if updated := applyToFileForTest(t, base, out, ""); updated {
+		t.Fatalf("first apply should report a fresh write, got updated=true")
+	}
+	if got := pptx.ReadCoreTitle(out); got != "First Title" {
+		t.Fatalf("initial title = %q, want %q", got, "First Title")
+	}
+
+	// Only the title changed; all slides are identical.
+	applyToFileForTest(t, changed, out, "")
+	if got := pptx.ReadCoreTitle(out); got != "Second Title" {
+		t.Errorf("title-only change was dropped: title = %q, want %q", got, "Second Title")
+	}
+
+	// Slide bytes must be preserved (the slides did not change).
+	parts := readSlidePartsForTest(t, out)
+	if len(parts["ppt/slides/slide1.xml"]) == 0 || len(parts["ppt/slides/slide2.xml"]) == 0 {
+		t.Errorf("expected both slides to remain present after a title-only update")
+	}
 }
 
 // TestApplyIgnoresFrontmatterTemplate verifies that a "template" field in a
