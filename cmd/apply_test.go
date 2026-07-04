@@ -265,6 +265,37 @@ func applyToFileForTest(t *testing.T, mdText, out, templatePath string) bool {
 	return updated
 }
 
+// applyFreshForTest applies a deck to a not-yet-existing output and asserts the
+// write was reported as a fresh creation (updated == false).
+func applyFreshForTest(t *testing.T, mdText, out, templatePath string) {
+	t.Helper()
+	if updated := applyToFileForTest(t, mdText, out, templatePath); updated {
+		t.Fatalf("apply to a new output should report a fresh write, got updated=true")
+	}
+}
+
+// applyUpdateForTest applies a deck to an existing output and asserts the write
+// was reported as an in-place update (updated == true).
+func applyUpdateForTest(t *testing.T, mdText, out, templatePath string) {
+	t.Helper()
+	if updated := applyToFileForTest(t, mdText, out, templatePath); !updated {
+		t.Fatalf("apply to an existing output should report an update, got updated=false")
+	}
+}
+
+// applyTwiceForTest applies v1 to a fresh output, then v2 to the same output,
+// returning the slide-part snapshots taken after each apply. It asserts the
+// first apply is a fresh write and the second reports an update.
+func applyTwiceForTest(t *testing.T, v1, v2, templatePath string) (orig, now map[string][]byte) {
+	t.Helper()
+	out := filepath.Join(t.TempDir(), "deck.pptx")
+	applyFreshForTest(t, v1, out, templatePath)
+	orig = readSlidePartsForTest(t, out)
+	applyUpdateForTest(t, v2, out, templatePath)
+	now = readSlidePartsForTest(t, out)
+	return orig, now
+}
+
 func readSlidePartsForTest(t *testing.T, path string) map[string][]byte {
 	t.Helper()
 	zr, err := zip.OpenReader(path)
@@ -420,20 +451,12 @@ func TestApplyIncrementalReuse(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			out := filepath.Join(t.TempDir(), "deck.pptx")
 			var tmpl string
 			if tc.withTemplate {
 				tmpl = buildTemplateFileForTest(t)
 			}
 
-			if updated := applyToFileForTest(t, tc.v1, out, tmpl); updated {
-				t.Fatalf("first apply should be a fresh write, got updated=true")
-			}
-			orig := readSlidePartsForTest(t, out)
-			if updated := applyToFileForTest(t, tc.v2, out, tmpl); !updated {
-				t.Fatalf("second apply should report an update, got updated=false")
-			}
-			now := readSlidePartsForTest(t, out)
+			orig, now := applyTwiceForTest(t, tc.v1, tc.v2, tmpl)
 
 			if tc.wantCount != 0 && len(now) != tc.wantCount {
 				t.Fatalf("slide count = %d, want %d", len(now), tc.wantCount)
@@ -528,9 +551,7 @@ func TestApplyUpdatesTitleOnlyChange(t *testing.T) {
 	base := "---\ntitle: First Title\n---" + body
 	changed := "---\ntitle: Second Title\n---" + body
 
-	if updated := applyToFileForTest(t, base, out, ""); updated {
-		t.Fatalf("first apply should report a fresh write, got updated=true")
-	}
+	applyFreshForTest(t, base, out, "")
 	if got := pptx.ReadCoreTitle(out); got != "First Title" {
 		t.Fatalf("initial title = %q, want %q", got, "First Title")
 	}
@@ -544,7 +565,7 @@ func TestApplyUpdatesTitleOnlyChange(t *testing.T) {
 	before := zipRawPartsForTest(t, out)
 
 	// Only the title changed; all slides are identical.
-	applyToFileForTest(t, changed, out, "")
+	applyUpdateForTest(t, changed, out, "")
 	after := zipRawPartsForTest(t, out)
 
 	if got := pptx.ReadCoreTitle(out); got != "Second Title" {
@@ -572,9 +593,7 @@ func TestApplyIgnoresFrontmatterTemplate(t *testing.T) {
 
 	deck := fmt.Sprintf("---\ntemplate: %s\n---\n\n# One\n\nbody one\n", altTemplate)
 
-	if updated := applyToFileForTest(t, deck, out, ""); updated {
-		t.Fatalf("first apply should report a fresh write, got updated=true")
-	}
+	applyFreshForTest(t, deck, out, "")
 
 	parts, err := zipPartsForTest(t, mustReadFileForTest(t, out))
 	if err != nil {
@@ -596,9 +615,7 @@ func TestApplyPreservesVisibleOrderBytesAfterReorderedPresentation(t *testing.T)
 	const v1 = "# One\n\nbody one\n\n---\n\n# Two\n\nbody two\n"
 	const reorderedSource = "# Two\n\nbody two\n\n---\n\n# One\n\nbody one\n"
 
-	if updated := applyToFileForTest(t, v1, out, ""); updated {
-		t.Fatalf("first apply should be a fresh write")
-	}
+	applyFreshForTest(t, v1, out, "")
 
 	reorderPresentationAndMarkSlidesInFileForTest(t, out)
 	beforeVisible := readVisibleSlidePartsForTest(t, out)
@@ -608,9 +625,7 @@ func TestApplyPreservesVisibleOrderBytesAfterReorderedPresentation(t *testing.T)
 	// running MergeReusingUnchangedSlides. The test below
 	// (TestApplyCorrectlyReusesSlideAfterReorderAndNonIdentityRebuild) covers
 	// the merge path explicitly.
-	if updated := applyToFileForTest(t, reorderedSource, out, ""); !updated {
-		t.Fatalf("second apply should report an update")
-	}
+	applyUpdateForTest(t, reorderedSource, out, "")
 	afterVisible := readVisibleSlidePartsForTest(t, out)
 
 	if !bytes.Equal(beforeVisible[0], afterVisible[0]) {
@@ -637,9 +652,7 @@ func TestApplyCorrectlyReusesSlideAfterReorderAndNonIdentityRebuild(t *testing.T
 	// Step 1: generate a 2-slide deck.
 	//   slide1.xml = "One" content, slide2.xml = "Two" content.
 	const v1 = "# One\n\nbody one\n\n---\n\n# Two\n\nbody two\n"
-	if updated := applyToFileForTest(t, v1, out, ""); updated {
-		t.Fatalf("first apply should be a fresh write")
-	}
+	applyFreshForTest(t, v1, out, "")
 
 	// Step 2: simulate a PowerPoint reorder + manual edits.
 	//   - sldIdLst is flipped to [rId2, rId1]:
@@ -655,9 +668,7 @@ func TestApplyCorrectlyReusesSlideAfterReorderAndNonIdentityRebuild(t *testing.T
 	//   new, so len(reuse)=2 ≠ sourceLen=3: isIdentityReuse is false and
 	//   MergeReusingUnchangedSlides is invoked.
 	const v3 = "# Two\n\nbody two\n\n---\n\n# One\n\nbody one\n\n---\n\n# Three\n\nbody three\n"
-	if updated := applyToFileForTest(t, v3, out, ""); !updated {
-		t.Fatalf("third apply should report an update")
-	}
+	applyUpdateForTest(t, v3, out, "")
 
 	// Step 4: assertions.
 	// The new presentation has 3 slides in natural order (slide1, slide2, slide3).
