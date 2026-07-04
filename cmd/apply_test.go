@@ -291,6 +291,61 @@ func readSlidePartsForTest(t *testing.T, path string) map[string][]byte {
 	return parts
 }
 
+// zipRawPartsForTest reads every entry of a .pptx file into a name->bytes map.
+func zipRawPartsForTest(t *testing.T, path string) map[string][]byte {
+	t.Helper()
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatalf("zip.OpenReader: %v", err)
+	}
+	defer zr.Close()
+	parts := map[string][]byte{}
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("open %s: %v", f.Name, err)
+		}
+		b, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatalf("read %s: %v", f.Name, err)
+		}
+		parts[f.Name] = b
+	}
+	return parts
+}
+
+// injectZipPartForTest rewrites a .pptx file with an extra part appended,
+// simulating an out-of-band part added by PowerPoint or a user.
+func injectZipPartForTest(t *testing.T, path, name string, data []byte) {
+	t.Helper()
+	existing := zipRawPartsForTest(t, path)
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for n, d := range existing {
+		fw, err := zw.Create(n)
+		if err != nil {
+			t.Fatalf("zip create %s: %v", n, err)
+		}
+		if _, err := fw.Write(d); err != nil {
+			t.Fatalf("zip write %s: %v", n, err)
+		}
+	}
+	fw, err := zw.Create(name)
+	if err != nil {
+		t.Fatalf("zip create %s: %v", name, err)
+	}
+	if _, err := fw.Write(data); err != nil {
+		t.Fatalf("zip write %s: %v", name, err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("zip close: %v", err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+}
+
 func TestApplyReusesUnchangedSlides(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "deck.pptx")
@@ -506,7 +561,10 @@ func TestResolveApplyTemplate(t *testing.T) {
 // TestApplyUpdatesTitleOnlyChange verifies that editing only the deck title
 // (frontmatter "title", stored in docProps/core.xml) is reflected on rebuild
 // even though every slide's source is unchanged. The per-slide fingerprints do
-// not cover the deck title, so the identity fast-path must compare it.
+// not cover the deck title, so the identity fast-path must compare it. The
+// update must also preserve every other part verbatim, including unmanaged
+// parts a user or PowerPoint may have added (e.g. customXml) and the slide
+// bytes themselves.
 func TestApplyUpdatesTitleOnlyChange(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "deck.pptx")
@@ -522,16 +580,28 @@ func TestApplyUpdatesTitleOnlyChange(t *testing.T) {
 		t.Fatalf("initial title = %q, want %q", got, "First Title")
 	}
 
+	// Simulate an unmanaged part added out-of-band (as PowerPoint or a user
+	// might), plus capture the slide bytes, to prove the title-only update
+	// preserves the rest of the package verbatim.
+	const customPart = "customXml/item1.xml"
+	const customData = "<custom>keep me</custom>"
+	injectZipPartForTest(t, out, customPart, []byte(customData))
+	before := zipRawPartsForTest(t, out)
+
 	// Only the title changed; all slides are identical.
 	applyToFileForTest(t, changed, out, "")
+	after := zipRawPartsForTest(t, out)
+
 	if got := pptx.ReadCoreTitle(out); got != "Second Title" {
 		t.Errorf("title-only change was dropped: title = %q, want %q", got, "Second Title")
 	}
-
-	// Slide bytes must be preserved (the slides did not change).
-	parts := readSlidePartsForTest(t, out)
-	if len(parts["ppt/slides/slide1.xml"]) == 0 || len(parts["ppt/slides/slide2.xml"]) == 0 {
-		t.Errorf("expected both slides to remain present after a title-only update")
+	if !bytes.Equal(after[customPart], []byte(customData)) {
+		t.Errorf("unmanaged part %q was not preserved on a title-only update: %q", customPart, after[customPart])
+	}
+	for _, name := range []string{"ppt/slides/slide1.xml", "ppt/slides/slide2.xml"} {
+		if !bytes.Equal(before[name], after[name]) {
+			t.Errorf("slide %q was rewritten on a title-only update; expected byte-for-byte preservation", name)
+		}
 	}
 }
 

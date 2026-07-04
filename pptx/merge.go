@@ -94,10 +94,46 @@ func MergeWithExisting(existingPath string, newPPTX []byte) ([]byte, error) {
 	sort.Strings(extras)
 	newOrder = append(newOrder, extras...)
 
+	return writeZipParts(newOrder, merged)
+}
+
+// ReplaceCoreProps returns the existing pptx package with its
+// docProps/core.xml replaced by the one from the freshly generated newPPTX,
+// preserving every other part verbatim (slides, media, customXml, thumbnails,
+// notes, …) and the original part order. It applies a deck-level metadata
+// change (e.g. a new title) when every slide is otherwise reused unchanged, so
+// the update touches as little of the package as possible.
+func ReplaceCoreProps(existingPath string, newPPTX []byte) ([]byte, error) {
+	oldParts, oldOrder, err := readZipPartsFromPath(existingPath)
+	if err != nil {
+		return nil, err
+	}
+	newParts, _, err := readZipPartsFromBytes(newPPTX)
+	if err != nil {
+		return nil, err
+	}
+	const coreName = "docProps/core.xml"
+	newCore, ok := newParts[coreName]
+	if !ok {
+		// The generated package has no core.xml (should not happen); leave the
+		// existing package unchanged.
+		return writeZipParts(oldOrder, oldParts)
+	}
+	order := oldOrder
+	if _, existed := oldParts[coreName]; !existed {
+		order = append(append([]string(nil), oldOrder...), coreName)
+	}
+	oldParts[coreName] = newCore
+	return writeZipParts(order, oldParts)
+}
+
+// writeZipParts serializes parts as a ZIP, emitting entries in order (skipping
+// names absent from parts) so callers control the part ordering.
+func writeZipParts(order []string, parts map[string][]byte) ([]byte, error) {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
-	for _, name := range newOrder {
-		data, ok := merged[name]
+	for _, name := range order {
+		data, ok := parts[name]
 		if !ok {
 			continue
 		}
