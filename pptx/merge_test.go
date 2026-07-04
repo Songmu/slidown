@@ -33,17 +33,7 @@ func TestMergeWithExistingPreservesExtraParts(t *testing.T) {
 		t.Fatalf("MergeWithExisting: %v", err)
 	}
 
-	zr, err := zip.NewReader(bytes.NewReader(merged), int64(len(merged)))
-	if err != nil {
-		t.Fatalf("zip reader: %v", err)
-	}
-	parts := map[string]string{}
-	for _, f := range zr.File {
-		rc, _ := f.Open()
-		b, _ := io.ReadAll(rc)
-		rc.Close()
-		parts[f.Name] = string(b)
-	}
+	parts := unzipToStringMap(t, merged)
 
 	if got := parts["foo/custom.txt"]; got != "keep me" {
 		t.Fatalf("custom part not preserved: %q", got)
@@ -96,14 +86,7 @@ func TestMergeWithExistingDropsStaleDesignParts(t *testing.T) {
 		t.Fatalf("MergeWithExisting: %v", err)
 	}
 
-	zr, err := zip.NewReader(bytes.NewReader(merged), int64(len(merged)))
-	if err != nil {
-		t.Fatalf("zip reader: %v", err)
-	}
-	parts := map[string]bool{}
-	for _, f := range zr.File {
-		parts[f.Name] = true
-	}
+	parts := unzipToStringMap(t, merged)
 
 	stale := []string{
 		"ppt/slideLayouts/slideLayout20.xml",
@@ -115,11 +98,11 @@ func TestMergeWithExistingDropsStaleDesignParts(t *testing.T) {
 		"ppt/slidownMeta",
 	}
 	for _, name := range stale {
-		if parts[name] {
+		if _, ok := parts[name]; ok {
 			t.Errorf("stale design part %q was carried over into the merged package", name)
 		}
 	}
-	if !parts["customXml/item1.xml"] {
+	if _, ok := parts["customXml/item1.xml"]; !ok {
 		t.Errorf("unmanaged custom part customXml/item1.xml was not preserved")
 	}
 }

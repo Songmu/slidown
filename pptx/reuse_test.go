@@ -2,9 +2,7 @@ package pptx
 
 import (
 	"bytes"
-	"os"
 	"path"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -50,11 +48,7 @@ func TestMergeReusingUnchangedSlidesDeterministic(t *testing.T) {
 	existing := presentationWithNote(t, "speaker note")
 	newPPTX := presentationWithNote(t, "")
 
-	dir := t.TempDir()
-	existingPath := filepath.Join(dir, "existing.pptx")
-	if err := os.WriteFile(existingPath, existing, 0o600); err != nil {
-		t.Fatalf("write existing: %v", err)
-	}
+	existingPath := writeTempPPTX(t, existing)
 
 	reuse := map[int]string{1: "ppt/slides/slide1.xml"}
 	first, err := MergeReusingUnchangedSlides(existingPath, newPPTX, reuse)
@@ -105,11 +99,7 @@ func TestMergeReusingUnchangedSlidesNoMediaCollision(t *testing.T) {
 	existing := buildWithPicture(imageX)
 	newPPTX := buildWithPicture(imageY)
 
-	dir := t.TempDir()
-	existingPath := filepath.Join(dir, "existing.pptx")
-	if err := os.WriteFile(existingPath, existing, 0o600); err != nil {
-		t.Fatalf("write existing: %v", err)
-	}
+	existingPath := writeTempPPTX(t, existing)
 
 	merged, err := MergeReusingUnchangedSlides(existingPath, newPPTX, map[int]string{1: "ppt/slides/slide1.xml"})
 	if err != nil {
@@ -170,11 +160,7 @@ func TestMergeReusingUnchangedSlidesRestoresNotesInfra(t *testing.T) {
 	existing := presentationWithNote(t, "speaker note")
 	newPPTX := presentationWithNote(t, "") // regenerated deck has no notes
 
-	dir := t.TempDir()
-	existingPath := filepath.Join(dir, "existing.pptx")
-	if err := os.WriteFile(existingPath, existing, 0o600); err != nil {
-		t.Fatalf("write existing: %v", err)
-	}
+	existingPath := writeTempPPTX(t, existing)
 
 	merged, err := MergeReusingUnchangedSlides(existingPath, newPPTX, map[int]string{1: "ppt/slides/slide1.xml"})
 	if err != nil {
@@ -222,11 +208,7 @@ func TestMergeReusingUnchangedSlidesReorderedPresentation(t *testing.T) {
 	// (reorderPresentationOrder is shared with fingerprint_read_test.go)
 	existingReordered := reorderPresentationOrder(t, existing2)
 
-	dir := t.TempDir()
-	existingPath := filepath.Join(dir, "existing.pptx")
-	if err := os.WriteFile(existingPath, existingReordered, 0o600); err != nil {
-		t.Fatalf("write existing: %v", err)
-	}
+	existingPath := writeTempPPTX(t, existingReordered)
 
 	// Capture the raw bytes of slide2.xml from the existing file so we can
 	// assert that exactly those bytes end up in the merged slide1.xml.

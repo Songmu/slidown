@@ -4,9 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"io"
-	"os"
 	"path"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -232,9 +230,5 @@ func writeMastersTemplate(t *testing.T) string {
 	if err := zw.Close(); err != nil {
 		t.Fatalf("zip close: %v", err)
 	}
-	p := filepath.Join(t.TempDir(), "masters_template.pptx")
-	if err := os.WriteFile(p, buf.Bytes(), 0o644); err != nil {
-		t.Fatalf("write template: %v", err)
-	}
-	return p
+	return writeTempPPTX(t, buf.Bytes())
 }

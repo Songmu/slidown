@@ -39,15 +39,7 @@ func samplePresentation() *Presentation {
 }
 
 func TestWriteToProducesValidZip(t *testing.T) {
-	var buf bytes.Buffer
-	if _, err := samplePresentation().WriteTo(&buf); err != nil {
-		t.Fatalf("WriteTo: %v", err)
-	}
-
-	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
-	if err != nil {
-		t.Fatalf("not a valid zip: %v", err)
-	}
+	got := writeToParts(t, samplePresentation())
 
 	want := []string{
 		"[Content_Types].xml",
@@ -59,16 +51,6 @@ func TestWriteToProducesValidZip(t *testing.T) {
 		"ppt/slideLayouts/slideLayout1.xml",
 		"ppt/slides/slide1.xml",
 		"ppt/slides/_rels/slide1.xml.rels",
-	}
-	got := map[string]string{}
-	for _, f := range zr.File {
-		rc, err := f.Open()
-		if err != nil {
-			t.Fatalf("open %s: %v", f.Name, err)
-		}
-		b, _ := io.ReadAll(rc)
-		rc.Close()
-		got[f.Name] = string(b)
 	}
 	for _, name := range want {
 		if _, ok := got[name]; !ok {
@@ -111,21 +93,7 @@ func TestWriteToWithSpeakerNotes(t *testing.T) {
 	s.AddShape(&Shape{Placeholder: PlaceholderTitle, Paragraphs: []*Paragraph{{Runs: []*Run{{Text: "T"}}}}})
 	s.Note = "line one\nline two"
 
-	var buf bytes.Buffer
-	if _, err := p.WriteTo(&buf); err != nil {
-		t.Fatalf("WriteTo: %v", err)
-	}
-	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
-	if err != nil {
-		t.Fatalf("invalid zip: %v", err)
-	}
-	parts := map[string]string{}
-	for _, f := range zr.File {
-		rc, _ := f.Open()
-		b, _ := io.ReadAll(rc)
-		rc.Close()
-		parts[f.Name] = string(b)
-	}
+	parts := writeToParts(t, p)
 
 	for _, name := range []string{
 		"ppt/notesMasters/notesMaster1.xml",
@@ -198,23 +166,7 @@ func TestRunCodeLinkRPrOrder(t *testing.T) {
 			{Runs: []*Run{{Text: "code", Code: true, Link: "https://example.com"}}},
 		},
 	})
-	var buf bytes.Buffer
-	if _, err := p.WriteTo(&buf); err != nil {
-		t.Fatalf("WriteTo: %v", err)
-	}
-	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
-	if err != nil {
-		t.Fatalf("zip: %v", err)
-	}
-	var slide string
-	for _, f := range zr.File {
-		if f.Name == "ppt/slides/slide1.xml" {
-			rc, _ := f.Open()
-			b, _ := io.ReadAll(rc)
-			rc.Close()
-			slide = string(b)
-		}
-	}
+	slide := writeToParts(t, p)["ppt/slides/slide1.xml"]
 	latin := strings.Index(slide, "<a:latin")
 	hlink := strings.Index(slide, "<a:hlinkClick")
 	if latin < 0 || hlink < 0 {
@@ -240,29 +192,7 @@ func TestWriteToStripsForbiddenXMLChars(t *testing.T) {
 	})
 	s.Note = "note\x00line"
 
-	var buf bytes.Buffer
-	if _, err := p.WriteTo(&buf); err != nil {
-		t.Fatalf("WriteTo: %v", err)
-	}
-	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
-	if err != nil {
-		t.Fatalf("invalid zip: %v", err)
-	}
-
-	parts := map[string]string{}
-	for _, f := range zr.File {
-		rc, err := f.Open()
-		if err != nil {
-			t.Fatalf("open %s: %v", f.Name, err)
-		}
-		b, err := io.ReadAll(rc)
-		if err != nil {
-			rc.Close()
-			t.Fatalf("read %s: %v", f.Name, err)
-		}
-		rc.Close()
-		parts[f.Name] = string(b)
-	}
+	parts := writeToParts(t, p)
 
 	for _, name := range []string{
 		"ppt/slides/slide1.xml",

@@ -5,8 +5,6 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -24,10 +22,7 @@ func TestReadSlideMetasFollowsPresentationSlideOrder(t *testing.T) {
 		t.Fatalf("WriteTo: %v", err)
 	}
 
-	path := filepath.Join(t.TempDir(), "deck.pptx")
-	if err := os.WriteFile(path, reorderPresentationOrder(t, buf.Bytes()), 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	path := writeTempPPTX(t, reorderPresentationOrder(t, buf.Bytes()))
 
 	metas, err := ReadSlideMetas(path)
 	if err != nil {
