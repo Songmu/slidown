@@ -3,49 +3,10 @@ package pptx
 import (
 	"archive/zip"
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
-	"sort"
 )
-
-// builtInTemplateHash is the Template.TemplateHash() value that would be
-// computed if the built-in design were loaded back via LoadTemplate. Embedding
-// this value in presentation.xml's extLst allows subsequent runs to confirm
-// that the template has not changed without needing to re-hash the template
-// file. The hash is stable as long as the built-in design constants in
-// masters.go are not modified.
-var builtInTemplateHash = computeBuiltInTemplateHash()
-
-// computeBuiltInTemplateHash replicates Template.TemplateHash() for the
-// fixed set of design parts emitted by the built-in renderer.
-func computeBuiltInTemplateHash() string {
-	designParts := map[string][]byte{
-		"ppt/slideLayouts/_rels/slideLayout1.xml.rels": []byte(slideLayout1Rels),
-		"ppt/slideLayouts/slideLayout1.xml":            []byte(slideLayout1()),
-		"ppt/slideMasters/_rels/slideMaster1.xml.rels": []byte(slideMaster1Rels),
-		"ppt/slideMasters/slideMaster1.xml":            []byte(slideMaster1()),
-		"ppt/theme/theme1.xml":                         []byte(theme1),
-		// LoadTemplate also copies presProps and viewProps into designParts.
-		"ppt/presProps.xml": []byte(presProps),
-		"ppt/viewProps.xml": []byte(viewProps),
-	}
-	names := make([]string, 0, len(designParts))
-	for name := range designParts {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	h := sha256.New()
-	for _, name := range names {
-		h.Write([]byte(name))
-		h.Write([]byte{0})
-		h.Write(designParts[name])
-		h.Write([]byte{0})
-	}
-	return hex.EncodeToString(h.Sum(nil))
-}
 
 // part is a single text file entry within the .pptx ZIP package.
 type part struct {
@@ -87,7 +48,7 @@ func (p *Presentation) WriteTo(w io.Writer) (int64, error) {
 		{"_rels/.rels", rootRels},
 		{"docProps/core.xml", coreProps(p.Title)},
 		{"docProps/app.xml", appProps},
-		{"ppt/presentation.xml", presentation(width, height, n, hasNotes, builtInTemplateHash)},
+		{"ppt/presentation.xml", presentation(width, height, n, hasNotes)},
 		{"ppt/_rels/presentation.xml.rels", presentationRels(n, hasNotes)},
 		{"ppt/presProps.xml", presProps},
 		{"ppt/viewProps.xml", viewProps},

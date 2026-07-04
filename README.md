@@ -99,18 +99,20 @@ changed — useful for pinning a slide you have hand-tuned in PowerPoint:
 ### Using a template
 
 Supply a `.pptx` (or `.potx`) whose theme, slide masters and layouts should
-be used as the design:
+be used as the design when creating a new output file:
 
 ```console
 $ slidown apply deck.md --template theme.pptx
 ```
 
-The template can also be set with the `template` frontmatter or config
-field. See [docs/templates.md](docs/templates.md) for layout selection,
+A template can only be supplied when the output file does not yet exist. It
+may also be set with the `template` config field. When the output already
+exists it is updated in place, reusing itself as the template, and passing
+`--template` is an error (choose a different `--output`, or remove the file
+first). See [docs/templates.md](docs/templates.md) for layout selection,
 inspecting available layouts with `ls-layouts`, and repurposing existing
-placeholders as subtitle targets. Template selection only controls the
-design source; incremental updates still reuse unchanged slides from the
-existing output file and still honor `freeze: true`.
+placeholders as subtitle targets. Incremental updates reuse unchanged slides
+from the existing output file and still honor `freeze: true`.
 
 ## Markdown file format
 
@@ -133,8 +135,6 @@ Content...
 - `title` (string): The title of the presentation, written to the generated
   `.pptx` document properties (metadata).
 - `output` (string): Output `.pptx` path (used when `--output` is not given).
-- `template` (string): Path to a `.pptx` or `.potx` file whose theme, slide
-  masters and layouts are used as the design for the generated deck.
 - `breaks` (boolean): Control how single line breaks are rendered. Default
   (`false`) renders them as spaces; `true` preserves them as line breaks.
 - `codeBlockToImageCommand` (string): Command used to convert code blocks
@@ -172,7 +172,10 @@ codeBlockToImageCommand: "go run ./cmd/txt2img"
 template: "theme.pptx"
 ```
 
-Settings in frontmatter take precedence over the configuration file.
+Settings in frontmatter take precedence over the configuration file. The
+`template` field is honored only from the configuration file (or the
+`--template` flag) and only when creating a new output file; it cannot be
+set in a deck's frontmatter.
 
 ## Code blocks to images
 

@@ -82,15 +82,6 @@ func TestTemplateCarriesNotesAndHandoutMasters(t *testing.T) {
 			t.Errorf("presentation.xml.rels missing reference to %q", needle)
 		}
 	}
-
-	// The template hash must round-trip through the presentation.xml extLst.
-	got := ReadPresentationTemplateHashFromBytes(buf.Bytes())
-	if got == "" {
-		t.Error("template hash not readable from generated presentation")
-	}
-	if want := tmpl.TemplateHash(); got != want {
-		t.Errorf("round-tripped template hash = %q, want %q", got, want)
-	}
 }
 
 // referencedInternalTargets returns the set of internal part paths referenced by

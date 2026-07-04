@@ -2,8 +2,6 @@ package pptx
 
 import (
 	"archive/zip"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -419,30 +417,6 @@ func collectPromptText(sp xmlSp) string {
 }
 
 // --- Layout selection helpers ---
-
-// TemplateHash returns a stable SHA-256 hex digest of all the template's design
-// parts (theme, slide masters, slide layouts, associated media and rels). Two
-// templates produce the same hash only when every design part — its path and its
-// byte content — is identical. The incremental rebuild uses this to detect a
-// template switch and refuse to reuse old slides whose layout relationships may
-// no longer be valid in the new package.
-func (t *Template) TemplateHash() string {
-	names := make([]string, 0, len(t.designParts))
-	for name := range t.designParts {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	h := sha256.New()
-	for _, name := range names {
-		// Include the part path in the hash so that renames alone (same
-		// content, different file name) still produce a different hash.
-		h.Write([]byte(name))
-		h.Write([]byte{0})
-		h.Write(t.designParts[name])
-		h.Write([]byte{0})
-	}
-	return hex.EncodeToString(h.Sum(nil))
-}
 
 // LayoutByName returns the layout whose (case-insensitive) name matches, or nil.
 func (t *Template) LayoutByName(name string) *LayoutInfo {
