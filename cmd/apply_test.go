@@ -98,7 +98,7 @@ func TestWritePresentationUpdatesExistingFile(t *testing.T) {
 	}
 
 	out := filepath.Join(tmpDir, "deck.pptx")
-	updated, err := writePresentation(out, buf.Bytes(), slides)
+	updated, err := writePresentation(out, buf.Bytes(), slides, "")
 	if err != nil {
 		t.Fatalf("writePresentation: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestWritePresentationUpdatesExistingFile(t *testing.T) {
 		t.Fatalf("ReadFile: %v", err)
 	}
 
-	updated, err = writePresentation(out, buf.Bytes(), slides)
+	updated, err = writePresentation(out, buf.Bytes(), slides, "")
 	if err != nil {
 		t.Fatalf("writePresentation second time: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestWritePresentationUpdatesExistingFile(t *testing.T) {
 		t.Fatalf("WriteTo changed deck: %v", err)
 	}
 
-	updated, err = writePresentation(out, buf2.Bytes(), slides2)
+	updated, err = writePresentation(out, buf2.Bytes(), slides2, "")
 	if err != nil {
 		t.Fatalf("writePresentation changed deck: %v", err)
 	}
@@ -258,7 +258,7 @@ func applyToFileForTest(t *testing.T, mdText, out, templatePath string) bool {
 	if _, err := pres.WriteTo(&buf); err != nil {
 		t.Fatalf("WriteTo: %v", err)
 	}
-	updated, err := writePresentation(out, buf.Bytes(), slides)
+	updated, err := writePresentation(out, buf.Bytes(), slides, pres.Title)
 	if err != nil {
 		t.Fatalf("writePresentation: %v", err)
 	}

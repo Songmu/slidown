@@ -25,9 +25,18 @@ type SlideMeta struct {
 // re-saved by another tool that dropped the extension) yields a zero SlideMeta
 // at its position.
 func ReadSlideMetas(path string) ([]SlideMeta, error) {
+	metas, _, err := ReadSlideMetasAndCoreTitle(path)
+	return metas, err
+}
+
+// ReadSlideMetasAndCoreTitle reads the per-slide slidown metadata and the deck
+// title from docProps/core.xml in a single ZIP parse, returning both together.
+// It is the preferred entry point when the caller needs both values so the
+// on-disk .pptx is only inflated once.
+func ReadSlideMetasAndCoreTitle(path string) ([]SlideMeta, string, error) {
 	parts, _, err := readZipPartsFromPath(path)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	slideNames := slideNamesFromPresentationOrder(parts)
@@ -41,7 +50,7 @@ func ReadSlideMetas(path string) ([]SlideMeta, error) {
 		m.PartName = name
 		metas = append(metas, m)
 	}
-	return metas, nil
+	return metas, coreTitle(parts["docProps/core.xml"]), nil
 }
 
 // ReadCoreTitle returns the dc:title recorded in a .pptx file's

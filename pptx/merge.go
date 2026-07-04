@@ -94,7 +94,7 @@ func MergeWithExisting(existingPath string, newPPTX []byte) ([]byte, error) {
 	sort.Strings(extras)
 	newOrder = append(newOrder, extras...)
 
-	return writeZipParts(newOrder, merged)
+	return zipFromParts(newOrder, merged)
 }
 
 // ReplaceCoreProps returns the existing pptx package with its
@@ -124,31 +124,7 @@ func ReplaceCoreProps(existingPath string, newPPTX []byte) ([]byte, error) {
 		order = append(append([]string(nil), oldOrder...), coreName)
 	}
 	oldParts[coreName] = newCore
-	return writeZipParts(order, oldParts)
-}
-
-// writeZipParts serializes parts as a ZIP, emitting entries in order (skipping
-// names absent from parts) so callers control the part ordering.
-func writeZipParts(order []string, parts map[string][]byte) ([]byte, error) {
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-	for _, name := range order {
-		data, ok := parts[name]
-		if !ok {
-			continue
-		}
-		fw, err := zw.Create(name)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := fw.Write(data); err != nil {
-			return nil, err
-		}
-	}
-	if err := zw.Close(); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+	return zipFromParts(order, oldParts)
 }
 
 func readZipPartsFromPath(path string) (map[string][]byte, []string, error) {
