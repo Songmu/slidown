@@ -196,7 +196,7 @@ func writeMastersTemplate(t *testing.T) string {
 
 	parts := map[string]string{
 		"[Content_Types].xml": contentTypes,
-		"_rels/.rels": relsWrap(rel("rId1", "officeDocument", "ppt/presentation.xml")),
+		"_rels/.rels":         relsWrap(rel("rId1", "officeDocument", "ppt/presentation.xml")),
 		"ppt/presentation.xml": xmlDecl +
 			`<p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" ` +
 			`xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ` +
@@ -210,9 +210,9 @@ func writeMastersTemplate(t *testing.T) string {
 				rel("rId2", "notesMaster", "notesMasters/notesMaster1.xml") +
 				rel("rId3", "handoutMaster", "handoutMasters/handoutMaster1.xml") +
 				rel("rId4", "theme", "theme/theme2.xml")),
-		"ppt/theme/theme1.xml": theme1,
-		"ppt/theme/theme2.xml": theme1,
-		"ppt/theme/theme3.xml": theme1,
+		"ppt/theme/theme1.xml":              theme1,
+		"ppt/theme/theme2.xml":              theme1,
+		"ppt/theme/theme3.xml":              theme1,
 		"ppt/slideMasters/slideMaster1.xml": minimalMaster("sldMaster"),
 		"ppt/slideMasters/_rels/slideMaster1.xml.rels": relsWrap(
 			rel("rId1", "slideLayout", "../slideLayouts/slideLayout1.xml") +

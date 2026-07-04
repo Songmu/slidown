@@ -584,7 +584,6 @@ func TestApplyCorrectlyReusesSlideAfterReorderAndNonIdentityRebuild(t *testing.T
 	}
 }
 
-
 func readVisibleSlidePartsForTest(t *testing.T, pptxPath string) [][]byte {
 	t.Helper()
 	data, err := os.ReadFile(pptxPath)
