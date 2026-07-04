@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.0.2](https://github.com/Songmu/slidown/compare/v0.0.1...v0.0.2) - 2026-07-04
+
+### Other Changes
+- Drop stale design parts when merging over an existing deck by @Songmu in https://github.com/Songmu/slidown/pull/43
+- Carry over template notes/handout masters and stop orphaning their themes by @Songmu in https://github.com/Songmu/slidown/pull/45
+- Merge version package into root package by @Songmu in https://github.com/Songmu/slidown/pull/46
+- Warn when a slide's specified layout is not found in the template by @Songmu in https://github.com/Songmu/slidown/pull/47
+- Restrict apply --template to new-file creation by @Songmu in https://github.com/Songmu/slidown/pull/48
+
 ## [v0.0.1](https://github.com/Songmu/slidown/commits/v0.0.1) - 2026-07-01
 
 ### Other Changes
