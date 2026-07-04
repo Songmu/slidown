@@ -171,6 +171,7 @@ func parsePresentationMeta(presentationXML []byte) string {
 	var p struct {
 		ExtLst struct {
 			Ext []struct {
+				URI  string `xml:"uri,attr"`
 				Meta struct {
 					V string `xml:"v,attr"`
 				} `xml:"meta"`
@@ -181,6 +182,9 @@ func parsePresentationMeta(presentationXML []byte) string {
 		return ""
 	}
 	for _, e := range p.ExtLst.Ext {
+		if e.URI != presentationMetaURI {
+			continue
+		}
 		if e.Meta.V != "" {
 			return strings.TrimSpace(e.Meta.V)
 		}
