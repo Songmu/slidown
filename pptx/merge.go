@@ -7,13 +7,49 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 )
+
+// regeneratedPartPrefixes enumerates the package namespaces that slidown fully
+// regenerates from the deck source and the configured template on every apply:
+// slides, slide layouts/masters, notes, themes and media. An old-only part
+// under one of these prefixes (i.e. present in the existing file but not in the
+// freshly generated package) is stale — typically a leftover slide layout /
+// master / theme / media from a previous template, or an orphan slide from a
+// shrunk deck. Carrying it over would leave the part undeclared in the
+// regenerated [Content_Types].xml and unreferenced by the new master and
+// presentation, which PowerPoint reports as unreadable content and strips
+// during a repair. The freshly generated package is authoritative for the
+// presentation's structure, so these old-only parts must be dropped.
+var regeneratedPartPrefixes = []string{
+	"ppt/slides/",
+	"ppt/slideLayouts/",
+	"ppt/slideMasters/",
+	"ppt/notesSlides/",
+	"ppt/notesMasters/",
+	"ppt/theme/",
+	"ppt/media/",
+}
+
+// isRegeneratedPart reports whether name belongs to a namespace that slidown
+// regenerates in full on every apply (see regeneratedPartPrefixes).
+func isRegeneratedPart(name string) bool {
+	for _, prefix := range regeneratedPartPrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
 
 // MergeWithExisting merges a newly generated pptx package with the contents of
 // an existing pptx file. Entries that are unchanged keep their previous payloads
-// and any old entries missing from the new package are preserved. This keeps the
-// update path stable for slidown-generated decks without requiring a fragile
-// reverse parser.
+// and any old entries missing from the new package are preserved, except for
+// parts under the namespaces slidown fully regenerates (see isRegeneratedPart):
+// those old-only parts are stale design/content leftovers and are dropped so
+// they cannot accumulate across template switches and corrupt the package. This
+// keeps the update path stable for slidown-generated decks without requiring a
+// fragile reverse parser.
 func MergeWithExisting(existingPath string, newPPTX []byte) ([]byte, error) {
 	oldParts, oldOrder, err := readZipPartsFromPath(existingPath)
 	if err != nil {
@@ -29,17 +65,24 @@ func MergeWithExisting(existingPath string, newPPTX []byte) ([]byte, error) {
 		merged[name] = data
 	}
 	for name, data := range oldParts {
-		if _, ok := merged[name]; !ok {
-			merged[name] = data
+		if _, ok := merged[name]; ok {
+			continue
 		}
+		if isRegeneratedPart(name) {
+			continue
+		}
+		merged[name] = data
 	}
 
 	// Preserve the ordering from the new package and append any extra old
 	// entries in lexical order for deterministic output. Old-only parts are
-	// added here exactly once.
+	// added here exactly once, and only when they were kept in `merged` above.
 	extras := make([]string, 0, len(oldOrder))
 	for _, name := range oldOrder {
 		if _, ok := newParts[name]; ok {
+			continue
+		}
+		if _, ok := merged[name]; !ok {
 			continue
 		}
 		extras = append(extras, name)

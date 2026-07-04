@@ -56,6 +56,67 @@ func TestMergeWithExistingPreservesExtraParts(t *testing.T) {
 	}
 }
 
+// TestMergeWithExistingDropsStaleDesignParts guards against old-only design
+// parts (slide layouts/masters, themes and media) surviving into the merged
+// package. Such leftovers appear when the template changes to one with fewer
+// layouts: the freshly generated package no longer declares them in
+// [Content_Types].xml nor references them from the master, so keeping them makes
+// PowerPoint report the package as needing repair.
+func TestMergeWithExistingDropsStaleDesignParts(t *testing.T) {
+	dir := t.TempDir()
+	existingPath := filepath.Join(dir, "existing.pptx")
+	if err := writeZipFile(existingPath, map[string]string{
+		// Design parts from a previous, richer template.
+		"ppt/slideLayouts/slideLayout20.xml":            "stale layout",
+		"ppt/slideLayouts/_rels/slideLayout20.xml.rels": "stale layout rels",
+		"ppt/slideMasters/slideMaster2.xml":             "stale master",
+		"ppt/theme/theme9.xml":                          "stale theme",
+		"ppt/media/image99.png":                         "stale media",
+		// A part slidown does not manage: must be preserved.
+		"customXml/item1.xml": "keep me",
+	}); err != nil {
+		t.Fatalf("write existing zip: %v", err)
+	}
+
+	p := New()
+	s := p.AddSlide()
+	s.AddShape(&Shape{Placeholder: PlaceholderTitle, IsPlaceholder: true, Paragraphs: []*Paragraph{{Runs: []*Run{{Text: "new title"}}}}})
+	var buf bytes.Buffer
+	if _, err := p.WriteTo(&buf); err != nil {
+		t.Fatalf("WriteTo: %v", err)
+	}
+
+	merged, err := MergeWithExisting(existingPath, buf.Bytes())
+	if err != nil {
+		t.Fatalf("MergeWithExisting: %v", err)
+	}
+
+	zr, err := zip.NewReader(bytes.NewReader(merged), int64(len(merged)))
+	if err != nil {
+		t.Fatalf("zip reader: %v", err)
+	}
+	parts := map[string]bool{}
+	for _, f := range zr.File {
+		parts[f.Name] = true
+	}
+
+	stale := []string{
+		"ppt/slideLayouts/slideLayout20.xml",
+		"ppt/slideLayouts/_rels/slideLayout20.xml.rels",
+		"ppt/slideMasters/slideMaster2.xml",
+		"ppt/theme/theme9.xml",
+		"ppt/media/image99.png",
+	}
+	for _, name := range stale {
+		if parts[name] {
+			t.Errorf("stale design part %q was carried over into the merged package", name)
+		}
+	}
+	if !parts["customXml/item1.xml"] {
+		t.Errorf("unmanaged custom part customXml/item1.xml was not preserved")
+	}
+}
+
 func writeZipFile(path string, entries map[string]string) error {
 	f, err := os.Create(path)
 	if err != nil {
