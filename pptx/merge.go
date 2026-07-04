@@ -115,9 +115,9 @@ func ReplaceCoreProps(existingPath string, newPPTX []byte) ([]byte, error) {
 	const coreName = "docProps/core.xml"
 	newCore, ok := newParts[coreName]
 	if !ok {
-		// The generated package has no core.xml (should not happen); leave the
-		// existing package unchanged.
-		return writeZipParts(oldOrder, oldParts)
+		// slidown always generates docProps/core.xml, so its absence signals a
+		// broken generated package rather than a normal case.
+		return nil, fmt.Errorf("generated package is missing %s", coreName)
 	}
 	order := oldOrder
 	if _, existed := oldParts[coreName]; !existed {
