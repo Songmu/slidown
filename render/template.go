@@ -1,6 +1,9 @@
 package render
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/pptx"
 )
@@ -171,6 +174,7 @@ func resolveLayout(s *slidown.Slide, tmpl *pptx.Template, first bool) *pptx.Layo
 		if l := tmpl.LayoutByName(s.Layout); l != nil {
 			return l
 		}
+		fmt.Fprintf(os.Stderr, "warning: layout %q not found in template; falling back to a default layout\n", s.Layout)
 	}
 	if first {
 		return tmpl.TitleLayout()
