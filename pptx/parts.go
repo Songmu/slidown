@@ -49,7 +49,7 @@ const rootRels = xmlDecl +
 	`</Relationships>`
 
 // presentation builds ppt/presentation.xml referencing the master and slides.
-func presentation(width, height int64, slideCount int, hasNotes bool) string {
+func presentation(width, height int64, slideCount int, hasNotes bool, templateHash string) string {
 	var b []byte
 	b = append(b, []byte(xmlDecl+
 		`<p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" `+
@@ -65,8 +65,10 @@ func presentation(width, height int64, slideCount int, hasNotes bool) string {
 		b = append(b, []byte(fmt.Sprintf(`<p:sldId id="%d" r:id="rId%d"/>`, 256+i, 3+i))...)
 	}
 	b = append(b, []byte(fmt.Sprintf(
-		`</p:sldIdLst><p:sldSz cx="%d" cy="%d"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>`,
+		`</p:sldIdLst><p:sldSz cx="%d" cy="%d"/><p:notesSz cx="6858000" cy="9144000"/>`,
 		width, height))...)
+	b = append(b, []byte(presentationMetaExt(templateHash))...)
+	b = append(b, []byte(`</p:presentation>`)...)
 	return string(b)
 }
 

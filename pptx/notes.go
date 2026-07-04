@@ -77,10 +77,10 @@ func notesParagraphs(note string) string {
 
 // notesSlideRels builds the .rels for a notes slide, linking it to its slide
 // and the notes master.
-func notesSlideRels(slideNum int) string {
+func notesSlideRels(slideNum int, notesMasterTarget string) string {
 	return xmlDecl +
 		`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
 		fmt.Sprintf(`<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="../slides/slide%d.xml"/>`, slideNum) +
-		`<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesMaster" Target="../notesMasters/notesMaster1.xml"/>` +
+		fmt.Sprintf(`<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesMaster" Target="%s"/>`, notesMasterTarget) +
 		`</Relationships>`
 }
