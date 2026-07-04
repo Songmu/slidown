@@ -72,11 +72,11 @@ func TestMarkdownToPptxEndToEnd(t *testing.T) {
 		`<p:ph type="body" idx="1"/>`,
 		`<a:t>Subtitle</a:t>`, // subtitle rendered into body
 		`<a:t>alpha</a:t>`,
-		`b="1"`,               // bold item
-		`strike="sngStrike"`,  // strikethrough via ~~ -> del
+		`b="1"`,                     // bold item
+		`strike="sngStrike"`,        // strikethrough via ~~ -> del
 		`typeface="Noto Sans Mono"`, // code item
-		`lvl="1"`,             // nested
-		`<a:buChar`,           // bullets
+		`lvl="1"`,                   // nested
+		`<a:buChar`,                 // bullets
 	} {
 		if !strings.Contains(s1, sub) {
 			t.Errorf("slide1.xml missing %q", sub)

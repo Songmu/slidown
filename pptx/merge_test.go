@@ -72,6 +72,11 @@ func TestMergeWithExistingDropsStaleDesignParts(t *testing.T) {
 		"ppt/slideMasters/slideMaster2.xml":             "stale master",
 		"ppt/theme/theme9.xml":                          "stale theme",
 		"ppt/media/image99.png":                         "stale media",
+		// A handout master and the legacy loose template-hash part from a
+		// previous template/version must also be dropped, otherwise they linger
+		// as undeclared, unreferenced parts that trigger a PowerPoint repair.
+		"ppt/handoutMasters/handoutMaster1.xml": "stale handout master",
+		"ppt/slidownMeta":                       "stale template hash",
 		// A part slidown does not manage: must be preserved.
 		"customXml/item1.xml": "keep me",
 	}); err != nil {
@@ -106,6 +111,8 @@ func TestMergeWithExistingDropsStaleDesignParts(t *testing.T) {
 		"ppt/slideMasters/slideMaster2.xml",
 		"ppt/theme/theme9.xml",
 		"ppt/media/image99.png",
+		"ppt/handoutMasters/handoutMaster1.xml",
+		"ppt/slidownMeta",
 	}
 	for _, name := range stale {
 		if parts[name] {

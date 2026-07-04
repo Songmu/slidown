@@ -104,10 +104,10 @@ func TestLoadTemplateGCsOrphanedMedia(t *testing.T) {
 			`<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="slideMasters/slideMaster1.xml"/>` +
 			`</Relationships>`,
 		"ppt/theme/theme1.xml":                         theme1,
-		"ppt/slideMasters/slideMaster1.xml":             slideMaster1(),
-		"ppt/slideMasters/_rels/slideMaster1.xml.rels":  masterRelsWithMedia,
-		"ppt/slideLayouts/slideLayout1.xml":              slideLayout1(),
-		"ppt/slideLayouts/_rels/slideLayout1.xml.rels":   slideLayout1Rels,
+		"ppt/slideMasters/slideMaster1.xml":            slideMaster1(),
+		"ppt/slideMasters/_rels/slideMaster1.xml.rels": masterRelsWithMedia,
+		"ppt/slideLayouts/slideLayout1.xml":            slideLayout1(),
+		"ppt/slideLayouts/_rels/slideLayout1.xml.rels": slideLayout1Rels,
 	}
 	binParts := map[string][]byte{
 		// Referenced by the master .rels → must be preserved.
@@ -211,10 +211,10 @@ func writeMinimalTemplate(t *testing.T, extras map[string]string) string {
 			`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
 			`<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="slideMasters/slideMaster1.xml"/>` +
 			`</Relationships>`,
-		"ppt/theme/theme1.xml": theme1,
-		"ppt/slideMasters/slideMaster1.xml": slideMaster1(),
+		"ppt/theme/theme1.xml":                         theme1,
+		"ppt/slideMasters/slideMaster1.xml":            slideMaster1(),
 		"ppt/slideMasters/_rels/slideMaster1.xml.rels": slideMaster1Rels,
-		"ppt/slideLayouts/slideLayout1.xml": slideLayout1(),
+		"ppt/slideLayouts/slideLayout1.xml":            slideLayout1(),
 		"ppt/slideLayouts/_rels/slideLayout1.xml.rels": slideLayout1Rels,
 	}
 
@@ -239,4 +239,3 @@ func writeMinimalTemplate(t *testing.T, extras map[string]string) string {
 	}
 	return path
 }
-

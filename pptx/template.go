@@ -23,7 +23,15 @@ type Template struct {
 	designParts map[string][]byte
 	// masterParts lists slide master part names in a stable order.
 	masterParts []string
-	// themePart is the theme part referenced from the presentation.
+	// notesMasterPart / handoutMasterPart are the template's notes and handout
+	// master part names, when present. They are carried over verbatim and wired
+	// into the generated presentation so their themes stay referenced (avoiding
+	// orphan parts that PowerPoint strips on repair) and so notes and handouts
+	// added later inherit the template's design.
+	notesMasterPart   string
+	handoutMasterPart string
+	// themePart is the theme part referenced from the presentation (the theme
+	// used by the slide master).
 	themePart string
 	// presPropsPart / viewPropsPart / tableStylesPart are optional.
 	presPropsPart   string
@@ -212,6 +220,16 @@ func LoadTemplate(path string) (*Template, error) {
 			t.copyPart(parts, name)
 			t.copyRels(parts, name)
 			t.partTypes[name] = o.ContentType
+		case strings.Contains(o.ContentType, "notesMaster+xml"):
+			t.notesMasterPart = name
+			t.copyPart(parts, name)
+			t.copyRels(parts, name)
+			t.partTypes[name] = o.ContentType
+		case strings.Contains(o.ContentType, "handoutMaster+xml"):
+			t.handoutMasterPart = name
+			t.copyPart(parts, name)
+			t.copyRels(parts, name)
+			t.partTypes[name] = o.ContentType
 		case strings.Contains(o.ContentType, "slideLayout+xml"):
 			t.copyPart(parts, name)
 			t.copyRels(parts, name)
@@ -253,6 +271,14 @@ func LoadTemplate(path string) (*Template, error) {
 	sort.Slice(t.masterParts, func(i, j int) bool { return t.masterParts[i] < t.masterParts[j] })
 	sort.Slice(t.Layouts, func(i, j int) bool { return t.Layouts[i].PartName < t.Layouts[j].PartName })
 
+	// The presentation's theme relationship must point at the same theme the
+	// slide master uses, not merely the first theme override encountered. Derive
+	// it from the master's rels so notes/handout masters (which carry their own
+	// themes) can't be mistaken for the presentation theme.
+	if theme := t.themeReferencedBy(t.masterParts[0]); theme != "" {
+		t.themePart = theme
+	}
+
 	if pres, ok := parts["ppt/presentation.xml"]; ok {
 		var xp xmlPresentation
 		if err := xml.Unmarshal(pres, &xp); err == nil {
@@ -276,6 +302,27 @@ func (t *Template) copyRels(parts map[string][]byte, name string) {
 	if b, ok := parts[rels]; ok {
 		t.designParts[rels] = b
 	}
+}
+
+// themeReferencedBy returns the theme part name (e.g. "ppt/theme/theme1.xml")
+// referenced by the given design part's already-copied .rels, or "" when none
+// is found.
+func (t *Template) themeReferencedBy(partName string) string {
+	relsXML, ok := t.designParts[relsPath(partName)]
+	if !ok {
+		return ""
+	}
+	base := partName
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		base = base[:i]
+	}
+	for _, target := range relTargets(relsXML) {
+		resolved := path.Clean(path.Join(base, target))
+		if strings.HasPrefix(resolved, "ppt/theme/") {
+			return resolved
+		}
+	}
+	return ""
 }
 
 // relsPath returns the relationships part path for a given part path.

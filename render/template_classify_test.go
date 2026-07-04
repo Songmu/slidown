@@ -160,4 +160,3 @@ func TestRenderHintedSubtitleEmitsRoleMarker(t *testing.T) {
 		t.Errorf("rendered shape did not preserve the underlying body placeholder type:\n%s", slideXML)
 	}
 }
-

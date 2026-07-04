@@ -13,10 +13,10 @@ import (
 
 // builtInTemplateHash is the Template.TemplateHash() value that would be
 // computed if the built-in design were loaded back via LoadTemplate. Embedding
-// this value in ppt/slidownMeta allows subsequent runs to confirm that the
-// template has not changed without needing to re-hash the template file.
-// The hash is stable as long as the built-in design constants in masters.go
-// are not modified.
+// this value in presentation.xml's extLst allows subsequent runs to confirm
+// that the template has not changed without needing to re-hash the template
+// file. The hash is stable as long as the built-in design constants in
+// masters.go are not modified.
 var builtInTemplateHash = computeBuiltInTemplateHash()
 
 // computeBuiltInTemplateHash replicates Template.TemplateHash() for the
@@ -87,7 +87,7 @@ func (p *Presentation) WriteTo(w io.Writer) (int64, error) {
 		{"_rels/.rels", rootRels},
 		{"docProps/core.xml", coreProps(p.Title)},
 		{"docProps/app.xml", appProps},
-		{"ppt/presentation.xml", presentation(width, height, n, hasNotes)},
+		{"ppt/presentation.xml", presentation(width, height, n, hasNotes, builtInTemplateHash)},
 		{"ppt/_rels/presentation.xml.rels", presentationRels(n, hasNotes)},
 		{"ppt/presProps.xml", presProps},
 		{"ppt/viewProps.xml", viewProps},
@@ -96,11 +96,6 @@ func (p *Presentation) WriteTo(w io.Writer) (int64, error) {
 		{"ppt/slideMasters/_rels/slideMaster1.xml.rels", slideMaster1Rels},
 		{"ppt/slideLayouts/slideLayout1.xml", slideLayout1()},
 		{"ppt/slideLayouts/_rels/slideLayout1.xml.rels", slideLayout1Rels},
-		// Template-tracking sentinel: allows the incremental rebuild to detect
-		// a template switch and avoid reusing slides whose layout relationships
-		// would become dangling in the new package. Not declared in
-		// [Content_Types].xml so PowerPoint ignores the file.
-		{"ppt/slidownMeta", builtInTemplateHash},
 	}
 	if hasNotes {
 		parts = append(parts,
@@ -129,7 +124,7 @@ func (p *Presentation) WriteTo(w io.Writer) (int64, error) {
 			})
 			parts = append(parts,
 				part{fmt.Sprintf("ppt/notesSlides/notesSlide%d.xml", i+1), notesSlideXML(s.Note)},
-				part{fmt.Sprintf("ppt/notesSlides/_rels/notesSlide%d.xml.rels", i+1), notesSlideRels(i + 1)},
+				part{fmt.Sprintf("ppt/notesSlides/_rels/notesSlide%d.xml.rels", i+1), notesSlideRels(i+1, "../notesMasters/notesMaster1.xml")},
 			)
 		}
 		parts = append(parts, part{

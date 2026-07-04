@@ -16,9 +16,17 @@ build:
 install:
 	go install -ldflags=$(BUILD_LDFLAGS) -trimpath ./cmd/slidown
 
-lint:
+lint: fmtcheck
 	go vet ./...
 	go tool staticcheck ./...
+
+fmt:
+	go tool goimports -w .
+
+fmtcheck:
+	@out=$$(go tool goimports -l .); if [ -n "$$out" ]; then \
+		echo "goimports needed on:"; echo "$$out"; exit 1; \
+	fi
 
 fuzz:
 	go test -fuzz=FuzzParse -fuzztime=1m ./md/.
@@ -31,4 +39,4 @@ prerelease_for_tagpr: depsdev
 	gocredits -w .
 	git add CHANGELOG.md CREDITS go.mod go.sum
 
-.PHONY: default ci test build install lint fuzz depsdev prerelease_for_tagpr
+.PHONY: default ci test build install lint fmt fmtcheck fuzz depsdev prerelease_for_tagpr
