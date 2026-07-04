@@ -202,11 +202,11 @@ func buildTemplateFileForTest(t *testing.T) string {
 	return templatePath
 }
 
-// applyToFileForTest mirrors the apply command's template selection via
-// resolveApplyTemplate: the passed template seeds a newly created file, while an
-// already-existing output is updated in place reusing itself as the template
-// (the passed template is ignored, matching the CLI which rejects --template on
-// an existing output).
+// applyToFileForTest mirrors apply's template selection via resolveApplyTemplate.
+// The templatePath argument is treated like the --template flag: it only seeds a
+// newly created output file. When the output already exists, this helper clears
+// the flag so the update reuses the existing output as its own template (the real
+// CLI would reject --template in that situation).
 func applyToFileForTest(t *testing.T, mdText, out, templatePath string) bool {
 	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
