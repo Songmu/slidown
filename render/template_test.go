@@ -387,3 +387,26 @@ func TestToPresentationWithTemplateSkippedLeadingSlide(t *testing.T) {
 		t.Errorf("second rendered slide layout = %q, want %q (ContentLayout)", got, contentName)
 	}
 }
+
+func TestResolveLayoutDoesNotSelectFilteredStyleLayout(t *testing.T) {
+	tmpl := &pptx.Template{
+		SyntaxStyles: map[string]pptx.StyleSpec{
+			"bold": {Color: "112233"},
+		},
+		Layouts: []*pptx.LayoutInfo{
+			{Name: "Title Layout", Type: "title"},
+			{Name: "Content Layout", Type: "obj"},
+		},
+	}
+
+	got := resolveLayout(&slidown.Slide{Layout: "style"}, tmpl, false)
+	if got == nil {
+		t.Fatal("resolveLayout returned nil")
+	}
+	if got.Name == "style" {
+		t.Fatalf("style layout should not be selectable: %+v", got)
+	}
+	if got.Name != "Content Layout" {
+		t.Fatalf("resolveLayout = %q, want Content Layout fallback", got.Name)
+	}
+}

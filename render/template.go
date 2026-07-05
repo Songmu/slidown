@@ -15,18 +15,19 @@ import (
 func ToPresentationWithTemplate(ss slidown.Slides, tmpl *pptx.Template) *pptx.Presentation {
 	p := pptx.New()
 	p.Template = tmpl
+	c := &converter{styles: tmpl.SyntaxStyles}
 	firstRendered := true
 	for _, s := range ss {
 		if s.Skip {
 			continue
 		}
-		renderSlideWithLayout(p, s, tmpl, firstRendered)
+		c.renderSlideWithLayout(p, s, tmpl, firstRendered)
 		firstRendered = false
 	}
 	return p
 }
 
-func renderSlideWithLayout(p *pptx.Presentation, s *slidown.Slide, tmpl *pptx.Template, first bool) {
+func (c *converter) renderSlideWithLayout(p *pptx.Presentation, s *slidown.Slide, tmpl *pptx.Template, first bool) {
 	layout := resolveLayout(s, tmpl, first)
 	sl := p.AddSlide()
 	sl.LayoutName = layout.Name
@@ -35,7 +36,7 @@ func renderSlideWithLayout(p *pptx.Presentation, s *slidown.Slide, tmpl *pptx.Te
 
 	// Title
 	if titlePH != nil {
-		if title := titleParagraphs(s); len(title) > 0 {
+		if title := c.titleParagraphs(s); len(title) > 0 {
 			sl.AddShape(&pptx.Shape{
 				Name:           "Title",
 				IsPlaceholder:  true,
@@ -50,9 +51,9 @@ func renderSlideWithLayout(p *pptx.Presentation, s *slidown.Slide, tmpl *pptx.Te
 	// subTitle placeholders and hint-promoted body placeholders), ordered by
 	// their visual position on the layout.
 	orderSubtitleSlots(tmpl, layout, subSlots)
-	distributeSubtitleContent(sl, s, subSlots)
+	c.distributeSubtitleContent(sl, s, subSlots)
 
-	hasBody := distributeBodyContent(sl, s, len(subSlots) > 0, bodyPHs)
+	hasBody := c.distributeBodyContent(sl, s, len(subSlots) > 0, bodyPHs)
 
 	// Position images/tables using the layout's body geometry when available.
 	rx, ry, rw, rh := contentX, contentY, contentW, contentH
@@ -66,7 +67,7 @@ func renderSlideWithLayout(p *pptx.Presentation, s *slidown.Slide, tmpl *pptx.Te
 	// Only flow-laid images (rest) occupy the body region; images bound to
 	// picture placeholders sit in their own layout slots, so they must not push
 	// tables into the lower half.
-	renderTablesAt(sl, s.Tables, rx, ry, rw, hasBody || len(rest) > 0)
+	c.renderTablesAt(sl, s.Tables, rx, ry, rw, tmpl.TableStyle, hasBody || len(rest) > 0)
 
 	sl.Note = s.SpeakerNote
 	sl.Fingerprint = s.Fingerprint()
@@ -82,7 +83,7 @@ func renderSlideWithLayout(p *pptx.Presentation, s *slidown.Slide, tmpl *pptx.Te
 // by an intra-slide thematic break in the markdown source) are distributed
 // one-per-placeholder; the last placeholder absorbs any overflow bodies and
 // all block quotes.
-func distributeBodyContent(sl *pptx.Slide, s *slidown.Slide, hasSubSlot bool, bodyPHs []*pptx.PlaceholderInfo) bool {
+func (c *converter) distributeBodyContent(sl *pptx.Slide, s *slidown.Slide, hasSubSlot bool, bodyPHs []*pptx.PlaceholderInfo) bool {
 	if len(bodyPHs) == 0 {
 		return false
 	}
@@ -91,9 +92,9 @@ func distributeBodyContent(sl *pptx.Slide, s *slidown.Slide, hasSubSlot bool, bo
 		// Single placeholder: original behaviour — all content concatenated.
 		var bodyParas []*pptx.Paragraph
 		if hasSubSlot {
-			bodyParas = contentParagraphs(s)
+			bodyParas = c.contentParagraphs(s)
 		} else {
-			bodyParas = bodyParagraphs(s) // subtitles folded in (emphasized)
+			bodyParas = c.bodyParagraphs(s) // subtitles folded in (emphasized)
 		}
 		if len(bodyParas) == 0 {
 			return false
@@ -118,7 +119,7 @@ func distributeBodyContent(sl *pptx.Slide, s *slidown.Slide, hasSubSlot bool, bo
 		// runs) into the first body placeholder — matching the single-
 		// placeholder behaviour.
 		if i == 0 && !hasSubSlot {
-			paras = append(paras, subtitleBoldParagraphs(s)...)
+			paras = append(paras, c.subtitleBoldParagraphs(s)...)
 		}
 
 		// Each placeholder gets one body section; the last one absorbs any
@@ -126,17 +127,17 @@ func distributeBodyContent(sl *pptx.Slide, s *slidown.Slide, hasSubSlot bool, bo
 		if i < len(s.Bodies) {
 			if isLast {
 				for _, b := range s.Bodies[i:] {
-					paras = append(paras, convertBody(b)...)
+					paras = append(paras, c.convertBody(b)...)
 				}
 			} else {
-				paras = append(paras, convertBody(s.Bodies[i])...)
+				paras = append(paras, c.convertBody(s.Bodies[i])...)
 			}
 		}
 
 		// Block quotes go into the last placeholder.
 		if isLast {
 			for _, bq := range s.BlockQuotes {
-				paras = append(paras, convertBlockQuote(bq)...)
+				paras = append(paras, c.convertBlockQuote(bq)...)
 			}
 		}
 
@@ -293,8 +294,8 @@ func orderSubtitleSlots(tmpl *pptx.Template, layout *pptx.LayoutInfo, slots []su
 // remaining groups so no content is dropped. Hint-promoted slots keep their
 // underlying "body" placeholder type but carry a slidown role marker so
 // incremental updates can identify the subtitle target by intent.
-func distributeSubtitleContent(sl *pptx.Slide, s *slidown.Slide, slots []subtitleSlot) {
-	groups := subtitleGroups(s)
+func (c *converter) distributeSubtitleContent(sl *pptx.Slide, s *slidown.Slide, slots []subtitleSlot) {
+	groups := c.subtitleGroups(s)
 	if len(groups) == 0 || len(slots) == 0 {
 		return
 	}
@@ -330,11 +331,11 @@ func distributeSubtitleContent(sl *pptx.Slide, s *slidown.Slide, slots []subtitl
 
 // subtitleGroups returns the subtitle content grouped one entry per source
 // subtitle heading, preserving inline formatting when available.
-func subtitleGroups(s *slidown.Slide) [][]*pptx.Paragraph {
+func (c *converter) subtitleGroups(s *slidown.Slide) [][]*pptx.Paragraph {
 	var groups [][]*pptx.Paragraph
 	if len(s.SubtitleBodies) > 0 {
 		for _, b := range s.SubtitleBodies {
-			if g := convertBody(b); len(g) > 0 {
+			if g := c.convertBody(b); len(g) > 0 {
 				groups = append(groups, g)
 			}
 		}
@@ -349,22 +350,22 @@ func subtitleGroups(s *slidown.Slide) [][]*pptx.Paragraph {
 // subtitleParagraphs renders all subtitle content flattened into a single
 // paragraph list (without the emphasis that bodyParagraphs applies when folding
 // subtitles into the body). Used for the fold-into-body fallback.
-func subtitleParagraphs(s *slidown.Slide) []*pptx.Paragraph {
+func (c *converter) subtitleParagraphs(s *slidown.Slide) []*pptx.Paragraph {
 	var out []*pptx.Paragraph
-	for _, g := range subtitleGroups(s) {
+	for _, g := range c.subtitleGroups(s) {
 		out = append(out, g...)
 	}
 	return out
 }
 
 // contentParagraphs renders body content and block quotes (no subtitles).
-func contentParagraphs(s *slidown.Slide) []*pptx.Paragraph {
+func (c *converter) contentParagraphs(s *slidown.Slide) []*pptx.Paragraph {
 	var out []*pptx.Paragraph
 	for _, b := range s.Bodies {
-		out = append(out, convertBody(b)...)
+		out = append(out, c.convertBody(b)...)
 	}
 	for _, bq := range s.BlockQuotes {
-		out = append(out, convertBlockQuote(bq)...)
+		out = append(out, c.convertBlockQuote(bq)...)
 	}
 	return out
 }

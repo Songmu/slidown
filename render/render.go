@@ -16,23 +16,28 @@ import (
 	"github.com/Songmu/slidown/pptx"
 )
 
+type converter struct {
+	styles map[string]pptx.StyleSpec
+}
+
 // ToPresentation converts internal slides into a pptx.Presentation using the
 // built-in default layout (title + body placeholders).
 func ToPresentation(ss slidown.Slides) *pptx.Presentation {
 	p := pptx.New()
+	c := &converter{}
 	for _, s := range ss {
 		if s.Skip {
 			continue
 		}
-		renderSlide(p, s)
+		c.renderSlide(p, s)
 	}
 	return p
 }
 
-func renderSlide(p *pptx.Presentation, s *slidown.Slide) {
+func (c *converter) renderSlide(p *pptx.Presentation, s *slidown.Slide) {
 	sl := p.AddSlide()
 
-	if title := titleParagraphs(s); len(title) > 0 {
+	if title := c.titleParagraphs(s); len(title) > 0 {
 		sl.AddShape(&pptx.Shape{
 			Name:        "Title",
 			Placeholder: pptx.PlaceholderTitle,
@@ -40,7 +45,7 @@ func renderSlide(p *pptx.Presentation, s *slidown.Slide) {
 		})
 	}
 
-	body := bodyParagraphs(s)
+	body := c.bodyParagraphs(s)
 	if len(body) > 0 {
 		sl.AddShape(&pptx.Shape{
 			Name:           "Content",
@@ -51,7 +56,7 @@ func renderSlide(p *pptx.Presentation, s *slidown.Slide) {
 	}
 
 	renderImagesAt(sl, s.Images, contentX, contentY, contentW, contentH, len(body) > 0)
-	renderTablesAt(sl, s.Tables, contentX, contentY, contentW, len(body) > 0 || len(s.Images) > 0)
+	c.renderTablesAt(sl, s.Tables, contentX, contentY, contentW, nil, len(body) > 0 || len(s.Images) > 0)
 
 	sl.Note = s.SpeakerNote
 	sl.Fingerprint = s.Fingerprint()
@@ -60,7 +65,7 @@ func renderSlide(p *pptx.Presentation, s *slidown.Slide) {
 
 // renderTablesAt maps internal tables to pptx tables placed within the given
 // region. When other content is present, tables are nudged toward the lower half.
-func renderTablesAt(sl *pptx.Slide, tables []*slidown.Table, rx, ry, rw int64, crowded bool) {
+func (c *converter) renderTablesAt(sl *pptx.Slide, tables []*slidown.Table, rx, ry, rw int64, style *pptx.TableStyleSpec, crowded bool) {
 	if len(tables) == 0 {
 		return
 	}
@@ -72,7 +77,7 @@ func renderTablesAt(sl *pptx.Slide, tables []*slidown.Table, rx, ry, rw int64, c
 		if t == nil || len(t.Rows) == 0 {
 			continue
 		}
-		pt := &pptx.Table{X: rx, Y: y, W: rw}
+		pt := &pptx.Table{X: rx, Y: y, W: rw, Style: style}
 		for _, row := range t.Rows {
 			pr := &pptx.TableRow{Header: rowIsHeader(row)}
 			for _, cell := range row.Cells {
@@ -82,7 +87,7 @@ func renderTablesAt(sl *pptx.Slide, tables []*slidown.Table, rx, ry, rw int64, c
 					if f == nil {
 						continue
 					}
-					para.Runs = append(para.Runs, convertFragment(f))
+					para.Runs = append(para.Runs, c.convertFragment(f))
 				}
 				pc.Paragraphs = []*pptx.Paragraph{para}
 				pr.Cells = append(pr.Cells, pc)
@@ -257,11 +262,11 @@ func imageExt(format string) string {
 
 // titleParagraphs produces the title placeholder paragraphs, preferring the
 // rich TitleBodies when available and falling back to plain Titles.
-func titleParagraphs(s *slidown.Slide) []*pptx.Paragraph {
+func (c *converter) titleParagraphs(s *slidown.Slide) []*pptx.Paragraph {
 	if len(s.TitleBodies) > 0 {
 		var out []*pptx.Paragraph
 		for _, b := range s.TitleBodies {
-			out = append(out, convertBody(b)...)
+			out = append(out, c.convertBody(b)...)
 		}
 		if len(out) > 0 {
 			return out
@@ -277,8 +282,8 @@ func titleParagraphs(s *slidown.Slide) []*pptx.Paragraph {
 // subtitleBoldParagraphs returns the subtitle content rendered as bold
 // paragraphs, used when folding subtitles into a body placeholder because the
 // layout has no dedicated subtitle slot.
-func subtitleBoldParagraphs(s *slidown.Slide) []*pptx.Paragraph {
-	out := subtitleParagraphs(s)
+func (c *converter) subtitleBoldParagraphs(s *slidown.Slide) []*pptx.Paragraph {
+	out := c.subtitleParagraphs(s)
 	for _, para := range out {
 		for _, r := range para.Runs {
 			r.Bold = true
@@ -290,40 +295,44 @@ func subtitleBoldParagraphs(s *slidown.Slide) []*pptx.Paragraph {
 // bodyParagraphs collects subtitles and body content into the body placeholder.
 // Because the built-in layout has no dedicated subtitle placeholder, subtitles
 // are rendered as emphasized lead paragraphs so no content is lost.
-func bodyParagraphs(s *slidown.Slide) []*pptx.Paragraph {
-	return append(subtitleBoldParagraphs(s), contentParagraphs(s)...)
+func (c *converter) bodyParagraphs(s *slidown.Slide) []*pptx.Paragraph {
+	return append(c.subtitleBoldParagraphs(s), c.contentParagraphs(s)...)
 }
 
 // convertBlockQuote renders a block quote as italic, indented paragraphs so it
 // is visually distinct within the body placeholder.
-func convertBlockQuote(bq *slidown.BlockQuote) []*pptx.Paragraph {
+func (c *converter) convertBlockQuote(bq *slidown.BlockQuote) []*pptx.Paragraph {
 	if bq == nil {
 		return nil
 	}
 	var out []*pptx.Paragraph
 	for _, para := range bq.Paragraphs {
-		p := convertParagraph(para)
+		p := c.convertParagraph(para)
 		p.Level += bq.Nesting + 1
 		for _, r := range p.Runs {
-			r.Italic = true
+			if c.hasCustomStyle("blockquote") {
+				c.applyStyleName(r, "blockquote")
+			} else {
+				r.Italic = true
+			}
 		}
 		out = append(out, p)
 	}
 	return out
 }
 
-func convertBody(b *slidown.Body) []*pptx.Paragraph {
+func (c *converter) convertBody(b *slidown.Body) []*pptx.Paragraph {
 	if b == nil {
 		return nil
 	}
 	out := make([]*pptx.Paragraph, 0, len(b.Paragraphs))
 	for _, para := range b.Paragraphs {
-		out = append(out, convertParagraph(para))
+		out = append(out, c.convertParagraph(para))
 	}
 	return out
 }
 
-func convertParagraph(p *slidown.Paragraph) *pptx.Paragraph {
+func (c *converter) convertParagraph(p *slidown.Paragraph) *pptx.Paragraph {
 	out := &pptx.Paragraph{Level: p.Nesting}
 	switch p.Bullet {
 	case slidown.BulletDash:
@@ -336,26 +345,39 @@ func convertParagraph(p *slidown.Paragraph) *pptx.Paragraph {
 		if f == nil {
 			continue
 		}
-		out.Runs = append(out.Runs, convertFragment(f))
+		out.Runs = append(out.Runs, c.convertFragment(f))
 	}
 	return out
 }
 
-func convertFragment(f *slidown.Fragment) *pptx.Run {
+func (c *converter) convertFragment(f *slidown.Fragment) *pptx.Run {
 	r := &pptx.Run{
-		Text:   f.Value,
-		Bold:   f.Bold,
-		Italic: f.Italic,
-		Code:   f.Code,
-		Link:   f.Link,
+		Text: f.Value,
+		Link: f.Link,
 	}
-	applyStyleName(r, f.StyleName)
+	if f.Code {
+		c.applyStyleName(r, "code")
+	}
+	if f.Bold {
+		c.applyStyleName(r, "bold")
+	}
+	if f.Italic {
+		c.applyStyleName(r, "italic")
+	}
+	if f.Link != "" {
+		c.applyStyleName(r, "link")
+	}
+	c.applyStyleName(r, f.StyleName)
 	return r
 }
 
 // applyStyleName mirrors the semantics of deck's default inline syntax styles
 // (style.go) for the subset expressible as OOXML run properties.
-func applyStyleName(r *pptx.Run, name string) {
+func (c *converter) applyStyleName(r *pptx.Run, name string) {
+	if spec, ok := c.styles[name]; ok {
+		applyStyleSpec(r, spec)
+		return
+	}
 	switch name {
 	case "", "link":
 		// nothing extra
@@ -369,5 +391,26 @@ func applyStyleName(r *pptx.Run, name string) {
 		r.Underline = true
 	case "code", "kbd", "samp":
 		r.Code = true
+	case "sup":
+		r.Baseline = "super"
+	case "sub":
+		r.Baseline = "sub"
 	}
+}
+
+func (c *converter) hasCustomStyle(name string) bool {
+	_, ok := c.styles[name]
+	return ok
+}
+
+func applyStyleSpec(r *pptx.Run, s pptx.StyleSpec) {
+	r.Bold = s.Bold
+	r.Italic = s.Italic
+	r.Underline = s.Underline
+	r.Strike = s.Strike
+	r.Color = s.Color
+	r.BgColor = s.BgColor
+	r.FontFamily = s.FontFamily
+	r.Baseline = s.Baseline
+	r.Code = false
 }

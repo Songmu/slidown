@@ -38,6 +38,10 @@
 - **Not supported text-level semantics:**
     - `<wbr>`, `<bdi>`, `<bdo>` - These text-direction and line-breaking hints are not supported
 
+Inline syntax styles, including raw inline HTML element styles and
+`<span class="...">` class styles, can be customized with a template
+[`style` layout](templates.md#style-layout).
+
 #### Block HTML Elements (Not Supported)
 Raw HTML block elements are **not supported** and there are no plans to support them:
 - Examples: `<div>`, `<section>`, `<article>`, `<header>`, `<footer>`, `<nav>`, `<aside>`, `<table>`, etc.

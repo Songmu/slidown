@@ -37,6 +37,10 @@ type Template struct {
 	tableStylesPart string
 	// Layouts are the parsed slide layouts available in the template.
 	Layouts []*LayoutInfo
+	// SyntaxStyles maps style-layout keywords to their custom run styles.
+	SyntaxStyles map[string]StyleSpec
+	// TableStyle holds table styling parsed from the special style layout.
+	TableStyle *TableStyleSpec
 	// partTypes maps design part names to their content types (for emitting
 	// [Content_Types].xml overrides).
 	partTypes map[string]string
@@ -120,11 +124,71 @@ type xmlPh struct {
 type xmlCNvPr struct {
 	Name string `xml:"name,attr"`
 }
+type xmlSRGBClr struct {
+	Val string `xml:"val,attr"`
+}
+type xmlSolidFill struct {
+	SRGBClr xmlSRGBClr `xml:"srgbClr"`
+}
+type xmlRunPr struct {
+	B         string       `xml:"b,attr"`
+	I         string       `xml:"i,attr"`
+	U         string       `xml:"u,attr"`
+	Strike    string       `xml:"strike,attr"`
+	Baseline  string       `xml:"baseline,attr"`
+	SolidFill xmlSolidFill `xml:"solidFill"`
+	Highlight struct {
+		SRGBClr xmlSRGBClr `xml:"srgbClr"`
+	} `xml:"highlight"`
+	Latin struct {
+		Typeface string `xml:"typeface,attr"`
+	} `xml:"latin"`
+}
 type xmlRun struct {
-	T string `xml:"t"`
+	RPr xmlRunPr `xml:"rPr"`
+	T   string   `xml:"t"`
+}
+type xmlParaPr struct {
+	Algn string `xml:"algn,attr"`
 }
 type xmlPara struct {
-	Runs []xmlRun `xml:"r"`
+	PPr  xmlParaPr `xml:"pPr"`
+	Runs []xmlRun  `xml:"r"`
+}
+type xmlLine struct {
+	W         string       `xml:"w,attr"`
+	SolidFill xmlSolidFill `xml:"solidFill"`
+	PrstDash  struct {
+		Val string `xml:"val,attr"`
+	} `xml:"prstDash"`
+	NoFill *struct{} `xml:"noFill"`
+}
+type xmlTcPr struct {
+	Anchor    string       `xml:"anchor,attr"`
+	SolidFill xmlSolidFill `xml:"solidFill"`
+	LnL       xmlLine      `xml:"lnL"`
+	LnR       xmlLine      `xml:"lnR"`
+	LnT       xmlLine      `xml:"lnT"`
+	LnB       xmlLine      `xml:"lnB"`
+}
+type xmlTableCell struct {
+	TxBody struct {
+		Paras []xmlPara `xml:"p"`
+	} `xml:"txBody"`
+	TcPr xmlTcPr `xml:"tcPr"`
+}
+type xmlTableRow struct {
+	Cells []xmlTableCell `xml:"tc"`
+}
+type xmlTable struct {
+	Rows []xmlTableRow `xml:"tr"`
+}
+type xmlGraphicFrame struct {
+	Graphic struct {
+		GraphicData struct {
+			Tbl xmlTable `xml:"tbl"`
+		} `xml:"graphicData"`
+	} `xml:"graphic"`
 }
 type xmlSp struct {
 	NvSpPr struct {
@@ -145,7 +209,8 @@ type xmlSldLayout struct {
 	CSld struct {
 		Name   string `xml:"name,attr"`
 		SpTree struct {
-			Sp []xmlSp `xml:"sp"`
+			Sp           []xmlSp           `xml:"sp"`
+			GraphicFrame []xmlGraphicFrame `xml:"graphicFrame"`
 		} `xml:"spTree"`
 	} `xml:"cSld"`
 }
@@ -202,7 +267,12 @@ func LoadTemplate(path string) (*Template, error) {
 		return nil, fmt.Errorf("failed to parse template content types: %w", err)
 	}
 
-	t := &Template{designParts: map[string][]byte{}, partTypes: map[string]string{}, defaultTypes: map[string]string{}}
+	t := &Template{
+		designParts:  map[string][]byte{},
+		partTypes:    map[string]string{},
+		defaultTypes: map[string]string{},
+		SyntaxStyles: map[string]StyleSpec{},
+	}
 
 	// Preserve the template's Default extension declarations so verbatim-copied
 	// media (emf, svg, wdp, ...) still has a declared content type in the
@@ -246,6 +316,10 @@ func LoadTemplate(path string) (*Template, error) {
 			t.copyRels(parts, name)
 			t.partTypes[name] = o.ContentType
 			if li := parseLayout(name, parts[name]); li != nil {
+				if li.Name == styleLayoutName {
+					t.loadStyleLayout(parts[name])
+					continue
+				}
 				t.Layouts = append(t.Layouts, li)
 			}
 		case strings.Contains(o.ContentType, "presProps+xml"):

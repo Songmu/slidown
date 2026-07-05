@@ -252,15 +252,29 @@ func renderRun(r *Run, relIdx *int, rels *[]slideRel) string {
 	if r.FontSize > 0 {
 		rPr.WriteString(fmt.Sprintf(` sz="%d"`, int(r.FontSize*100)))
 	}
+	switch r.Baseline {
+	case "super":
+		rPr.WriteString(` baseline="30000"`)
+	case "sub":
+		rPr.WriteString(` baseline="-25000"`)
+	}
 	rPr.WriteString(`>`)
 
 	var inner strings.Builder
 	if r.Color != "" {
 		inner.WriteString(fmt.Sprintf(`<a:solidFill><a:srgbClr val="%s"/></a:solidFill>`, escapeXML(r.Color)))
 	}
-	// The CT_TextCharacterProperties schema requires latin/cs (the font, set for
-	// code runs) to precede hlinkClick, so emit Code before Link.
-	if r.Code {
+	if r.BgColor != "" {
+		inner.WriteString(fmt.Sprintf(`<a:highlight><a:srgbClr val="%s"/></a:highlight>`, escapeXML(r.BgColor)))
+	}
+	// The CT_TextCharacterProperties schema requires latin/cs (the font) to
+	// follow fill/highlight and precede hlinkClick, so emit fonts before Link.
+	if r.FontFamily != "" {
+		inner.WriteString(fmt.Sprintf(`<a:latin typeface="%s"/>`, escapeXML(r.FontFamily)))
+		if r.Code {
+			inner.WriteString(`<a:cs typeface="Noto Sans Mono"/>`)
+		}
+	} else if r.Code {
 		inner.WriteString(`<a:latin typeface="Noto Sans Mono" pitchFamily="49" charset="0"/><a:cs typeface="Noto Sans Mono"/>`)
 	}
 	if r.Link != "" {
@@ -354,14 +368,19 @@ func renderTable(t *Table, id int, relIdx *int, rels *[]slideRel) string {
 	}
 	b.WriteString(`</a:tblGrid>`)
 
-	for _, r := range rows {
+	headerRows := make([]bool, len(rows))
+	for i, r := range rows {
+		headerRows[i] = r.Header
+	}
+
+	for rIdx, r := range rows {
 		b.WriteString(fmt.Sprintf(`<a:tr h="%d">`, defaultRowHeight))
 		for c := 0; c < cols; c++ {
 			var cell *TableCell
 			if c < len(r.Cells) {
 				cell = r.Cells[c]
 			}
-			b.WriteString(renderTableCell(cell, r.Header, relIdx, rels))
+			b.WriteString(renderTableCell(cell, r.Header, t.Style, rIdx, c, len(rows), cols, headerRows, relIdx, rels))
 		}
 		b.WriteString(`</a:tr>`)
 	}
@@ -369,7 +388,7 @@ func renderTable(t *Table, id int, relIdx *int, rels *[]slideRel) string {
 	return b.String()
 }
 
-func renderTableCell(cell *TableCell, header bool, relIdx *int, rels *[]slideRel) string {
+func renderTableCell(cell *TableCell, header bool, style *TableStyleSpec, rowIdx, colIdx, nRows, nCols int, headerRows []bool, relIdx *int, rels *[]slideRel) string {
 	var b strings.Builder
 	b.WriteString(`<a:tc><a:txBody><a:bodyPr/><a:lstStyle/>`)
 	var paras []*Paragraph
@@ -383,11 +402,29 @@ func renderTableCell(cell *TableCell, header bool, relIdx *int, rels *[]slideRel
 	if cell != nil {
 		align = cell.Align
 	}
+	var cellStyle TableCellStyleSpec
+	if style != nil {
+		cellStyle = tableRegionCellStyle(style, header, colIdx)
+		if align == AlignNone {
+			align = alignmentFromOOXML(cellStyle.HAlign)
+		}
+	}
 	for _, p := range paras {
 		if p.Align == AlignNone {
 			p.Align = align
 		}
-		if header {
+		if style != nil {
+			for _, run := range p.Runs {
+				run.Bold = cellStyle.Bold
+				run.Italic = cellStyle.Italic
+				if cellStyle.Color != "" {
+					run.Color = cellStyle.Color
+				}
+				if cellStyle.FontFamily != "" {
+					run.FontFamily = cellStyle.FontFamily
+				}
+			}
+		} else if header {
 			for _, run := range p.Runs {
 				run.Bold = true
 			}
@@ -395,6 +432,24 @@ func renderTableCell(cell *TableCell, header bool, relIdx *int, rels *[]slideRel
 		b.WriteString(renderParagraph(p, relIdx, rels))
 	}
 	b.WriteString(`</a:txBody>`)
+
+	if style != nil {
+		lnL, lnR, lnT, lnB := tableCellBorders(style, rowIdx, colIdx, nRows, nCols, headerRows)
+		b.WriteString(`<a:tcPr`)
+		if cellStyle.VAlign != "" {
+			b.WriteString(fmt.Sprintf(` anchor="%s"`, escapeXML(cellStyle.VAlign)))
+		}
+		b.WriteString(`>`)
+		b.WriteString(renderTableBorder("lnL", lnL))
+		b.WriteString(renderTableBorder("lnR", lnR))
+		b.WriteString(renderTableBorder("lnT", lnT))
+		b.WriteString(renderTableBorder("lnB", lnB))
+		if cellStyle.BgColor != "" {
+			b.WriteString(fmt.Sprintf(`<a:solidFill><a:srgbClr val="%s"/></a:solidFill>`, escapeXML(cellStyle.BgColor)))
+		}
+		b.WriteString(`</a:tcPr></a:tc>`)
+		return b.String()
+	}
 
 	// Cell properties: thin grey borders on all sides; header gets a light fill.
 	const border = `<a:lnL w="6350"><a:solidFill><a:srgbClr val="BFBFBF"/></a:solidFill></a:lnL>` +
@@ -407,4 +462,106 @@ func renderTableCell(cell *TableCell, header bool, relIdx *int, rels *[]slideRel
 	}
 	b.WriteString(`</a:tcPr></a:tc>`)
 	return b.String()
+}
+
+func alignmentFromOOXML(algn string) Alignment {
+	switch algn {
+	case "":
+		return AlignNone
+	case string(AlignLeft):
+		return AlignLeft
+	case string(AlignCenter):
+		return AlignCenter
+	case string(AlignRight):
+		return AlignRight
+	default:
+		return Alignment(algn)
+	}
+}
+
+func tableRegionCellStyle(style *TableStyleSpec, header bool, colIdx int) TableCellStyleSpec {
+	if header {
+		if colIdx == 0 {
+			return style.HeaderFirstCol
+		}
+		return style.HeaderOtherCols
+	}
+	if colIdx == 0 {
+		return style.DataFirstCol
+	}
+	return style.DataOtherCols
+}
+
+func tableRegionRightBorder(style *TableStyleSpec, header bool, colIdx int) TableBorderSpec {
+	if header {
+		if colIdx == 0 {
+			return style.HeaderFirstColRight
+		}
+		return style.HeaderOtherColRight
+	}
+	if colIdx == 0 {
+		return style.DataFirstColRight
+	}
+	return style.DataOtherColRight
+}
+
+func tableRegionBottomBorder(style *TableStyleSpec, header bool, colIdx int) TableBorderSpec {
+	if header {
+		if colIdx == 0 {
+			return style.HeaderFirstColBottom
+		}
+		return style.HeaderOtherColBottom
+	}
+	if colIdx == 0 {
+		return style.DataFirstColBottom
+	}
+	return style.DataOtherColBottom
+}
+
+func tableCellBorders(style *TableStyleSpec, rowIdx, colIdx, nRows, nCols int, headerRows []bool) (lnL, lnR, lnT, lnB TableBorderSpec) {
+	header := rowIdx >= 0 && rowIdx < len(headerRows) && headerRows[rowIdx]
+	if colIdx == 0 {
+		lnL = style.OuterVertical
+	} else {
+		lnL = tableRegionRightBorder(style, header, colIdx-1)
+	}
+	if colIdx == nCols-1 {
+		lnR = style.OuterVertical
+	} else {
+		lnR = tableRegionRightBorder(style, header, colIdx)
+	}
+	if rowIdx == 0 {
+		lnT = style.OuterHorizontal
+	} else {
+		aboveHeader := rowIdx-1 >= 0 && rowIdx-1 < len(headerRows) && headerRows[rowIdx-1]
+		lnT = tableRegionBottomBorder(style, aboveHeader, colIdx)
+	}
+	if rowIdx == nRows-1 {
+		lnB = style.OuterHorizontal
+	} else {
+		lnB = tableRegionBottomBorder(style, header, colIdx)
+	}
+	return lnL, lnR, lnT, lnB
+}
+
+func renderTableBorder(name string, spec TableBorderSpec) string {
+	if spec.None {
+		if spec.WidthEMU > 0 {
+			return fmt.Sprintf(`<a:%s w="%d"><a:noFill/></a:%s>`, name, spec.WidthEMU, name)
+		}
+		return fmt.Sprintf(`<a:%s><a:noFill/></a:%s>`, name, name)
+	}
+	if spec.Color == "" && spec.WidthEMU == 0 {
+		return ""
+	}
+	var attrs string
+	if spec.WidthEMU > 0 {
+		attrs = fmt.Sprintf(` w="%d"`, spec.WidthEMU)
+	}
+	var dash string
+	if spec.Dash != "" {
+		dash = fmt.Sprintf(`<a:prstDash val="%s"/>`, escapeXML(spec.Dash))
+	}
+	return fmt.Sprintf(`<a:%s%s><a:solidFill><a:srgbClr val="%s"/></a:solidFill>%s</a:%s>`,
+		name, attrs, escapeXML(spec.Color), dash, name)
 }
