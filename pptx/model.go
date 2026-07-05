@@ -81,6 +81,20 @@ type Picture struct {
 	X, Y, W, H int64
 	// Link, when set, makes the picture a hyperlink to the given URL.
 	Link string
+	// Placeholder, when set (together with IsPlaceholder), binds this picture to
+	// a layout picture placeholder by emitting a <p:ph> element under the
+	// picture's <p:nvPr>. Typically PlaceholderPic.
+	Placeholder PlaceholderType
+	// IsPlaceholder marks this picture as filling a placeholder even when
+	// Placeholder is the empty type. When true a <p:ph> element is emitted.
+	IsPlaceholder bool
+	// PlaceholderIdx is the placeholder index; only meaningful for placeholders.
+	PlaceholderIdx int
+}
+
+// isPlaceholder reports whether the picture should emit a placeholder element.
+func (p *Picture) isPlaceholder() bool {
+	return p.IsPlaceholder || p.Placeholder != PlaceholderNone
 }
 
 // PlaceholderType enumerates the OOXML placeholder types relevant to slidown's
@@ -98,6 +112,12 @@ const (
 	PlaceholderSubTitle PlaceholderType = "subTitle"
 	// PlaceholderBody is a body placeholder ("body").
 	PlaceholderBody PlaceholderType = "body"
+	// PlaceholderPic is a picture placeholder ("pic").
+	PlaceholderPic PlaceholderType = "pic"
+	// PlaceholderClipArt is a clip-art picture placeholder ("clipArt").
+	PlaceholderClipArt PlaceholderType = "clipArt"
+	// PlaceholderMedia is a media placeholder ("media").
+	PlaceholderMedia PlaceholderType = "media"
 )
 
 // Shape is a text box (optionally a placeholder) positioned on a slide.

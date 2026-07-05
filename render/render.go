@@ -175,6 +175,60 @@ func renderImagesAt(sl *pptx.Slide, images []*slidown.Image, rx, ry, rw, rh int6
 	}
 }
 
+// distributeImagePlaceholders binds images to the layout's picture placeholders
+// in visual order (top to bottom, then left to right), one image per
+// placeholder, fitting each image into its placeholder region while preserving
+// aspect ratio. Each emitted picture carries a <p:ph> element binding it to the
+// layout placeholder. Images beyond the available placeholders — and images
+// whose placeholder geometry cannot be resolved — are returned so the caller
+// can lay them out with the default flow layout.
+func distributeImagePlaceholders(sl *pptx.Slide, tmpl *pptx.Template, layout *pptx.LayoutInfo, images []*slidown.Image, picPHs []*pptx.PlaceholderInfo) []*slidown.Image {
+	if len(images) == 0 || len(picPHs) == 0 || tmpl == nil {
+		return images
+	}
+	ordered := orderPlaceholdersByPosition(tmpl, layout, picPHs)
+
+	imgIdx := 0
+	for _, ph := range ordered {
+		if imgIdx >= len(images) {
+			break
+		}
+		px, py, pw, ph2, ok := tmpl.EffectiveGeometry(layout, ph)
+		if !ok {
+			// Unusable placeholder: leave images for later placeholders or the
+			// fallback flow layout.
+			continue
+		}
+		img := images[imgIdx]
+		imgIdx++
+		if img == nil {
+			continue
+		}
+		data := img.Bytes()
+		cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
+		if err != nil || cfg.Width == 0 || cfg.Height == 0 {
+			continue
+		}
+		natW := int64(cfg.Width) * emuPerPixel
+		natH := int64(cfg.Height) * emuPerPixel
+		w, h := fit(natW, natH, pw, ph2)
+		x := px + (pw-w)/2
+		y := py + (ph2-h)/2
+		sl.AddPicture(&pptx.Picture{
+			Data:           data,
+			Ext:            imageExt(format),
+			X:              x,
+			Y:              y,
+			W:              w,
+			H:              h,
+			IsPlaceholder:  true,
+			Placeholder:    pptx.PlaceholderType(ph.Type),
+			PlaceholderIdx: ph.Idx,
+		})
+	}
+	return images[imgIdx:]
+}
+
 // fit returns the largest (w,h) preserving the natural aspect ratio that fits
 // within the bounding box (maxW,maxH).
 func fit(natW, natH, maxW, maxH int64) (int64, int64) {

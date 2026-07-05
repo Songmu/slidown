@@ -137,11 +137,28 @@ func renderPicture(pic *Picture, id int, relIdx *int, rels *[]slideRel, mediaIdx
 
 	return `<p:pic><p:nvPicPr>` +
 		fmt.Sprintf(`<p:cNvPr id="%d" name="%s">`, id, escapeXML(name)) + linkAttr + `</p:cNvPr>` +
-		`<p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>` +
+		`<p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr>` + picNvPr(pic) + `</p:nvPicPr>` +
 		`<p:blipFill><a:blip r:embed="` + embedID + `"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
 		`<p:spPr><a:xfrm><a:off x="` + itoa64(pic.X) + `" y="` + itoa64(pic.Y) + `"/>` +
 		`<a:ext cx="` + itoa64(pic.W) + `" cy="` + itoa64(pic.H) + `"/></a:xfrm>` +
 		`<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`
+}
+
+// picNvPr returns the picture's <p:nvPr> element, embedding a <p:ph> binding
+// when the picture fills a placeholder and using the self-closing empty form
+// otherwise.
+func picNvPr(pic *Picture) string {
+	if !pic.isPlaceholder() {
+		return `<p:nvPr/>`
+	}
+	ph := `<p:ph`
+	if pic.Placeholder != PlaceholderNone {
+		ph += fmt.Sprintf(` type="%s"`, pic.Placeholder)
+	}
+	if pic.PlaceholderIdx > 0 {
+		ph += fmt.Sprintf(` idx="%d"`, pic.PlaceholderIdx)
+	}
+	return `<p:nvPr>` + ph + `/></p:nvPr>`
 }
 
 func renderShape(sh *Shape, id int, relIdx *int, rels *[]slideRel) string {

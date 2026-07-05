@@ -45,6 +45,7 @@ var visualGoldenCases = []string{
 	"multi_subtitle.md",
 	"multi_subtitle_columns.md",
 	"multi_subtitle_overflow.md",
+	"image_placeholder.md",
 }
 
 // visualHashThreshold is the maximum allowed perceptual-hash distance between a
