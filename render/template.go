@@ -63,7 +63,10 @@ func renderSlideWithLayout(p *pptx.Presentation, s *slidown.Slide, tmpl *pptx.Te
 	// remaining images fall back to the flow layout below.
 	rest := distributeImagePlaceholders(sl, tmpl, layout, s.Images, picPHs)
 	renderImagesAt(sl, rest, rx, ry, rw, rh, hasBody)
-	renderTablesAt(sl, s.Tables, rx, ry, rw, hasBody || len(s.Images) > 0)
+	// Only flow-laid images (rest) occupy the body region; images bound to
+	// picture placeholders sit in their own layout slots, so they must not push
+	// tables into the lower half.
+	renderTablesAt(sl, s.Tables, rx, ry, rw, hasBody || len(rest) > 0)
 
 	sl.Note = s.SpeakerNote
 	sl.Fingerprint = s.Fingerprint()

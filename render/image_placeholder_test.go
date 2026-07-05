@@ -3,6 +3,7 @@ package render
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -90,7 +91,66 @@ func TestImagePlaceholderBinding(t *testing.T) {
 	}
 }
 
-// TestImagePlaceholderFewerImagesThanSlots verifies that when there are fewer
+// TestTablePlacementIgnoresPlaceholderBoundImages verifies that images bound to
+// picture placeholders do not make the body region "crowded": a table on a
+// slide whose only image is placeholder-bound must be laid out at the top of the
+// body region, not pushed into the lower half.
+func TestTablePlacementIgnoresPlaceholderBoundImages(t *testing.T) {
+	tmplPath := buildTemplateFile(t)
+	tmpl, err := pptx.LoadTemplate(tmplPath)
+	if err != nil {
+		t.Fatalf("LoadTemplate: %v", err)
+	}
+	layout := tmpl.ContentLayout()
+	if layout == nil {
+		t.Fatal("template has no content layout")
+	}
+	layout.Placeholders = append(layout.Placeholders, &pptx.PlaceholderInfo{
+		Type: "pic", Idx: 30, Name: "Picture Placeholder",
+		HasGeom: true, X: 1000000, Y: 1000000, W: 2000000, H: 2000000,
+	})
+
+	// Expected non-crowded table top: the body region's Y.
+	ry := contentY
+	if _, y, _, _, ok := layout.BodyGeometry(); ok {
+		ry = y
+	}
+
+	// Title + a table, but no body text; a single image that binds to the pic
+	// placeholder (so no image is flow-laid into the body region).
+	const markdown = "# Pics\n\n| a | b |\n| - | - |\n| 1 | 2 |\n"
+	parsed, err := md.Parse("", []byte(markdown), nil)
+	if err != nil {
+		t.Fatalf("md.Parse: %v", err)
+	}
+	slides, err := parsed.ToSlides(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ToSlides: %v", err)
+	}
+	slides[0].Images = []*slidown.Image{makeImage(t, 100, 100)}
+
+	var buf bytes.Buffer
+	if _, err := ToPresentationWithTemplate(slides, tmpl).WriteTo(&buf); err != nil {
+		t.Fatalf("WriteTo: %v", err)
+	}
+	parts := zipParts(t, buf.Bytes())
+	slideXML := string(parts["ppt/slides/slide1.xml"])
+
+	// The image must be bound (so rest is empty).
+	if !strings.Contains(slideXML, `<p:ph type="pic" idx="30"/>`) {
+		t.Fatalf("expected image bound to picture placeholder, got: %s", slideXML)
+	}
+	// The table's graphicFrame must sit at the body region top, not pushed down.
+	gf := strings.Index(slideXML, "<p:graphicFrame>")
+	if gf == -1 {
+		t.Fatalf("slide missing table graphicFrame: %s", slideXML)
+	}
+	wantY := fmt.Sprintf(`y="%d"`, ry)
+	if !strings.Contains(slideXML[gf:], wantY) {
+		t.Errorf("expected table placed at body top (%s); slide did not push table down: %s", wantY, slideXML[gf:])
+	}
+}
+
 // images than picture placeholders, images fill placeholders in visual order
 // and unused placeholders are simply left empty (no floating pictures).
 func TestImagePlaceholderFewerImagesThanSlots(t *testing.T) {
