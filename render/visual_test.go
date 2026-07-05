@@ -46,6 +46,15 @@ var visualGoldenCases = []string{
 	"multi_subtitle_columns.md",
 	"multi_subtitle_overflow.md",
 	"image_placeholder.md",
+	"style_layout.md",
+}
+
+// visualTemplateOverride maps a fixture to a non-default template. Fixtures not
+// listed here render through template_base.pptx. The style_layout fixture is
+// rendered through template_style.pptx (which carries a "style" layout) so the
+// visual goldens exercise the style-override code path end to end.
+var visualTemplateOverride = map[string]string{
+	"style_layout.md": "../testdata/template_style.pptx",
 }
 
 // visualHashThreshold is the maximum allowed perceptual-hash distance between a
@@ -127,9 +136,13 @@ func renderSlidePNGs(t *testing.T, soffice, pdftoppm, name string) [][]byte {
 	}
 
 	const templateFixture = "../testdata/template_base.pptx"
-	tmpl, err := pptx.LoadTemplate(templateFixture)
+	templatePath := templateFixture
+	if override, ok := visualTemplateOverride[name]; ok {
+		templatePath = override
+	}
+	tmpl, err := pptx.LoadTemplate(templatePath)
 	if err != nil {
-		t.Fatalf("LoadTemplate %s: %v", templateFixture, err)
+		t.Fatalf("LoadTemplate %s: %v", templatePath, err)
 	}
 
 	dir := t.TempDir()
