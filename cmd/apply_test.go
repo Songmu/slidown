@@ -971,3 +971,76 @@ func assertSlideRelsResolveInPackage(t *testing.T, parts map[string]string) {
 		}
 	}
 }
+
+// rewriteSlidePartForTest rewrites a single slide part inside an existing .pptx,
+// leaving every other entry untouched (no duplicate entries), simulating a
+// manual edit made in PowerPoint.
+func rewriteSlidePartForTest(t *testing.T, path, name string, transform func([]byte) []byte) {
+	t.Helper()
+	parts := zipRawPartsForTest(t, path)
+	got, ok := parts[name]
+	if !ok {
+		t.Fatalf("part %q not found in %s", name, path)
+	}
+	parts[name] = transform(got)
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for n, d := range parts {
+		fw, err := zw.Create(n)
+		if err != nil {
+			t.Fatalf("zip create %s: %v", n, err)
+		}
+		if _, err := fw.Write(d); err != nil {
+			t.Fatalf("zip write %s: %v", n, err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("zip close: %v", err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+}
+
+// TestApplyShapeLevelMergePreservesManualEditOnUnchangedShape verifies the
+// shape-level incremental rebuild: when only one text box's source changes, the
+// slide is not wholly regenerated. The unchanged title keeps a manual xfrm edit
+// made in PowerPoint, while the changed body is updated to the new content.
+func TestApplyShapeLevelMergePreservesManualEditOnUnchangedShape(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "deck.pptx")
+
+	const v1 = "# Title A\n\nbody one\n\n---\n\n# Title B\n\nbody two\n"
+	applyFreshForTest(t, v1, out, "")
+
+	// Snapshot the untouched second slide to assert it is reused verbatim.
+	origSlide2 := readSlidePartsForTest(t, out)["ppt/slides/slide2.xml"]
+
+	// Simulate a manual PowerPoint edit: give the (source-unchanged) title of
+	// slide 1 an explicit position. This lives in spPr and does not affect the
+	// title's per-shape fingerprint (which is carried in extLst).
+	const xfrmMarker = `x="424242"`
+	rewriteSlidePartForTest(t, out, "ppt/slides/slide1.xml", func(b []byte) []byte {
+		marker := `<a:xfrm><a:off x="424242" y="111"/><a:ext cx="1" cy="1"/></a:xfrm>`
+		return bytes.Replace(b, []byte(`<p:spPr>`), []byte(`<p:spPr>`+marker), 1)
+	})
+
+	// Change only slide 1's body text.
+	const v2 = "# Title A\n\nbody one EDITED\n\n---\n\n# Title B\n\nbody two\n"
+	applyUpdateForTest(t, v2, out, "")
+
+	now := readSlidePartsForTest(t, out)
+	slide1 := string(now["ppt/slides/slide1.xml"])
+	if !strings.Contains(slide1, xfrmMarker) {
+		t.Errorf("manual xfrm on the unchanged title was lost during rebuild:\n%.400s", slide1)
+	}
+	if !strings.Contains(slide1, "body one EDITED") {
+		t.Errorf("changed body was not updated to the new content:\n%.400s", slide1)
+	}
+	if strings.Contains(slide1, ">body one<") {
+		t.Errorf("stale body content survived on slide 1:\n%.400s", slide1)
+	}
+	if !bytes.Equal(origSlide2, now["ppt/slides/slide2.xml"]) {
+		t.Errorf("unchanged slide 2 was not reused verbatim")
+	}
+}

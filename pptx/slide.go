@@ -89,14 +89,24 @@ func fingerprintExt(fp, key string) string {
 }
 
 // shapeMetaExt renders the per-shape slidown extension carrying the shape's
-// semantic Role (e.g. "subTitle"). Returns an empty string when role is empty
-// so callers can drop it into the XML unconditionally.
-func shapeMetaExt(role string) string {
-	if role == "" {
+// semantic Role (e.g. "subTitle") and its content fingerprint (fp). The
+// fingerprint lets an incremental rebuild detect whether a shape's source
+// changed so unchanged shapes can be preserved individually. Returns an empty
+// string when both role and fp are empty so callers can drop it into the XML
+// unconditionally.
+func shapeMetaExt(role, fp string) string {
+	if role == "" && fp == "" {
 		return ""
 	}
+	attrs := ""
+	if role != "" {
+		attrs += ` role="` + escapeXML(role) + `"`
+	}
+	if fp != "" {
+		attrs += ` fp="` + escapeXML(fp) + `"`
+	}
 	return `<p:extLst><p:ext uri="` + shapeMetaURI + `">` +
-		`<slidown:shape xmlns:slidown="` + fingerprintNS + `" role="` + escapeXML(role) + `"/>` +
+		`<slidown:shape xmlns:slidown="` + fingerprintNS + `"` + attrs + `/>` +
 		`</p:ext></p:extLst>`
 }
 
@@ -182,7 +192,7 @@ func renderShape(sh *Shape, id int, relIdx *int, rels *[]slideRel) string {
 		ph += `/>`
 		b.WriteString(ph)
 	}
-	b.WriteString(shapeMetaExt(sh.Role))
+	b.WriteString(shapeMetaExt(sh.Role, shapeFingerprint(sh)))
 	b.WriteString(`</p:nvPr></p:nvSpPr>`)
 
 	b.WriteString(`<p:spPr>`)

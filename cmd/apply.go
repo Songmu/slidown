@@ -162,7 +162,13 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, 
 	// itself as the template (apply refuses --template when the output already
 	// exists), so its design parts are unchanged.
 	if existing, existingTitle, err := pptx.ReadSlideMetasAndCoreTitle(out); err == nil {
-		reuse := buildReuseMap(sourceSlides, existing)
+		// Per-shape signatures for the freshly generated package and the existing
+		// file feed the shape-level similarity gate. Read best-effort: on failure
+		// the maps are nil, the gate sees zero overlap and no shape-level merge
+		// is attempted (safe fallback to whole-slide regeneration).
+		newSigs, _ := pptx.ShapeSignaturesByPosition(newPPTX)
+		oldSigs, _ := pptx.ShapeSignaturesByPart(out)
+		reuse, shapeMerge := alignSlides(sourceSlides, existing, newSigs, oldSigs)
 		switch {
 		case isIdentityReuse(reuse, existing, len(sourceSlides)):
 			// Every slide is reused in place. The file is already correct unless
@@ -181,8 +187,17 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, 
 				return false, err
 			}
 			return true, nil
-		case len(reuse) > 0:
-			merged, err := pptx.MergeReusingUnchangedSlides(out, newPPTX, reuse)
+		case len(reuse) > 0 || len(shapeMerge) > 0:
+			var merged []byte
+			if len(reuse) > 0 {
+				merged, err = pptx.MergeReusingUnchangedSlides(out, newPPTX, reuse)
+			} else {
+				merged, err = pptx.MergeWithExisting(out, newPPTX)
+			}
+			if err != nil {
+				return false, err
+			}
+			merged, err = pptx.MergeReusingUnchangedShapes(merged, out, shapeMerge)
 			if err != nil {
 				return false, err
 			}
@@ -203,55 +218,150 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, 
 	return true, nil
 }
 
-// buildReuseMap matches source slides to slides in the existing presentation and
-// returns a map of new 1-based position -> existing slide part name (e.g.
-// "ppt/slides/slide3.xml") for slides whose existing part should be kept. A
-// source slide is matched to an existing slide by stable key when both carry
-// one, otherwise positionally (same index) when neither does. A matched slide
-// is reused when it is frozen or when its source fingerprint still matches the
-// existing slide's embedded fingerprint.
+// shapeMergeMinOverlap is the minimum fraction of shapes (matched by slot key
+// and per-shape fingerprint) that a changed source slide must share with its
+// paired existing slide before a shape-level merge is attempted. Below this the
+// pair is treated as two different slides and the slide is fully regenerated.
+const shapeMergeMinOverlap = 0.5
+
+// alignSlides matches source slides to slides in the existing presentation and
+// classifies each matched pair as either a whole-slide reuse or a shape-level
+// merge. It returns two maps of new 1-based position -> existing slide part name
+// (e.g. "ppt/slides/slide3.xml"): reuse for slides kept verbatim (unchanged or
+// frozen), and shapeMerge for changed slides confidently paired with their
+// prior version, where unchanged text boxes should be preserved individually.
+//
+// Matching is robust without stable page keys:
+//  1. Anchor pairs are established first by key, then by exact fingerprint
+//     (unchanged slides), which survive inserts, deletions and reordering.
+//  2. Remaining slides are aligned in order within each anchor-bounded segment,
+//     so a shape can only ever be inherited from a positionally plausible
+//     neighbour, never from a distant look-alike slide.
+//  3. A changed pair is only offered for shape-level merge when the two slides
+//     are clearly the same slide lightly edited (shape overlap >= threshold);
+//     otherwise it is regenerated. This bounds any residual mis-pairing to a
+//     cosmetic, non-destructive effect on identical-text shapes.
 //
 // Using the part name (rather than a position integer) avoids the
 // filename-vs-visible-position mismatch that arises when slides have been
 // reordered in PowerPoint (sldIdLst order ≠ filename order).
-//
-// Matching by key means reuse and freeze survive inserts, deletions and
-// reordering; an empty fingerprint (e.g. stripped by another editor) never
-// matches, forcing a safe regenerate.
-func buildReuseMap(source slidown.Slides, existing []pptx.SlideMeta) map[int]string {
-	byKey := map[string]int{}
-	for i, m := range existing {
-		if m.Key != "" {
-			byKey[m.Key] = i
+func alignSlides(source slidown.Slides, existing []pptx.SlideMeta,
+	newSigs map[int][]pptx.ShapeSignature, oldSigs map[string][]pptx.ShapeSignature,
+) (map[int]string, map[int]string) {
+	n := len(source)
+	m := len(existing)
+	pairOld := make([]int, n)
+	for i := range pairOld {
+		pairOld[i] = -1
+	}
+	oldUsed := make([]bool, m)
+	isAnchorTarget := make([]bool, m)
+
+	// Phase 1a: anchor by stable key (unique within a deck).
+	oldByKey := map[string]int{}
+	for j, e := range existing {
+		if e.Key == "" {
+			continue
+		}
+		if _, seen := oldByKey[e.Key]; seen {
+			oldByKey[e.Key] = -1 // ambiguous duplicate key: never anchor on it
+		} else {
+			oldByKey[e.Key] = j
+		}
+	}
+	for i := range source {
+		s := source[i]
+		if s == nil || s.Key == "" {
+			continue
+		}
+		j, ok := oldByKey[s.Key]
+		if !ok || j < 0 || oldUsed[j] {
+			continue
+		}
+		pairOld[i] = j
+		oldUsed[j] = true
+		isAnchorTarget[j] = true
+	}
+
+	// Phase 1b: anchor unchanged slides by fingerprint, preferring the nearest
+	// still-unused existing slide so anchors stay locally ordered.
+	for i := range source {
+		s := source[i]
+		if s == nil || pairOld[i] >= 0 {
+			continue
+		}
+		best := -1
+		for j := 0; j < m; j++ {
+			if oldUsed[j] || !s.MatchesFingerprint(existing[j].Fingerprint) {
+				continue
+			}
+			if best < 0 || abs(j-i) < abs(best-i) {
+				best = j
+			}
+		}
+		if best >= 0 {
+			pairOld[i] = best
+			oldUsed[best] = true
+			isAnchorTarget[best] = true
 		}
 	}
 
-	reuse := map[int]string{}
-	usedOld := make([]bool, len(existing))
+	// Phase 2: align the remaining slides in order within anchor-bounded
+	// segments. A two-pointer walk never pairs across an anchor target, so
+	// mis-pairing is confined to a single gap between unchanged slides.
+	ei := 0
 	for i := range source {
 		s := source[i]
 		if s == nil {
 			continue
 		}
-		oldIdx := -1
-		switch {
-		case s.Key != "":
-			if j, ok := byKey[s.Key]; ok {
-				oldIdx = j
+		if pairOld[i] >= 0 {
+			if pairOld[i]+1 > ei {
+				ei = pairOld[i] + 1
 			}
-		case i < len(existing) && existing[i].Key == "":
-			// Keyless slides fall back to positional matching.
-			oldIdx = i
-		}
-		if oldIdx < 0 || usedOld[oldIdx] {
 			continue
 		}
-		if s.Freeze || s.MatchesFingerprint(existing[oldIdx].Fingerprint) {
-			reuse[i+1] = existing[oldIdx].PartName
-			usedOld[oldIdx] = true
+		for ei < m && oldUsed[ei] && !isAnchorTarget[ei] {
+			ei++
+		}
+		if ei < m && !oldUsed[ei] && !isAnchorTarget[ei] {
+			pairOld[i] = ei
+			oldUsed[ei] = true
+			ei++
 		}
 	}
-	return reuse
+
+	// Phase 3: classify each pair as whole-slide reuse or shape-level merge.
+	reuse := map[int]string{}
+	shapeMerge := map[int]string{}
+	for i := range source {
+		s := source[i]
+		if s == nil || pairOld[i] < 0 {
+			continue
+		}
+		j := pairOld[i]
+		pos := i + 1
+		part := existing[j].PartName
+		if s.Freeze || s.MatchesFingerprint(existing[j].Fingerprint) {
+			reuse[pos] = part
+			continue
+		}
+		newSig := newSigs[pos]
+		if len(newSig) == 0 {
+			continue
+		}
+		if pptx.ShapeOverlap(newSig, oldSigs[part]) >= shapeMergeMinOverlap {
+			shapeMerge[pos] = part
+		}
+	}
+	return reuse, shapeMerge
+}
+
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 // isIdentityReuse reports whether every slide is reused at its original visible

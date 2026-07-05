@@ -38,7 +38,7 @@ func TestRenderShapeEmitsRoleMarker(t *testing.T) {
 	}
 }
 
-func TestRenderShapeOmitsRoleMarkerWhenEmpty(t *testing.T) {
+func TestRenderShapeOmitsRoleAttrWhenEmpty(t *testing.T) {
 	sh := &Shape{
 		Placeholder:    PlaceholderBody,
 		PlaceholderIdx: 1,
@@ -47,8 +47,13 @@ func TestRenderShapeOmitsRoleMarkerWhenEmpty(t *testing.T) {
 	var rels []slideRel
 	relIdx := 1
 	out := renderShape(sh, 2, &relIdx, &rels)
-	if strings.Contains(out, `<p:extLst>`) {
-		t.Errorf("did not expect extLst for Role=\"\" shape, got: %s", out)
+	// The shape carries no role, but the meta extension is still emitted to
+	// carry the per-shape fingerprint used by incremental shape-level rebuilds.
+	if strings.Contains(out, `role=`) {
+		t.Errorf("did not expect a role attribute for Role=\"\" shape, got: %s", out)
+	}
+	if !strings.Contains(out, `<slidown:shape`) || !strings.Contains(out, ` fp="`) {
+		t.Errorf("expected shape meta extension carrying fp, got: %s", out)
 	}
 }
 
