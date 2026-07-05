@@ -15,6 +15,11 @@ func TestResolveTemplate(t *testing.T) {
 		t.Skipf("template fixture missing: %v", err)
 	}
 
+	// Isolate from the developer's local config so resolveTemplate does not pick
+	// up a config "template" from ~/.config/slidown. Cases that need a config set
+	// XDG_CONFIG_HOME to their own directory below.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
 	// A .pptx path loads directly.
 	tmpl, err := resolveTemplate(fixture)
 	if err != nil {
