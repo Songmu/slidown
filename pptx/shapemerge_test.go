@@ -101,3 +101,40 @@ func TestParseSlideShapesExtractsSlotAndFP(t *testing.T) {
 		}
 	}
 }
+
+func TestShapeSlotKeyEmptyForNonPlaceholder(t *testing.T) {
+	// A plain (non-placeholder) text box has no stable identity and must not be
+	// spliceable.
+	plain := &Shape{Paragraphs: []*Paragraph{{Runs: []*Run{{Text: "x"}}}}}
+	if got := shapeSlotKey(plain); got != "" {
+		t.Errorf("non-placeholder slot key = %q, want empty", got)
+	}
+	// An untyped placeholder still gets a slot key from its index.
+	ph := &Shape{IsPlaceholder: true, PlaceholderIdx: 2, Paragraphs: []*Paragraph{{Runs: []*Run{{Text: "x"}}}}}
+	if got := shapeSlotKey(ph); got != "#2" {
+		t.Errorf("untyped placeholder slot key = %q, want #2", got)
+	}
+}
+
+func TestMergeSlideShapesSkipsNonPlaceholderShape(t *testing.T) {
+	// Build a slide whose only shape is a non-placeholder text box with the same
+	// content on both sides: it must not be spliced (keyless), even though its
+	// fingerprint would match.
+	build := func(text string) []byte {
+		s := &Slide{Shapes: []*Shape{{Name: "Box", Paragraphs: []*Paragraph{{Runs: []*Run{{Text: text}}}}}}}
+		idx := 0
+		xml, _, _ := renderSlide(s, &idx)
+		return []byte(xml)
+	}
+	shapes, _, err := parseSlideShapes(build("same"))
+	if err != nil {
+		t.Fatalf("parseSlideShapes: %v", err)
+	}
+	if len(shapes) != 1 || shapes[0].slotKey != "" {
+		t.Fatalf("expected one keyless non-placeholder shape, got %+v", shapes)
+	}
+	_, changed := mergeSlideShapes(build("same"), build("same"))
+	if changed {
+		t.Error("non-placeholder shapes must never be spliced")
+	}
+}

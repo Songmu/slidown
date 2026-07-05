@@ -13,7 +13,14 @@ import (
 // slidown Role when set, otherwise its OOXML placeholder type) with the
 // placeholder index, so a title, a body and each additional body/subtitle slot
 // get distinct, position-independent keys.
+//
+// Only placeholders get a slot key: a non-placeholder text box has no stable
+// identity across rebuilds (its index is meaningless), so it returns "" and is
+// never spliced, falling back to safe regeneration.
 func shapeSlotKey(sh *Shape) string {
+	if !sh.isPlaceholder() {
+		return ""
+	}
 	return slotKey(effectiveType(sh.Role, string(sh.Placeholder)), sh.PlaceholderIdx)
 }
 

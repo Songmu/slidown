@@ -52,11 +52,17 @@ func parseSlideShapes(slideXML []byte) (shapes []shapeInfo, rootAttrs []xml.Attr
 	depthAtSp := 0
 	var cur shapeInfo
 	var phType, phIdx, role string
+	var sawPh bool
 
 	finalize := func(end int64) {
 		cur.end = int(end)
 		cur.raw = slideXML[cur.start:cur.end]
-		cur.slotKey = slotKey(effectiveType(role, phType), atoi(phIdx))
+		// Only placeholders get a stable slot key; a non-placeholder text box is
+		// left keyless so it is never spliced (safe regeneration). This mirrors
+		// shapeSlotKey on the writer side.
+		if sawPh {
+			cur.slotKey = slotKey(effectiveType(role, phType), atoi(phIdx))
+		}
 		// Namespace-aware detection above is authoritative; the substring scan is
 		// a conservative backstop (a false positive only skips an optimisation).
 		cur.hasRels = cur.hasRels || rawHasRels(cur.raw)
@@ -86,6 +92,7 @@ func parseSlideShapes(slideXML []byte) (shapes []shapeInfo, rootAttrs []xml.Attr
 				depthAtSp = len(stack)
 				cur = shapeInfo{start: int(prev)}
 				phType, phIdx, role = "", "", ""
+				sawPh = false
 			case capturing:
 				for _, a := range t.Attr {
 					if a.Name.Space == nsRelationships {
@@ -98,6 +105,7 @@ func parseSlideShapes(slideXML []byte) (shapes []shapeInfo, rootAttrs []xml.Attr
 						cur.cNvPrID = attrValue(t.Attr, "id")
 					}
 				case xnPh:
+					sawPh = true
 					if phType == "" {
 						phType = attrValue(t.Attr, "type")
 					}
