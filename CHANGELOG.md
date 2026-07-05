@@ -1,5 +1,15 @@
 # Changelog
 
+## [v0.0.3](https://github.com/Songmu/slidown/compare/v0.0.2...v0.0.3) - 2026-07-05
+
+### Other Changes
+- Fix dropped title-only edits (preserve unmanaged parts); remove dead code by @Songmu in https://github.com/Songmu/slidown/pull/50
+- Reduce boilerplate in pptx package tests by @Songmu in https://github.com/Songmu/slidown/pull/51
+- Distribute multiple subtitles across multiple subtitle placeholders by @Songmu in https://github.com/Songmu/slidown/pull/52
+- Strengthen visual test coverage; drop brittle subtitle XML golden by @Songmu in https://github.com/Songmu/slidown/pull/53
+- Bind images to picture placeholders in template layouts by @Songmu in https://github.com/Songmu/slidown/pull/54
+- Support deck-compatible "style" layout for design overrides by @Songmu in https://github.com/Songmu/slidown/pull/55
+
 ## [v0.0.2](https://github.com/Songmu/slidown/compare/v0.0.1...v0.0.2) - 2026-07-04
 
 ### Other Changes
