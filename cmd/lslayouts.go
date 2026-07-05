@@ -31,13 +31,21 @@ whose template is resolved from the --template flag or the config.`,
 			cmd.Println("Title and Content")
 			return nil
 		}
-		for _, l := range tmpl.Layouts {
-			if l.Name != "" {
-				cmd.Println(l.Name)
-			}
+		for _, name := range templateLayoutNames(tmpl) {
+			cmd.Println(name)
 		}
 		return nil
 	},
+}
+
+func templateLayoutNames(tmpl *pptx.Template) []string {
+	var names []string
+	for _, l := range tmpl.Layouts {
+		if l.Name != "" {
+			names = append(names, l.Name)
+		}
+	}
+	return names
 }
 
 // resolveTemplate loads a template from a path that is either a PowerPoint

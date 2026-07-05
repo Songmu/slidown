@@ -185,6 +185,12 @@ type Run struct {
 	FontSize float64
 	// Color is an RRGGBB hex string (without '#'); empty means inherit.
 	Color string
+	// BgColor is an RRGGBB hex string (without '#'); empty means no highlight.
+	BgColor string
+	// FontFamily is an explicit latin typeface; empty means inherit.
+	FontFamily string
+	// Baseline is "", "super", or "sub"; non-empty values render superscript/subscript.
+	Baseline string
 }
 
 // Table is a simple grid table positioned on a slide.
@@ -192,6 +198,10 @@ type Table struct {
 	// Geometry in EMUs. Height may be 0 to let it be derived from rows.
 	X, Y, W, H int64
 	Rows       []*TableRow
+	// Style, when non-nil, overrides the default table styling (cell fills,
+	// text styles, alignment and borders) parsed from a template's style
+	// layout. Nil preserves the built-in hardcoded styling.
+	Style *TableStyleSpec
 }
 
 // TableRow is a single row of table cells.

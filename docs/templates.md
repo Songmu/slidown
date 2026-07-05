@@ -30,6 +30,62 @@ Title and Content
 Section Header
 ```
 
+## Style layout
+
+Templates can include a special slide layout named exactly `style` to define
+inline syntax and table styles. This mirrors
+[deck's `style` feature](https://github.com/k1LoW/deck).
+
+The `style` layout is only used as design metadata. It is not selectable as a
+content layout, and `slidown ls-layouts` does not list it.
+
+### Inline syntax styles
+
+Add text boxes to the `style` layout. The trimmed text in each text box is the
+style keyword, and the text run's formatting becomes the style for that
+keyword.
+
+Supported keywords include:
+
+- Markdown syntax names: `bold`, `italic`, `link`, `code`, `del`,
+  `blockquote`
+- Raw inline HTML element names such as `cite`, `q`, `s`, `kbd`, `samp`,
+  `sup`, `sub`, `var`, `em`, `strong`, `u`, and `mark`
+- Arbitrary class names used by `<span class="...">`
+
+The following run properties are honored: bold, italic, underline,
+strikethrough, text color, highlight/background color, font family, and
+superscript/subscript baseline.
+
+Custom styles override slidown's built-in defaults for the same keyword. Syntax
+without a custom keyword keeps the built-in style.
+
+Inline styles from a text box override the block context, so emphasis inside a
+`blockquote` or a styled table cell is preserved (matching deck, where the block
+or cell style is applied first and inline styles win).
+
+> **Note on colors:** only direct RGB colors (`srgbClr`) are read from the
+> `style` layout. Theme/scheme colors (`schemeClr`, chosen from the theme color
+> palette in PowerPoint) are not resolved; pick an explicit color if a style
+> does not take effect.
+
+### Table styles
+
+Add one 2x2 table to the `style` layout to style generated Markdown tables.
+The cells map to table regions as follows:
+
+| Cell | Applies to |
+| --- | --- |
+| Row 1, column 1 | Header row, first column |
+| Row 1, column 2 | Header row, other columns |
+| Row 2, column 1 | Data rows, first column |
+| Row 2, column 2 | Data rows, other columns |
+
+For each cell, slidown reads the background fill, text style, and horizontal
+and vertical alignment. Borders use deck-compatible mapping: the top and left
+borders of cell `[0,0]` define the table's outer borders, while each region's
+right and bottom borders define inner borders for that region.
+
 ## Default layout selection
 
 When no per-page layout is specified, the first slide uses a title-style

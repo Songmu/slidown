@@ -3,7 +3,10 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
+
+	"github.com/Songmu/slidown/pptx"
 )
 
 func TestResolveTemplate(t *testing.T) {
@@ -101,6 +104,47 @@ func TestResolveTemplate(t *testing.T) {
 	}
 	if tmpl == nil || len(tmpl.Layouts) == 0 {
 		t.Fatalf("expected layouts from the config template, got %v", tmpl)
+	}
+}
+
+func TestTemplateLayoutNamesUsesFilteredLayouts(t *testing.T) {
+	tmpl := &pptx.Template{
+		SyntaxStyles: map[string]pptx.StyleSpec{
+			"code": {Color: "112233"},
+		},
+		Layouts: []*pptx.LayoutInfo{
+			{Name: "Title"},
+			{Name: "Content"},
+			{Name: ""},
+		},
+	}
+
+	got := templateLayoutNames(tmpl)
+	want := []string{"Title", "Content"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("templateLayoutNames = %#v, want %#v", got, want)
+	}
+	for _, name := range got {
+		if name == "style" {
+			t.Fatalf("style layout should not be listed: %#v", got)
+		}
+	}
+}
+
+func TestTemplateLayoutNamesExcludesStyleLayoutFixture(t *testing.T) {
+	tmpl, err := pptx.LoadTemplate("../testdata/template_style.pptx")
+	if err != nil {
+		t.Fatalf("LoadTemplate: %v", err)
+	}
+
+	got := templateLayoutNames(tmpl)
+	if len(got) == 0 {
+		t.Fatal("templateLayoutNames returned no layouts")
+	}
+	for _, name := range got {
+		if name == "style" {
+			t.Fatalf("style layout should not be listed: %#v", got)
+		}
 	}
 }
 

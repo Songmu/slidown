@@ -111,8 +111,10 @@ exists it is updated in place, reusing itself as the template, and passing
 `--template` is an error (choose a different `--output`, or remove the file
 first). See [docs/templates.md](docs/templates.md) for layout selection,
 inspecting available layouts with `ls-layouts`, and repurposing existing
-placeholders as subtitle targets. Incremental updates reuse unchanged slides
-from the existing output file and still honor `freeze: true`.
+placeholders as subtitle targets. Templates can also include a
+[`style` layout](docs/templates.md#style-layout) to customize inline syntax and
+table styling. Incremental updates reuse unchanged slides from the existing
+output file and still honor `freeze: true`.
 
 ## Markdown file format
 
