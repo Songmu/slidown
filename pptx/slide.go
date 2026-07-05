@@ -415,6 +415,9 @@ func renderTableCell(cell *TableCell, header bool, style *TableStyleSpec, rowIdx
 		}
 		if style != nil {
 			for _, run := range p.Runs {
+				// TODO: apply the remaining deck table-cell text properties
+				// (underline, strike, baseline, highlight/background color, font
+				// size) once TableCellStyleSpec carries them.
 				run.Bold = run.Bold || cellStyle.Bold
 				run.Italic = run.Italic || cellStyle.Italic
 				if cellStyle.Color != "" && run.Color == "" {

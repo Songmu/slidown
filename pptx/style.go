@@ -23,6 +23,11 @@ type TableBorderSpec struct {
 	None     bool
 }
 
+// TableCellStyleSpec holds the styling for one table region. Only bold, italic,
+// text color and font family are currently supported for cell text.
+// TODO: extend table cell text styling to full deck parity by also honoring
+// underline, strikethrough, superscript/subscript baseline, highlight/background
+// color and font size (all already expressible on pptx.Run).
 type TableCellStyleSpec struct {
 	BgColor           string
 	Bold, Italic      bool
@@ -159,6 +164,9 @@ func tableCellStyleSpec(cell xmlTableCell) TableCellStyleSpec {
 			spec.HAlign = p.PPr.Algn
 		}
 		for _, r := range p.Runs {
+			// TODO: parse the remaining run properties (underline, strike,
+			// baseline, highlight/background color, font size) for full deck
+			// parity on table cell text styling.
 			spec.Bold = boolAttr(r.RPr.B)
 			spec.Italic = boolAttr(r.RPr.I)
 			spec.Color = r.RPr.SolidFill.SRGBClr.Val
