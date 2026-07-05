@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/config"
 	"github.com/Songmu/slidown/md"
 	"github.com/Songmu/slidown/pptx"
@@ -1042,5 +1043,64 @@ func TestApplyShapeLevelMergePreservesManualEditOnUnchangedShape(t *testing.T) {
 	}
 	if !bytes.Equal(origSlide2, now["ppt/slides/slide2.xml"]) {
 		t.Errorf("unchanged slide 2 was not reused verbatim")
+	}
+}
+
+// TestApplyShapeLevelMergeWithSkippedSlide guards the position mapping: a
+// skipped source slide emits no output slide, so alignment must use rendered
+// positions. A leading skipped page must not shift shape-level merges onto the
+// wrong slide.
+func TestApplyShapeLevelMergeWithSkippedSlide(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "deck.pptx")
+
+	const v1 = "# Skipme\n\n<!-- {\"skip\": true} -->\n\n---\n\n# Alpha\n\nbody a\n\n---\n\n# Bravo\n\nbody b\n"
+	applyFreshForTest(t, v1, out, "")
+
+	parts := readSlidePartsForTest(t, out)
+	if len(parts) != 2 {
+		t.Fatalf("expected 2 rendered slides (one skipped), got %d", len(parts))
+	}
+	origSlide2 := parts["ppt/slides/slide2.xml"] // Bravo, must stay reused verbatim
+
+	const xfrmMarker = `x="515151"`
+	rewriteSlidePartForTest(t, out, "ppt/slides/slide1.xml", func(b []byte) []byte {
+		marker := `<a:xfrm><a:off x="515151" y="9"/><a:ext cx="1" cy="1"/></a:xfrm>`
+		return bytes.Replace(b, []byte(`<p:spPr>`), []byte(`<p:spPr>`+marker), 1)
+	})
+
+	// Change only Alpha's body; skip and Bravo unchanged.
+	const v2 = "# Skipme\n\n<!-- {\"skip\": true} -->\n\n---\n\n# Alpha\n\nbody a EDITED\n\n---\n\n# Bravo\n\nbody b\n"
+	applyUpdateForTest(t, v2, out, "")
+
+	now := readSlidePartsForTest(t, out)
+	slide1 := string(now["ppt/slides/slide1.xml"])
+	if !strings.Contains(slide1, xfrmMarker) {
+		t.Errorf("Alpha's manual title edit was lost; positions likely misaligned by the skipped slide:\n%.400s", slide1)
+	}
+	if !strings.Contains(slide1, "body a EDITED") {
+		t.Errorf("Alpha's body was not updated:\n%.400s", slide1)
+	}
+	if !bytes.Equal(origSlide2, now["ppt/slides/slide2.xml"]) {
+		t.Errorf("Bravo (slide 2) was not reused verbatim")
+	}
+}
+
+func TestRenderedSlidesExcludesSkipped(t *testing.T) {
+	skip := &slidown.Slide{Skip: true}
+	a := &slidown.Slide{Titles: []string{"A"}}
+	b := &slidown.Slide{Titles: []string{"B"}}
+	got := renderedSlides(slidown.Slides{skip, a, nil, b})
+	if len(got) != 2 || got[0] != a || got[1] != b {
+		t.Fatalf("renderedSlides did not drop skipped/nil slides: %+v", got)
+	}
+}
+
+func TestAnchorsReordered(t *testing.T) {
+	if anchorsReordered([]int{-1, 0, -1, 1, 2}) {
+		t.Error("monotonic anchors flagged as reordered")
+	}
+	if !anchorsReordered([]int{1, 0}) {
+		t.Error("descending anchors not flagged as reordered")
 	}
 }

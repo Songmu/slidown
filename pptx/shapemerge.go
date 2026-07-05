@@ -57,7 +57,9 @@ func parseSlideShapes(slideXML []byte) (shapes []shapeInfo, rootAttrs []xml.Attr
 		cur.end = int(end)
 		cur.raw = slideXML[cur.start:cur.end]
 		cur.slotKey = slotKey(effectiveType(role, phType), atoi(phIdx))
-		cur.hasRels = rawHasRels(cur.raw)
+		// Namespace-aware detection above is authoritative; the substring scan is
+		// a conservative backstop (a false positive only skips an optimisation).
+		cur.hasRels = cur.hasRels || rawHasRels(cur.raw)
 		shapes = append(shapes, cur)
 	}
 
@@ -85,6 +87,11 @@ func parseSlideShapes(slideXML []byte) (shapes []shapeInfo, rootAttrs []xml.Attr
 				cur = shapeInfo{start: int(prev)}
 				phType, phIdx, role = "", "", ""
 			case capturing:
+				for _, a := range t.Attr {
+					if a.Name.Space == nsRelationships {
+						cur.hasRels = true
+					}
+				}
 				switch t.Name {
 				case xnCNvPr:
 					if cur.cNvPrID == "" {
@@ -146,16 +153,26 @@ func rawHasRels(raw []byte) bool {
 	return false
 }
 
-var cNvPrIDRe = regexp.MustCompile(`(<[A-Za-z0-9]*:?cNvPr\b[^>]*?\bid=")[^"]*(")`)
+var cNvPrIDRe = regexp.MustCompile(`(<[A-Za-z0-9]*:?cNvPr\b[^>]*?\bid\s*=\s*["'])[^"']*(["'])`)
 
 // rewriteCNvPrID replaces the id attribute on a shape's first cNvPr element so a
 // spliced-in existing shape adopts the id assigned to it in the new slide,
-// keeping shape ids unique within the slide.
-func rewriteCNvPrID(raw []byte, newID string) []byte {
+// keeping shape ids unique within the slide. It rewrites only the first cNvPr
+// (the shape's own non-visual id) and reports whether the rewrite succeeded, so
+// a caller can refuse to splice a shape whose id could not be normalised.
+func rewriteCNvPrID(raw []byte, newID string) ([]byte, bool) {
 	if newID == "" {
-		return raw
+		return raw, false
 	}
-	return cNvPrIDRe.ReplaceAll(raw, []byte(`${1}`+newID+`$2`))
+	loc := cNvPrIDRe.FindSubmatchIndex(raw)
+	if loc == nil {
+		return raw, false
+	}
+	var out bytes.Buffer
+	out.Write(raw[:loc[3]]) // up to and including group 1 (…id=")
+	out.WriteString(newID)  // new id value
+	out.Write(raw[loc[4]:]) // from group 2 (closing quote) to end
+	return out.Bytes(), true
 }
 
 // mergeSlideShapes rebuilds newSld (the freshly generated slide, which is
@@ -212,10 +229,14 @@ func mergeSlideShapes(newSld, oldSld []byte) ([]byte, bool) {
 		if !ok || os.fp == "" || os.fp != ns.fp {
 			continue
 		}
+		data, ok := rewriteCNvPrID(os.raw, ns.cNvPrID)
+		if !ok {
+			continue // cannot normalise the shape id; keep the new shape
+		}
 		repls = append(repls, replacement{
 			start: ns.start,
 			end:   ns.end,
-			data:  rewriteCNvPrID(os.raw, ns.cNvPrID),
+			data:  data,
 		})
 		used[ns.slotKey] = true
 	}

@@ -170,7 +170,7 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, 
 		oldSigs, _ := pptx.ShapeSignaturesByPart(out)
 		reuse, shapeMerge := alignSlides(sourceSlides, existing, newSigs, oldSigs)
 		switch {
-		case isIdentityReuse(reuse, existing, len(sourceSlides)):
+		case isIdentityReuse(reuse, existing, len(renderedSlides(sourceSlides))):
 			// Every slide is reused in place. The file is already correct unless
 			// a deck-level property that the per-slide fingerprints do not cover
 			// changed — currently the title in docProps/core.xml. When only the
@@ -248,12 +248,18 @@ const shapeMergeMinOverlap = 0.5
 func alignSlides(source slidown.Slides, existing []pptx.SlideMeta,
 	newSigs map[int][]pptx.ShapeSignature, oldSigs map[string][]pptx.ShapeSignature,
 ) (map[int]string, map[int]string) {
-	n := len(source)
+	// Only slides that are actually rendered occupy a position in the output
+	// package. Skipped (and defensively, nil) source slides emit no slide, so
+	// align on the rendered subsequence to keep 1-based positions in step with
+	// ppt/slides/slideN.xml and the shape-signature maps.
+	rendered := renderedSlides(source)
+	n := len(rendered)
 	m := len(existing)
 	pairOld := make([]int, n)
 	for i := range pairOld {
 		pairOld[i] = -1
 	}
+	keyed := make([]bool, n)
 	oldUsed := make([]bool, m)
 	isAnchorTarget := make([]bool, m)
 
@@ -269,9 +275,8 @@ func alignSlides(source slidown.Slides, existing []pptx.SlideMeta,
 			oldByKey[e.Key] = j
 		}
 	}
-	for i := range source {
-		s := source[i]
-		if s == nil || s.Key == "" {
+	for i, s := range rendered {
+		if s.Key == "" {
 			continue
 		}
 		j, ok := oldByKey[s.Key]
@@ -279,15 +284,15 @@ func alignSlides(source slidown.Slides, existing []pptx.SlideMeta,
 			continue
 		}
 		pairOld[i] = j
+		keyed[i] = true
 		oldUsed[j] = true
 		isAnchorTarget[j] = true
 	}
 
 	// Phase 1b: anchor unchanged slides by fingerprint, preferring the nearest
 	// still-unused existing slide so anchors stay locally ordered.
-	for i := range source {
-		s := source[i]
-		if s == nil || pairOld[i] >= 0 {
+	for i, s := range rendered {
+		if pairOld[i] >= 0 {
 			continue
 		}
 		best := -1
@@ -306,15 +311,17 @@ func alignSlides(source slidown.Slides, existing []pptx.SlideMeta,
 		}
 	}
 
+	// Detect reordering: anchors whose existing indices are not monotonically
+	// increasing in rendered order indicate the deck was reordered. In that case
+	// positional (Phase 2) pairing is unreliable, so shape-level merge is
+	// restricted to key-anchored pairs, whose identity is certain.
+	reordered := anchorsReordered(pairOld)
+
 	// Phase 2: align the remaining slides in order within anchor-bounded
 	// segments. A two-pointer walk never pairs across an anchor target, so
 	// mis-pairing is confined to a single gap between unchanged slides.
 	ei := 0
-	for i := range source {
-		s := source[i]
-		if s == nil {
-			continue
-		}
+	for i := range rendered {
 		if pairOld[i] >= 0 {
 			if pairOld[i]+1 > ei {
 				ei = pairOld[i] + 1
@@ -334,9 +341,8 @@ func alignSlides(source slidown.Slides, existing []pptx.SlideMeta,
 	// Phase 3: classify each pair as whole-slide reuse or shape-level merge.
 	reuse := map[int]string{}
 	shapeMerge := map[int]string{}
-	for i := range source {
-		s := source[i]
-		if s == nil || pairOld[i] < 0 {
+	for i, s := range rendered {
+		if pairOld[i] < 0 {
 			continue
 		}
 		j := pairOld[i]
@@ -344,6 +350,12 @@ func alignSlides(source slidown.Slides, existing []pptx.SlideMeta,
 		part := existing[j].PartName
 		if s.Freeze || s.MatchesFingerprint(existing[j].Fingerprint) {
 			reuse[pos] = part
+			continue
+		}
+		// Changed slide: only merge shapes when the pairing is trustworthy
+		// (key-anchored, or no reordering was detected) and the two slides are
+		// clearly the same slide lightly edited.
+		if reordered && !keyed[i] {
 			continue
 		}
 		newSig := newSigs[pos]
@@ -355,6 +367,37 @@ func alignSlides(source slidown.Slides, existing []pptx.SlideMeta,
 		}
 	}
 	return reuse, shapeMerge
+}
+
+// renderedSlides returns the source slides that produce an output slide, in
+// order — i.e. excluding skipped (and defensively nil) slides — so their index
+// matches the 1-based position of ppt/slides/slideN.xml in the package.
+func renderedSlides(source slidown.Slides) []*slidown.Slide {
+	out := make([]*slidown.Slide, 0, len(source))
+	for _, s := range source {
+		if s == nil || s.Skip {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// anchorsReordered reports whether the established anchor pairs map to existing
+// slides in a non-increasing order, which signals a reorder between the source
+// and the existing presentation.
+func anchorsReordered(pairOld []int) bool {
+	last := -1
+	for _, j := range pairOld {
+		if j < 0 {
+			continue
+		}
+		if j < last {
+			return true
+		}
+		last = j
+	}
+	return false
 }
 
 func abs(x int) int {
