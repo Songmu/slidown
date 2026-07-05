@@ -3,6 +3,7 @@ package render
 import (
 	"fmt"
 	"os"
+	"sort"
 
 	"github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/pptx"
@@ -30,7 +31,7 @@ func renderSlideWithLayout(p *pptx.Presentation, s *slidown.Slide, tmpl *pptx.Te
 	sl := p.AddSlide()
 	sl.LayoutName = layout.Name
 
-	titlePH, subPH, subFromHint, bodyPHs := classifyPlaceholders(layout)
+	titlePH, subSlots, bodyPHs := classifyPlaceholders(layout)
 
 	// Title
 	if titlePH != nil {
@@ -45,32 +46,13 @@ func renderSlideWithLayout(p *pptx.Presentation, s *slidown.Slide, tmpl *pptx.Te
 		}
 	}
 
-	// Body content (bodies + block quotes), and subtitles either in their own
-	// placeholder or folded into the body when none exists.
-	if subPH != nil {
-		if sub := subtitleParagraphs(s); len(sub) > 0 {
-			// When the layout exposes no real subTitle placeholder but a body
-			// placeholder hints at being one (HasSubtitleHint), keep the
-			// underlying OOXML type ("body") so the slide stays
-			// schema-compatible with the layout, and mark the shape with a
-			// slidown Role so future incremental shape updates can identify
-			// the subtitle target by intent.
-			role := ""
-			if subFromHint {
-				role = "subTitle"
-			}
-			sl.AddShape(&pptx.Shape{
-				Name:           "Subtitle",
-				IsPlaceholder:  true,
-				Placeholder:    pptx.PlaceholderType(subPH.Type),
-				PlaceholderIdx: subPH.Idx,
-				Role:           role,
-				Paragraphs:     sub,
-			})
-		}
-	}
+	// Subtitles: distributed across every subtitle-capable placeholder (real
+	// subTitle placeholders and hint-promoted body placeholders), ordered by
+	// their visual position on the layout.
+	orderSubtitleSlots(tmpl, layout, subSlots)
+	distributeSubtitleContent(sl, s, subSlots)
 
-	hasBody := distributeBodyContent(sl, s, subPH, bodyPHs)
+	hasBody := distributeBodyContent(sl, s, len(subSlots) > 0, bodyPHs)
 
 	// Position images/tables using the layout's body geometry when available.
 	rx, ry, rw, rh := contentX, contentY, contentW, contentH
@@ -94,7 +76,7 @@ func renderSlideWithLayout(p *pptx.Presentation, s *slidown.Slide, tmpl *pptx.Te
 // by an intra-slide thematic break in the markdown source) are distributed
 // one-per-placeholder; the last placeholder absorbs any overflow bodies and
 // all block quotes.
-func distributeBodyContent(sl *pptx.Slide, s *slidown.Slide, subPH *pptx.PlaceholderInfo, bodyPHs []*pptx.PlaceholderInfo) bool {
+func distributeBodyContent(sl *pptx.Slide, s *slidown.Slide, hasSubSlot bool, bodyPHs []*pptx.PlaceholderInfo) bool {
 	if len(bodyPHs) == 0 {
 		return false
 	}
@@ -102,7 +84,7 @@ func distributeBodyContent(sl *pptx.Slide, s *slidown.Slide, subPH *pptx.Placeho
 	if len(bodyPHs) == 1 {
 		// Single placeholder: original behaviour — all content concatenated.
 		var bodyParas []*pptx.Paragraph
-		if subPH != nil {
+		if hasSubSlot {
 			bodyParas = contentParagraphs(s)
 		} else {
 			bodyParas = bodyParagraphs(s) // subtitles folded in (emphasized)
@@ -129,7 +111,7 @@ func distributeBodyContent(sl *pptx.Slide, s *slidown.Slide, subPH *pptx.Placeho
 		// When there is no subtitle placeholder, fold subtitles (as bold
 		// runs) into the first body placeholder — matching the single-
 		// placeholder behaviour.
-		if i == 0 && subPH == nil {
+		if i == 0 && !hasSubSlot {
 			paras = append(paras, subtitleBoldParagraphs(s)...)
 		}
 
@@ -182,19 +164,27 @@ func resolveLayout(s *slidown.Slide, tmpl *pptx.Template, first bool) *pptx.Layo
 	return tmpl.ContentLayout()
 }
 
+// subtitleSlot is a layout placeholder that receives subtitle content: either a
+// real <p:ph type="subTitle"/> or a body placeholder promoted via a subtitle
+// hint. fromHint records the latter so the emitted shape can carry a slidown
+// role marker while keeping its underlying "body" placeholder type.
+type subtitleSlot struct {
+	ph       *pptx.PlaceholderInfo
+	fromHint bool
+}
+
 // classifyPlaceholders picks the title, subtitle and body placeholders from a
-// layout. Preference order for the subtitle slot:
-//  1. A real <p:ph type="subTitle"/> placeholder.
-//  2. The first body-shaped placeholder whose display name or prompt text
-//     contains "subtitle" (case insensitive). This lets users opt an ordinary
-//     text placeholder into the subtitle role via PowerPoint's Selection Pane
-//     or slide-master prompt edit, without XML editing.
+// layout. A placeholder becomes a subtitle slot when it is either:
+//  1. A real <p:ph type="subTitle"/> placeholder, or
+//  2. A body-shaped placeholder whose display name or prompt text contains
+//     "subtitle" (case insensitive). This lets users opt an ordinary text
+//     placeholder into the subtitle role via PowerPoint's Selection Pane or
+//     slide-master prompt edit, without XML editing.
 //
-// subFromHint reports whether the returned sub came from the hint fallback.
-// The hint-promoted placeholder is removed from the body candidate pool, so
-// any remaining body placeholders are returned as bodies.
-func classifyPlaceholders(l *pptx.LayoutInfo) (title, sub *pptx.PlaceholderInfo, subFromHint bool, bodies []*pptx.PlaceholderInfo) {
-	var bodyCandidates []*pptx.PlaceholderInfo
+// All matching placeholders are returned (in the layout's shape-tree order) so
+// multiple subtitles can be distributed across multiple slots. Hint-promoted
+// slots are removed from the body pool; the rest are returned as bodies.
+func classifyPlaceholders(l *pptx.LayoutInfo) (title *pptx.PlaceholderInfo, subs []subtitleSlot, bodies []*pptx.PlaceholderInfo) {
 	for _, ph := range l.Placeholders {
 		switch ph.Type {
 		case "ctrTitle", "title":
@@ -202,39 +192,116 @@ func classifyPlaceholders(l *pptx.LayoutInfo) (title, sub *pptx.PlaceholderInfo,
 				title = ph
 			}
 		case "subTitle":
-			if sub == nil {
-				sub = ph
-			}
+			subs = append(subs, subtitleSlot{ph: ph})
 		case "body", "obj", "tx", "":
-			bodyCandidates = append(bodyCandidates, ph)
-		}
-	}
-	if sub == nil {
-		for i, ph := range bodyCandidates {
 			if ph.HasSubtitleHint() {
-				sub = ph
-				subFromHint = true
-				bodyCandidates = append(bodyCandidates[:i], bodyCandidates[i+1:]...)
-				break
+				subs = append(subs, subtitleSlot{ph: ph, fromHint: true})
+			} else {
+				bodies = append(bodies, ph)
 			}
 		}
 	}
-	bodies = bodyCandidates
-	return title, sub, subFromHint, bodies
+	return title, subs, bodies
 }
 
-// subtitleParagraphs renders only the subtitle content (without the emphasis
-// that bodyParagraphs applies when folding subtitles into the body).
-func subtitleParagraphs(s *slidown.Slide) []*pptx.Paragraph {
-	var out []*pptx.Paragraph
+// orderSubtitleSlots reorders the subtitle slots by their visual position on the
+// layout (top to bottom, then left to right), resolving each placeholder's
+// geometry from the layout shape or, when it declares none, from the slide
+// master it inherits from. When any slot's geometry cannot be resolved the
+// original shape-tree order is preserved, so ordering never partially applies.
+func orderSubtitleSlots(tmpl *pptx.Template, layout *pptx.LayoutInfo, slots []subtitleSlot) {
+	if tmpl == nil || len(slots) < 2 {
+		return
+	}
+	type positioned struct {
+		slot subtitleSlot
+		x, y int64
+	}
+	items := make([]positioned, len(slots))
+	for i, sl := range slots {
+		x, y, _, _, ok := tmpl.EffectiveGeometry(layout, sl.ph)
+		if !ok {
+			return
+		}
+		items[i] = positioned{slot: sl, x: x, y: y}
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].y != items[j].y {
+			return items[i].y < items[j].y
+		}
+		return items[i].x < items[j].x
+	})
+	for i := range items {
+		slots[i] = items[i].slot
+	}
+}
+
+// distributeSubtitleContent places subtitle content into the subtitle slots. Each
+// subtitle (one per source heading at the subtitle level) is a paragraph group;
+// groups are distributed one-per-slot in order, and the last slot absorbs any
+// remaining groups so no content is dropped. Hint-promoted slots keep their
+// underlying "body" placeholder type but carry a slidown role marker so
+// incremental updates can identify the subtitle target by intent.
+func distributeSubtitleContent(sl *pptx.Slide, s *slidown.Slide, slots []subtitleSlot) {
+	groups := subtitleGroups(s)
+	if len(groups) == 0 || len(slots) == 0 {
+		return
+	}
+	for i, slot := range slots {
+		isLast := i == len(slots)-1
+		var paras []*pptx.Paragraph
+		if i < len(groups) {
+			if isLast {
+				for _, g := range groups[i:] {
+					paras = append(paras, g...)
+				}
+			} else {
+				paras = append(paras, groups[i]...)
+			}
+		}
+		if len(paras) == 0 {
+			continue
+		}
+		role := ""
+		if slot.fromHint {
+			role = "subTitle"
+		}
+		sl.AddShape(&pptx.Shape{
+			Name:           "Subtitle",
+			IsPlaceholder:  true,
+			Placeholder:    pptx.PlaceholderType(slot.ph.Type),
+			PlaceholderIdx: slot.ph.Idx,
+			Role:           role,
+			Paragraphs:     paras,
+		})
+	}
+}
+
+// subtitleGroups returns the subtitle content grouped one entry per source
+// subtitle heading, preserving inline formatting when available.
+func subtitleGroups(s *slidown.Slide) [][]*pptx.Paragraph {
+	var groups [][]*pptx.Paragraph
 	if len(s.SubtitleBodies) > 0 {
 		for _, b := range s.SubtitleBodies {
-			out = append(out, convertBody(b)...)
+			if g := convertBody(b); len(g) > 0 {
+				groups = append(groups, g)
+			}
 		}
-		return out
+		return groups
 	}
 	for _, st := range s.Subtitles {
-		out = append(out, &pptx.Paragraph{Runs: []*pptx.Run{{Text: st}}})
+		groups = append(groups, []*pptx.Paragraph{{Runs: []*pptx.Run{{Text: st}}}})
+	}
+	return groups
+}
+
+// subtitleParagraphs renders all subtitle content flattened into a single
+// paragraph list (without the emphasis that bodyParagraphs applies when folding
+// subtitles into the body). Used for the fold-into-body fallback.
+func subtitleParagraphs(s *slidown.Slide) []*pptx.Paragraph {
+	var out []*pptx.Paragraph
+	for _, g := range subtitleGroups(s) {
+		out = append(out, g...)
 	}
 	return out
 }

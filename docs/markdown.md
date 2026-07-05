@@ -153,6 +153,11 @@ Within each slide:
 - The **next heading level** (minimum + 1) becomes the subtitle
 - All other content goes into the body placeholders
 
+A slide may contain **more than one subtitle** — every heading at the subtitle
+level (minimum + 1) is captured, in order. How they are placed depends on how
+many subtitle placeholders the layout exposes (see
+[Subtitle Distribution](#subtitle-distribution) below).
+
 Example with ATX headings:
 ```markdown
 # Title (→ title placeholder)
@@ -179,8 +184,27 @@ Body content (→ body placeholder)
 ### Placeholder Insertion Order
 
 Content is inserted into placeholders in the order it appears in the markdown.
-The title placeholder is filled first, then the subtitle (if the layout has
-one), and finally the body placeholder(s). When a layout declares multiple body
+The title placeholder is filled first, then the subtitle(s) (if the layout has
+any), and finally the body placeholder(s). When a layout declares multiple body
 placeholders, consecutive body groups (separated by intra-slide thematic breaks)
 are distributed across them from top to bottom (or left to right for
 same-height placeholders).
+
+### Subtitle Distribution
+
+A layout can expose more than one subtitle-capable placeholder — any combination
+of real `subTitle` placeholders and body placeholders opted into the subtitle
+role via a hint (see [docs/templates.md](templates.md)). When it does, the
+slide's subtitles are distributed across those placeholders:
+
+- Subtitles (one per subtitle-level heading) are assigned **one per placeholder**,
+  in the placeholders' **visual order** — top to bottom, then left to right.
+- If there are more subtitles than placeholders, the **last** placeholder absorbs
+  all remaining subtitles so nothing is dropped.
+- If there are more placeholders than subtitles, the extra placeholders are left
+  empty.
+
+Visual order is resolved from each placeholder's geometry, inherited from the
+slide master when the layout itself does not position the placeholder. When the
+layout exposes **no** subtitle placeholder at all, every subtitle is folded into
+the first body placeholder as emphasized (bold) lead paragraphs instead.
