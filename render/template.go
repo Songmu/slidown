@@ -31,7 +31,7 @@ func renderSlideWithLayout(p *pptx.Presentation, s *slidown.Slide, tmpl *pptx.Te
 	sl := p.AddSlide()
 	sl.LayoutName = layout.Name
 
-	titlePH, subSlots, bodyPHs := classifyPlaceholders(layout)
+	titlePH, subSlots, bodyPHs, picPHs := classifyPlaceholdersWithPics(layout)
 
 	// Title
 	if titlePH != nil {
@@ -59,8 +59,14 @@ func renderSlideWithLayout(p *pptx.Presentation, s *slidown.Slide, tmpl *pptx.Te
 	if x, y, w, h, ok := layout.BodyGeometry(); ok {
 		rx, ry, rw, rh = x, y, w, h
 	}
-	renderImagesAt(sl, s.Images, rx, ry, rw, rh, hasBody)
-	renderTablesAt(sl, s.Tables, rx, ry, rw, hasBody || len(s.Images) > 0)
+	// Bind as many images as possible to the layout's picture placeholders; any
+	// remaining images fall back to the flow layout below.
+	rest := distributeImagePlaceholders(sl, tmpl, layout, s.Images, picPHs)
+	renderImagesAt(sl, rest, rx, ry, rw, rh, hasBody)
+	// Only flow-laid images (rest) occupy the body region; images bound to
+	// picture placeholders sit in their own layout slots, so they must not push
+	// tables into the lower half.
+	renderTablesAt(sl, s.Tables, rx, ry, rw, hasBody || len(rest) > 0)
 
 	sl.Note = s.SpeakerNote
 	sl.Fingerprint = s.Fingerprint()
@@ -164,6 +170,40 @@ func resolveLayout(s *slidown.Slide, tmpl *pptx.Template, first bool) *pptx.Layo
 	return tmpl.ContentLayout()
 }
 
+// orderPlaceholdersByPosition returns the placeholders sorted by their visual
+// position on the layout (top to bottom, then left to right), resolving each
+// placeholder's geometry from the layout shape or the slide master it inherits
+// from. When any placeholder's geometry cannot be resolved the original
+// shape-tree order is preserved, so ordering never partially applies.
+func orderPlaceholdersByPosition(tmpl *pptx.Template, layout *pptx.LayoutInfo, phs []*pptx.PlaceholderInfo) []*pptx.PlaceholderInfo {
+	if tmpl == nil || len(phs) < 2 {
+		return phs
+	}
+	type positioned struct {
+		ph   *pptx.PlaceholderInfo
+		x, y int64
+	}
+	items := make([]positioned, len(phs))
+	for i, ph := range phs {
+		x, y, _, _, ok := tmpl.EffectiveGeometry(layout, ph)
+		if !ok {
+			return phs
+		}
+		items[i] = positioned{ph: ph, x: x, y: y}
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].y != items[j].y {
+			return items[i].y < items[j].y
+		}
+		return items[i].x < items[j].x
+	})
+	ordered := make([]*pptx.PlaceholderInfo, len(items))
+	for i := range items {
+		ordered[i] = items[i].ph
+	}
+	return ordered
+}
+
 // subtitleSlot is a layout placeholder that receives subtitle content: either a
 // real <p:ph type="subTitle"/> or a body placeholder promoted via a subtitle
 // hint. fromHint records the latter so the emitted shape can carry a slidown
@@ -185,6 +225,15 @@ type subtitleSlot struct {
 // multiple subtitles can be distributed across multiple slots. Hint-promoted
 // slots are removed from the body pool; the rest are returned as bodies.
 func classifyPlaceholders(l *pptx.LayoutInfo) (title *pptx.PlaceholderInfo, subs []subtitleSlot, bodies []*pptx.PlaceholderInfo) {
+	title, subs, bodies, _ = classifyPlaceholdersWithPics(l)
+	return title, subs, bodies
+}
+
+// classifyPlaceholdersWithPics is classifyPlaceholders extended to also return
+// picture placeholders (<p:ph type="pic"/>, "clipArt" or "media") in layout
+// shape-tree order. Picture placeholders receive images; they are never treated
+// as body or subtitle slots.
+func classifyPlaceholdersWithPics(l *pptx.LayoutInfo) (title *pptx.PlaceholderInfo, subs []subtitleSlot, bodies []*pptx.PlaceholderInfo, pics []*pptx.PlaceholderInfo) {
 	for _, ph := range l.Placeholders {
 		switch ph.Type {
 		case "ctrTitle", "title":
@@ -193,6 +242,8 @@ func classifyPlaceholders(l *pptx.LayoutInfo) (title *pptx.PlaceholderInfo, subs
 			}
 		case "subTitle":
 			subs = append(subs, subtitleSlot{ph: ph})
+		case "pic", "clipArt", "media":
+			pics = append(pics, ph)
 		case "body", "obj", "tx", "":
 			if ph.HasSubtitleHint() {
 				subs = append(subs, subtitleSlot{ph: ph, fromHint: true})
@@ -201,7 +252,7 @@ func classifyPlaceholders(l *pptx.LayoutInfo) (title *pptx.PlaceholderInfo, subs
 			}
 		}
 	}
-	return title, subs, bodies
+	return title, subs, bodies, pics
 }
 
 // orderSubtitleSlots reorders the subtitle slots by their visual position on the
