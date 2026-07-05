@@ -1,10 +1,9 @@
 <!-- {"layout": "TITLE_AND_BODY_1"} -->
 
-# Main Title
+# Two subtitles fill two stacked subtitle slots
 
-## First Subtitle
+## Upper subtitle goes to the top slot
 
-## Second Subtitle
+## Lower subtitle goes to the bottom slot
 
 - A body bullet
-- Another body bullet
