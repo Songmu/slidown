@@ -93,7 +93,8 @@ Mirrors deck (independent of the concrete layout):
 
 - The **shallowest heading** level on a slide → **title** placeholder
   (`title`/`ctrTitle`). Usually H1 (`#`).
-- The **next** heading level → **subtitle** placeholder (`subTitle`).
+- The **next** heading level → **subtitle** placeholder(s) (`subTitle`). A slide
+  may carry more than one subtitle heading at this level.
 - Everything else → **body** placeholder(s) (`body`), split into one or more
   bodies by the title/subtitle headings.
 - **Images** (`![](...)`) → `p:pic`, laid out within the content area preserving
@@ -104,17 +105,26 @@ Mirrors deck (independent of the concrete layout):
 - **Block quotes** → italic, indented body paragraphs.
 - **Speaker notes** (HTML comments) → the slide's notes slide.
 
-Subtitle placeholder resolution prefers a real `<p:ph type="subTitle"/>` on the
-layout. When none is present, slidown falls back to a **subtitle hint** on
-ordinary text placeholders: the first body-shaped placeholder whose
-`<p:cNvPr name="...">` (editable from PowerPoint's Selection Pane) or
-custom prompt text (`<a:t>` in `<p:txBody>` of the layout shape) contains
-"subtitle" (case-insensitive) is treated as the subtitle slot. This lets users
-opt in via GUI without XML editing. Hint-promoted shapes keep their underlying
-`body` placeholder type in the emitted slide and carry a slidown role extension
+Subtitle placeholder resolution treats both real `<p:ph type="subTitle"/>`
+placeholders and **subtitle-hinted** body placeholders as subtitle slots. A hint
+is a body-shaped placeholder whose `<p:cNvPr name="...">` (editable from
+PowerPoint's Selection Pane) or custom prompt text (`<a:t>` in `<p:txBody>` of
+the layout shape) contains "subtitle" (case-insensitive). This lets users opt in
+via GUI without XML editing. Hint-promoted shapes keep their underlying `body`
+placeholder type in the emitted slide and carry a slidown role extension
 (`<p:extLst>` under `<p:nvPr>` with URI
 `{A3F7C812-9B4D-4E16-83CA-2D7F1E9B4C58}`, attribute `role="subTitle"`) so
 future incremental shape updates can identify the subtitle target by intent.
+
+When a layout exposes multiple subtitle slots, the slide's subtitles are
+distributed across them **one per slot, in visual order** (top to bottom, then
+left to right), with the last slot absorbing any overflow. A slot's position is
+taken from the layout shape's `<a:xfrm>`, or inherited from the slide master's
+placeholder with the same `idx` when the layout omits its own geometry (the
+standard OOXML placeholder inheritance). If the geometry of any slot cannot be
+resolved, the layout's shape-tree order is used unchanged. When a layout has no
+subtitle slot at all, subtitles are folded into the first body placeholder as
+emphasized (bold) lead paragraphs so no content is lost.
 
 Inline styles map to run properties: bold, italic, monospace (code), underline,
 strikethrough (`del`), and hyperlinks.

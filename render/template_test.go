@@ -262,6 +262,95 @@ func TestMultiBodyPlaceholderDistribution(t *testing.T) {
 	}
 }
 
+// TestMultipleSubtitleSlotDistribution verifies that when a layout exposes two
+// subtitle-capable placeholders (a real subTitle and a hint-named body), each
+// subtitle heading is distributed to a separate placeholder, ordered by visual
+// position (top to bottom) rather than shape-tree order.
+func TestMultipleSubtitleSlotDistribution(t *testing.T) {
+	tmplPath := buildTemplateFile(t)
+	tmpl, err := pptx.LoadTemplate(tmplPath)
+	if err != nil {
+		t.Fatalf("LoadTemplate: %v", err)
+	}
+
+	layout := tmpl.ContentLayout()
+	if layout == nil {
+		t.Fatal("template has no content layout")
+	}
+	// Add three subtitle slots in shape-tree order idx=1,2,3 but positioned so
+	// visual (top-to-bottom) order is idx=3, idx=1, idx=2. This exercises the
+	// reordering with 3+ slots (a 2-slot case can mask parallel-array bugs).
+	layout.Placeholders = append(layout.Placeholders,
+		&pptx.PlaceholderInfo{
+			Type: "subTitle", Idx: 1, Name: "Subtitle 1",
+			HasGeom: true, X: 100, Y: 2000, W: 500, H: 100,
+		},
+		&pptx.PlaceholderInfo{
+			Type: "body", Idx: 2, Name: "Subtitle 2", // hint-promoted
+			HasGeom: true, X: 100, Y: 3000, W: 500, H: 100,
+		},
+		&pptx.PlaceholderInfo{
+			Type: "subTitle", Idx: 3, Name: "Subtitle 3",
+			HasGeom: true, X: 100, Y: 1000, W: 500, H: 100,
+		},
+	)
+
+	const markdown = "# Title\n\n## First Sub\n\n## Second Sub\n\n## Third Sub\n\nbody text\n"
+	parsed, err := md.Parse("", []byte(markdown), nil)
+	if err != nil {
+		t.Fatalf("md.Parse: %v", err)
+	}
+	slides, err := parsed.ToSlides(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ToSlides: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if _, err := ToPresentationWithTemplate(slides, tmpl).WriteTo(&buf); err != nil {
+		t.Fatalf("WriteTo: %v", err)
+	}
+	parts := zipParts(t, buf.Bytes())
+	slideXML := string(parts["ppt/slides/slide1.xml"])
+	if slideXML == "" {
+		t.Fatal("ppt/slides/slide1.xml missing from output")
+	}
+
+	// All subtitles must be present.
+	for _, want := range []string{"First Sub", "Second Sub", "Third Sub"} {
+		if !strings.Contains(slideXML, want) {
+			t.Fatalf("slide XML missing subtitle content %q:\n%s", want, slideXML)
+		}
+	}
+
+	// The hint-promoted body slot must carry the slidown role marker.
+	if !strings.Contains(slideXML, `role="subTitle"`) {
+		t.Errorf("hint-promoted subtitle slot missing role marker:\n%s", slideXML)
+	}
+
+	shapeText := func(ph string) string {
+		start := strings.Index(slideXML, ph)
+		if start == -1 {
+			t.Fatalf("placeholder %q not found in slide XML:\n%s", ph, slideXML)
+		}
+		end := strings.Index(slideXML[start:], "</p:sp>")
+		if end == -1 {
+			t.Fatalf("no closing </p:sp> after %q", ph)
+		}
+		return slideXML[start : start+end]
+	}
+
+	// Visual order (by Y): idx=3 (top) → First, idx=1 → Second, idx=2 (bottom) → Third.
+	if !strings.Contains(shapeText(`<p:ph type="subTitle" idx="3"/>`), "First Sub") {
+		t.Errorf("visually-top slot (idx=3) should contain 'First Sub'")
+	}
+	if !strings.Contains(shapeText(`<p:ph type="subTitle" idx="1"/>`), "Second Sub") {
+		t.Errorf("middle slot (idx=1) should contain 'Second Sub'")
+	}
+	if !strings.Contains(shapeText(`<p:ph type="body" idx="2"/>`), "Third Sub") {
+		t.Errorf("bottom slot (idx=2) should contain 'Third Sub'")
+	}
+}
+
 // TestToPresentationWithTemplateSkippedLeadingSlide guards the contract that
 // "first slide" means "first rendered slide" — a leading Skip slide must not
 // consume the title-layout slot so the first visible slide still gets

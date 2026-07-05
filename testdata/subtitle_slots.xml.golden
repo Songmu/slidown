@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+<p:cSld>
+<p:spTree>
+<p:nvGrpSpPr>
+<p:cNvPr id="1" name=""/>
+<p:cNvGrpSpPr/>
+<p:nvPr/>
+</p:nvGrpSpPr>
+<p:grpSpPr>
+<a:xfrm>
+<a:off x="0" y="0"/>
+<a:ext cx="0" cy="0"/>
+<a:chOff x="0" y="0"/>
+<a:chExt cx="0" cy="0"/>
+</a:xfrm>
+</p:grpSpPr>
+<p:sp>
+<p:nvSpPr>
+<p:cNvPr id="2" name="Title"/>
+<p:cNvSpPr>
+<a:spLocks noGrp="1"/>
+</p:cNvSpPr>
+<p:nvPr>
+<p:ph type="title"/>
+</p:nvPr>
+</p:nvSpPr>
+<p:spPr>
+</p:spPr>
+<p:txBody>
+<a:bodyPr/>
+<a:lstStyle/>
+<a:p>
+<a:pPr>
+<a:buNone/>
+</a:pPr>
+<a:r>
+<a:rPr lang="en-US"/>
+<a:t>Title</a:t>
+</a:r>
+</a:p>
+</p:txBody>
+</p:sp>
+<p:sp>
+<p:nvSpPr>
+<p:cNvPr id="3" name="Subtitle"/>
+<p:cNvSpPr>
+<a:spLocks noGrp="1"/>
+</p:cNvSpPr>
+<p:nvPr>
+<p:ph type="subTitle" idx="3"/>
+</p:nvPr>
+</p:nvSpPr>
+<p:spPr>
+</p:spPr>
+<p:txBody>
+<a:bodyPr/>
+<a:lstStyle/>
+<a:p>
+<a:pPr>
+<a:buNone/>
+</a:pPr>
+<a:r>
+<a:rPr lang="en-US"/>
+<a:t>First Sub</a:t>
+</a:r>
+</a:p>
+</p:txBody>
+</p:sp>
+<p:sp>
+<p:nvSpPr>
+<p:cNvPr id="4" name="Subtitle"/>
+<p:cNvSpPr>
+<a:spLocks noGrp="1"/>
+</p:cNvSpPr>
+<p:nvPr>
+<p:ph type="subTitle" idx="1"/>
+</p:nvPr>
+</p:nvSpPr>
+<p:spPr>
+</p:spPr>
+<p:txBody>
+<a:bodyPr/>
+<a:lstStyle/>
+<a:p>
+<a:pPr>
+<a:buNone/>
+</a:pPr>
+<a:r>
+<a:rPr lang="en-US"/>
+<a:t>Second Sub</a:t>
+</a:r>
+</a:p>
+</p:txBody>
+</p:sp>
+<p:sp>
+<p:nvSpPr>
+<p:cNvPr id="5" name="Subtitle"/>
+<p:cNvSpPr>
+<a:spLocks noGrp="1"/>
+</p:cNvSpPr>
+<p:nvPr>
+<p:ph type="body" idx="2"/>
+<p:extLst>
+<p:ext uri="{A3F7C812-9B4D-4E16-83CA-2D7F1E9B4C58}">
+<slidown:shape xmlns:slidown="https://github.com/Songmu/slidown/ns" role="subTitle"/>
+</p:ext>
+</p:extLst>
+</p:nvPr>
+</p:nvSpPr>
+<p:spPr>
+</p:spPr>
+<p:txBody>
+<a:bodyPr/>
+<a:lstStyle/>
+<a:p>
+<a:pPr>
+<a:buNone/>
+</a:pPr>
+<a:r>
+<a:rPr lang="en-US"/>
+<a:t>Third Sub</a:t>
+</a:r>
+</a:p>
+</p:txBody>
+</p:sp>
+<p:sp>
+<p:nvSpPr>
+<p:cNvPr id="6" name="Content"/>
+<p:cNvSpPr>
+<a:spLocks noGrp="1"/>
+</p:cNvSpPr>
+<p:nvPr>
+<p:ph type="body" idx="1"/>
+</p:nvPr>
+</p:nvSpPr>
+<p:spPr>
+</p:spPr>
+<p:txBody>
+<a:bodyPr/>
+<a:lstStyle/>
+<a:p>
+<a:pPr>
+<a:buNone/>
+</a:pPr>
+<a:r>
+<a:rPr lang="en-US"/>
+<a:t>body text</a:t>
+</a:r>
+</a:p>
+</p:txBody>
+</p:sp>
+</p:spTree>
+</p:cSld>
+<p:extLst>
+<p:ext uri="{6F2A3B40-5C7D-4E21-9A6B-1D3F8C0E7B92}">
+<slidown:fp xmlns:slidown="https://github.com/Songmu/slidown/ns" v="{&quot;c&quot;:&quot;0ddd8a02cd57ec4140a832987a57e72be5c18c5be1d36bc658da7217b6e7b5b5&quot;}"/>
+</p:ext>
+</p:extLst>
+</p:sld>

@@ -47,6 +47,15 @@ type Template struct {
 	defaultTypes map[string]string
 	// slideSize from the template presentation, in EMUs (0 if not found).
 	width, height int64
+	// masterGeoms caches each slide master's placeholder geometry keyed by the
+	// master part name then by placeholder idx. Used to resolve geometry that a
+	// layout placeholder inherits from its master rather than declaring itself.
+	masterGeoms map[string]map[int]phGeom
+}
+
+// phGeom is a placeholder's geometry in EMUs.
+type phGeom struct {
+	x, y, w, h int64
 }
 
 // LayoutInfo describes a single slide layout from the template.
@@ -55,6 +64,10 @@ type LayoutInfo struct {
 	Name         string
 	Type         string // sldLayout @type, e.g. "title", "obj", "tx", "blank"
 	Placeholders []*PlaceholderInfo
+	// MasterPart is the slide master part this layout derives from (resolved
+	// from the layout's .rels). Used to inherit placeholder geometry that the
+	// layout shape itself does not declare.
+	MasterPart string
 }
 
 // PlaceholderInfo describes a placeholder within a layout.
@@ -285,6 +298,17 @@ func LoadTemplate(path string) (*Template, error) {
 		}
 	}
 
+	// Link each layout to its slide master and parse master placeholder
+	// geometry so layouts that omit an explicit <a:xfrm> can inherit position
+	// from the master (the standard OOXML placeholder inheritance).
+	for _, l := range t.Layouts {
+		l.MasterPart = t.masterOf(l.PartName)
+	}
+	t.masterGeoms = map[string]map[int]phGeom{}
+	for _, m := range t.masterParts {
+		t.masterGeoms[m] = parseGeom(t.designParts[m])
+	}
+
 	return t, nil
 }
 
@@ -395,6 +419,80 @@ func parseLayout(partName string, data []byte) *LayoutInfo {
 		li.Placeholders = append(li.Placeholders, ph)
 	}
 	return li
+}
+
+// parseGeom parses the placeholder geometry from a slide master (or any part
+// sharing the cSld/spTree structure), keyed by placeholder idx. Only shapes
+// that declare an explicit <a:xfrm> with a positive extent are recorded.
+func parseGeom(data []byte) map[int]phGeom {
+	geoms := map[int]phGeom{}
+	if len(data) == 0 {
+		return geoms
+	}
+	var l xmlSldLayout
+	if err := xml.Unmarshal(data, &l); err != nil {
+		return geoms
+	}
+	for _, sp := range l.CSld.SpTree.Sp {
+		if sp.NvSpPr.NvPr.Ph == nil || sp.SpPr.Xfrm == nil {
+			continue
+		}
+		w := atoi64(sp.SpPr.Xfrm.Ext.Cx)
+		h := atoi64(sp.SpPr.Xfrm.Ext.Cy)
+		if w <= 0 || h <= 0 {
+			continue
+		}
+		idx := atoi(sp.NvSpPr.NvPr.Ph.Idx)
+		geoms[idx] = phGeom{
+			x: atoi64(sp.SpPr.Xfrm.Off.X),
+			y: atoi64(sp.SpPr.Xfrm.Off.Y),
+			w: w,
+			h: h,
+		}
+	}
+	return geoms
+}
+
+// masterOf resolves the slide master part referenced by the given layout part
+// via its .rels, or "" when none is found.
+func (t *Template) masterOf(layoutPart string) string {
+	relsXML, ok := t.designParts[relsPath(layoutPart)]
+	if !ok {
+		return ""
+	}
+	base := layoutPart
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		base = base[:i]
+	}
+	for _, target := range relTargets(relsXML) {
+		resolved := path.Clean(path.Join(base, target))
+		if strings.HasPrefix(resolved, "ppt/slideMasters/") {
+			return resolved
+		}
+	}
+	return ""
+}
+
+// EffectiveGeometry returns a placeholder's geometry in EMUs, preferring the
+// geometry declared on the layout shape itself and falling back to the geometry
+// inherited from the layout's slide master (matched by placeholder idx). ok is
+// false when no geometry can be resolved from either source.
+func (t *Template) EffectiveGeometry(l *LayoutInfo, ph *PlaceholderInfo) (x, y, w, h int64, ok bool) {
+	if ph == nil {
+		return 0, 0, 0, 0, false
+	}
+	if ph.HasGeom {
+		return ph.X, ph.Y, ph.W, ph.H, true
+	}
+	if l == nil {
+		return 0, 0, 0, 0, false
+	}
+	if geoms, ok := t.masterGeoms[l.MasterPart]; ok {
+		if g, ok := geoms[ph.Idx]; ok {
+			return g.x, g.y, g.w, g.h, true
+		}
+	}
+	return 0, 0, 0, 0, false
 }
 
 // collectPromptText concatenates the placeholder's prompt run text. Only used

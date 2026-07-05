@@ -56,5 +56,16 @@ want to use as the subtitle:
   `Add subtitle here`).
 
 `slidown` matches case-insensitively, so labels such as `Subtitle 1` or
-`Add subtitle here` all qualify. The first body-shaped placeholder that
-matches is used as the subtitle slot; the rest remain as body placeholders.
+`Add subtitle here` all qualify. Every body-shaped placeholder that matches
+becomes a subtitle slot; the rest remain as body placeholders.
+
+### Multiple subtitle placeholders
+
+A layout may expose several subtitle-capable placeholders at once — any mix of
+native `subTitle` placeholders and hint-named body placeholders. When a slide
+has multiple subtitle-level headings, `slidown` distributes them across these
+placeholders **one per slot, in visual order** (top to bottom, then left to
+right), with the last slot absorbing any overflow. Placeholder position is read
+from the layout, or inherited from the slide master when the layout does not
+position the placeholder itself. See
+[Subtitle Distribution](markdown.md#subtitle-distribution) for the full rules.
