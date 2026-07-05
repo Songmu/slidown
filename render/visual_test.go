@@ -39,9 +39,12 @@ var visualGoldenCases = []string{
 	"empty_link.md",
 	"list_and_paragraph.md",
 	"paragraph_and_list.md",
-	// Exercises distributing multiple subtitles across a layout's multiple
-	// subtitle placeholders (TITLE_AND_BODY_1 has two subTitle slots).
+	"heading.md",
+	"html_element_style.md",
+	"autolink.md",
 	"multi_subtitle.md",
+	"multi_subtitle_columns.md",
+	"multi_subtitle_overflow.md",
 }
 
 // visualHashThreshold is the maximum allowed perceptual-hash distance between a
