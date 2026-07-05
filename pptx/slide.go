@@ -415,12 +415,12 @@ func renderTableCell(cell *TableCell, header bool, style *TableStyleSpec, rowIdx
 		}
 		if style != nil {
 			for _, run := range p.Runs {
-				run.Bold = cellStyle.Bold
-				run.Italic = cellStyle.Italic
-				if cellStyle.Color != "" {
+				run.Bold = run.Bold || cellStyle.Bold
+				run.Italic = run.Italic || cellStyle.Italic
+				if cellStyle.Color != "" && run.Color == "" {
 					run.Color = cellStyle.Color
 				}
-				if cellStyle.FontFamily != "" {
+				if cellStyle.FontFamily != "" && run.FontFamily == "" && !run.Code {
 					run.FontFamily = cellStyle.FontFamily
 				}
 			}
@@ -551,7 +551,12 @@ func renderTableBorder(name string, spec TableBorderSpec) string {
 		}
 		return fmt.Sprintf(`<a:%s><a:noFill/></a:%s>`, name, name)
 	}
-	if spec.Color == "" && spec.WidthEMU == 0 {
+	if spec.Color == "" {
+		// A border width with no color would otherwise emit an invalid empty
+		// srgbClr. Keep the width (fill inherited) or omit the border entirely.
+		if spec.WidthEMU > 0 {
+			return fmt.Sprintf(`<a:%s w="%d"/>`, name, spec.WidthEMU)
+		}
 		return ""
 	}
 	var attrs string

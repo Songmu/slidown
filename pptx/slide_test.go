@@ -245,3 +245,47 @@ func tableCellXMLs(out string) []string {
 	}
 	return cells
 }
+
+func TestRenderTableStyledPreservesInlineEmphasis(t *testing.T) {
+	boldRunCell := func(text string) *TableCell {
+		return &TableCell{Paragraphs: []*Paragraph{{Runs: []*Run{{Text: text, Bold: true}}}}}
+	}
+	tbl := &Table{
+		Rows: []*TableRow{
+			{Header: true, Cells: []*TableCell{tableCell("h1"), tableCell("h2")}},
+			// A data cell whose run is inline-bold, under a region style with
+			// Bold:false. The style must not strip the inline bold.
+			{Cells: []*TableCell{boldRunCell("d1"), tableCell("d2")}},
+		},
+		Style: &TableStyleSpec{
+			HeaderFirstCol:  TableCellStyleSpec{Bold: true},
+			HeaderOtherCols: TableCellStyleSpec{Bold: true},
+			DataFirstCol:    TableCellStyleSpec{}, // Bold:false
+			DataOtherCols:   TableCellStyleSpec{},
+		},
+	}
+	var rels []slideRel
+	relIdx := 1
+	cells := tableCellXMLs(renderTable(tbl, 2, &relIdx, &rels))
+	// cell index 2 is the first data cell (row 1, col 0).
+	if !strings.Contains(cells[2], `b="1"`) {
+		t.Errorf("inline bold in data cell was stripped by region style: %s", cells[2])
+	}
+	// Header cells become bold from the region style even without inline bold.
+	if !strings.Contains(cells[0], `b="1"`) {
+		t.Errorf("header cell should be bold from region style: %s", cells[0])
+	}
+}
+
+func TestRenderTableBorderWidthOnlyNoColor(t *testing.T) {
+	got := renderTableBorder("lnL", TableBorderSpec{WidthEMU: 1234})
+	if strings.Contains(got, `srgbClr`) {
+		t.Errorf("width-only border must not emit a color: %s", got)
+	}
+	if got != `<a:lnL w="1234"/>` {
+		t.Errorf("unexpected width-only border: %s", got)
+	}
+	if empty := renderTableBorder("lnR", TableBorderSpec{}); empty != "" {
+		t.Errorf("empty spec should render nothing, got %s", empty)
+	}
+}

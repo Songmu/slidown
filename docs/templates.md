@@ -60,6 +60,15 @@ superscript/subscript baseline.
 Custom styles override slidown's built-in defaults for the same keyword. Syntax
 without a custom keyword keeps the built-in style.
 
+Inline styles from a text box override the block context, so emphasis inside a
+`blockquote` or a styled table cell is preserved (matching deck, where the block
+or cell style is applied first and inline styles win).
+
+> **Note on colors:** only direct RGB colors (`srgbClr`) are read from the
+> `style` layout. Theme/scheme colors (`schemeClr`, chosen from the theme color
+> palette in PowerPoint) are not resolved; pick an explicit color if a style
+> does not take effect.
+
 ### Table styles
 
 Add one 2x2 table to the `style` layout to style generated Markdown tables.

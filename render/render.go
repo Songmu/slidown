@@ -310,8 +310,8 @@ func (c *converter) convertBlockQuote(bq *slidown.BlockQuote) []*pptx.Paragraph 
 		p := c.convertParagraph(para)
 		p.Level += bq.Nesting + 1
 		for _, r := range p.Runs {
-			if c.hasCustomStyle("blockquote") {
-				c.applyStyleName(r, "blockquote")
+			if spec, ok := c.styles["blockquote"]; ok {
+				mergeStyleSpec(r, spec)
 			} else {
 				r.Italic = true
 			}
@@ -398,11 +398,6 @@ func (c *converter) applyStyleName(r *pptx.Run, name string) {
 	}
 }
 
-func (c *converter) hasCustomStyle(name string) bool {
-	_, ok := c.styles[name]
-	return ok
-}
-
 func applyStyleSpec(r *pptx.Run, s pptx.StyleSpec) {
 	r.Bold = s.Bold
 	r.Italic = s.Italic
@@ -413,4 +408,28 @@ func applyStyleSpec(r *pptx.Run, s pptx.StyleSpec) {
 	r.FontFamily = s.FontFamily
 	r.Baseline = s.Baseline
 	r.Code = false
+}
+
+// mergeStyleSpec applies a block-level base style (e.g. blockquote) to a run
+// without clobbering inline formatting already present on it: booleans are
+// OR-ed in and string properties are only filled when the run has none. This
+// mirrors deck, where a block base style is applied first and inline styles
+// override it, so inline emphasis inside the block is preserved.
+func mergeStyleSpec(r *pptx.Run, s pptx.StyleSpec) {
+	r.Bold = r.Bold || s.Bold
+	r.Italic = r.Italic || s.Italic
+	r.Underline = r.Underline || s.Underline
+	r.Strike = r.Strike || s.Strike
+	if r.Color == "" {
+		r.Color = s.Color
+	}
+	if r.BgColor == "" {
+		r.BgColor = s.BgColor
+	}
+	if r.FontFamily == "" && !r.Code {
+		r.FontFamily = s.FontFamily
+	}
+	if r.Baseline == "" {
+		r.Baseline = s.Baseline
+	}
 }
