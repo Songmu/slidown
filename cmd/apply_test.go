@@ -1104,3 +1104,28 @@ func TestAnchorsReordered(t *testing.T) {
 		t.Error("descending anchors not flagged as reordered")
 	}
 }
+
+// TestApplyKeylessFrozenSlideDoesNotReuseKeyedSlide guards Phase 2 alignment: a
+// keyless (frozen) source slide must not be positionally paired with an existing
+// slide that carries a stable key but is absent from the new source. Otherwise
+// Freeze would wrongly reuse the removed keyed slide's content.
+func TestApplyKeylessFrozenSlideDoesNotReuseKeyedSlide(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "deck.pptx")
+
+	const v1 = "# Keep\n\n<!-- {\"key\":\"k\"} -->\n\nkeep body\n"
+	applyFreshForTest(t, v1, out, "")
+
+	// New source has no slide with key "k"; instead a keyless frozen slide with
+	// different content sits at the same position.
+	const v2 = "# Other\n\n<!-- {\"freeze\": true} -->\n\nother body\n"
+	applyUpdateForTest(t, v2, out, "")
+
+	slide1 := string(readSlidePartsForTest(t, out)["ppt/slides/slide1.xml"])
+	if !strings.Contains(slide1, "other body") {
+		t.Errorf("expected the keyless slide to be regenerated to its own content:\n%.400s", slide1)
+	}
+	if strings.Contains(slide1, "keep body") {
+		t.Errorf("keyed slide 'k' (absent from the new source) was wrongly reused:\n%.400s", slide1)
+	}
+}

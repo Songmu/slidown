@@ -319,7 +319,10 @@ func alignSlides(source slidown.Slides, existing []pptx.SlideMeta,
 
 	// Phase 2: align the remaining slides in order within anchor-bounded
 	// segments. A two-pointer walk never pairs across an anchor target, so
-	// mis-pairing is confined to a single gap between unchanged slides.
+	// mis-pairing is confined to a single gap between unchanged slides. Existing
+	// slides that carry a stable key are reserved for key matching (Phase 1a):
+	// they are never claimed positionally, so a keyless source can't accidentally
+	// reuse (or freeze onto) a keyed page that was removed from the new source.
 	ei := 0
 	for i := range rendered {
 		if pairOld[i] >= 0 {
@@ -328,10 +331,10 @@ func alignSlides(source slidown.Slides, existing []pptx.SlideMeta,
 			}
 			continue
 		}
-		for ei < m && oldUsed[ei] && !isAnchorTarget[ei] {
+		for ei < m && !isAnchorTarget[ei] && (oldUsed[ei] || existing[ei].Key != "") {
 			ei++
 		}
-		if ei < m && !oldUsed[ei] && !isAnchorTarget[ei] {
+		if ei < m && !oldUsed[ei] && !isAnchorTarget[ei] && existing[ei].Key == "" {
 			pairOld[i] = ei
 			oldUsed[ei] = true
 			ei++
