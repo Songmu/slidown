@@ -217,6 +217,29 @@ matched slide is reused when it is frozen or when its source fingerprint still
 matches. Because matching is key-based, reuse and `freeze` follow a slide across
 inserts, deletions and reordering rather than being tied to its position.
 
+A key that no longer appears in the deck source is **orphaned** (its page was
+renamed or removed). Orphaned-key slides are *not* reserved for key matching, so
+a page whose key was renamed can re-pair with its slide by position; a still
+present key is reserved so a keyless page cannot steal a merely reordered slide.
+
+### Authoritative key stamping
+
+The deck source is authoritative for keys. As the final step of every `apply`,
+`pptx.StampSlideKeys` rewrites each output slide's `key` (the `k` attribute of
+the slidown extension) to match the key of the deck page occupying that visible
+position: renamed keys are updated, removed keys are cleared (so no orphaned keys
+accumulate), and a slide that carries no slidown metadata — such as one **pasted
+in from another presentation** — is tagged with its page's key. Only the `extLst`
+is touched, which the fingerprint does not cover, so stamping never perturbs
+change detection and is idempotent.
+
+This makes importing a slide self-healing: declare a keyed, frozen placeholder
+page for it in the Markdown, paste the slide at that position in PowerPoint, and
+the first rebuild pairs them by position, keeps the pasted slide via `freeze`,
+and stamps the key onto it; subsequent rebuilds then match it by key regardless
+of reordering. `freeze: true` lives only in the Markdown and is never written to
+the slide.
+
 ### Applying the reuse
 
 `writePresentation` (via `buildReuseMap`) computes a map of *new position →

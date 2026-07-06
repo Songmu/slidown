@@ -137,16 +137,37 @@ func resolveApplyTemplate(out, flagTemplate, cfgTemplate string) (string, error)
 }
 
 func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, desiredTitle string) (bool, error) {
+	// keysByPos maps each output slide's 1-based visible position to the stable
+	// key of the deck page that produced it. It drives the final stamping pass
+	// that makes the deck source authoritative for embedded keys (see
+	// pptx.StampSlideKeys): keys renamed or removed in the Markdown are updated
+	// or cleared, and slides imported from other presentations are tagged so a
+	// later rebuild can match them by key rather than by position.
+	keysByPos := sourceKeysByPosition(sourceSlides)
+
 	exists, err := pathExists(out)
 	if err != nil {
 		return false, err
 	}
 	if !exists {
-		if err := os.WriteFile(out, newPPTX, 0o600); err != nil {
+		stamped, err := pptx.StampSlideKeys(newPPTX, keysByPos)
+		if err != nil {
+			return false, err
+		}
+		if err := os.WriteFile(out, stamped, 0o600); err != nil {
 			return false, err
 		}
 		return false, nil
 	}
+
+	existingBytes, err := os.ReadFile(out)
+	if err != nil {
+		return false, err
+	}
+
+	// final holds the freshly reconciled package before stamping. It is computed
+	// by one of the branches below and defaults to the whole-file merge fallback.
+	var final []byte
 
 	// When the output file already exists, preserve the slides that should keep
 	// their existing content: slides whose source did not change (so manual
@@ -176,47 +197,63 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, 
 			// a deck-level property that the per-slide fingerprints do not cover
 			// changed — currently the title in docProps/core.xml. When only the
 			// title changed, swap in the freshly generated core.xml while keeping
-			// every other part (slides, media, customXml, …) verbatim.
+			// every other part (slides, media, customXml, …) verbatim. Otherwise
+			// the existing bytes are the base, and the stamping pass below still
+			// runs so key renames/removals are applied even on this fast path.
 			if existingTitle == desiredTitle {
-				return true, nil
-			}
-			merged, err := pkg.ReplaceCoreProps(newPPTX)
-			if err != nil {
-				return false, err
-			}
-			if err := os.WriteFile(out, merged, 0o600); err != nil {
-				return false, err
-			}
-			return true, nil
-		case len(reuse) > 0 || len(shapeMerge) > 0:
-			var merged []byte
-			if len(reuse) > 0 {
-				merged, err = pkg.MergeReusingUnchangedSlides(newPPTX, reuse)
+				final = existingBytes
 			} else {
-				merged, err = pkg.MergeWith(newPPTX)
+				final, err = pkg.ReplaceCoreProps(newPPTX)
+				if err != nil {
+					return false, err
+				}
+			}
+		case len(reuse) > 0 || len(shapeMerge) > 0:
+			if len(reuse) > 0 {
+				final, err = pkg.MergeReusingUnchangedSlides(newPPTX, reuse)
+			} else {
+				final, err = pkg.MergeWith(newPPTX)
 			}
 			if err != nil {
 				return false, err
 			}
-			merged, err = pkg.MergeReusingUnchangedShapes(merged, shapeMerge)
+			final, err = pkg.MergeReusingUnchangedShapes(final, shapeMerge)
 			if err != nil {
 				return false, err
 			}
-			if err := os.WriteFile(out, merged, 0o600); err != nil {
-				return false, err
-			}
-			return true, nil
 		}
 	}
 
-	merged, err := pptx.MergeWithExisting(out, newPPTX)
+	if final == nil {
+		final, err = pptx.MergeWithExisting(out, newPPTX)
+		if err != nil {
+			return false, err
+		}
+	}
+
+	final, err = pptx.StampSlideKeys(final, keysByPos)
 	if err != nil {
 		return false, err
 	}
-	if err := os.WriteFile(out, merged, 0o600); err != nil {
+	if bytes.Equal(final, existingBytes) {
+		return true, nil
+	}
+	if err := os.WriteFile(out, final, 0o600); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+// sourceKeysByPosition maps each rendered deck slide's 1-based output position
+// to its stable key, for the key-stamping pass. Positions with no key map to
+// the empty string, which clears any key the slide at that position carries.
+func sourceKeysByPosition(source slidown.Slides) map[int]string {
+	rendered := renderedSlides(source)
+	keys := make(map[int]string, len(rendered))
+	for i, s := range rendered {
+		keys[i+1] = s.Key
+	}
+	return keys
 }
 
 // shapeMergeMinOverlap is the minimum fraction of shapes (matched by slot key
@@ -256,6 +293,20 @@ func alignSlides(source slidown.Slides, existing []pptx.SlideMeta,
 	rendered := renderedSlides(source)
 	n := len(rendered)
 	m := len(existing)
+
+	// sourceKeySet holds the stable keys still present in the deck source. An
+	// existing slide whose key is not in this set is "orphaned" (its source page
+	// was renamed or removed); such slides are treated as keyless for positional
+	// alignment so a renamed/frozen page can re-pair with them by position (and a
+	// later stamping pass re-tags them with the current key).
+	sourceKeySet := make(map[string]bool)
+	for _, s := range rendered {
+		if s.Key != "" {
+			sourceKeySet[s.Key] = true
+		}
+	}
+	keyReserved := func(k string) bool { return k != "" && sourceKeySet[k] }
+
 	pairOld := make([]int, n)
 	for i := range pairOld {
 		pairOld[i] = -1
@@ -321,9 +372,12 @@ func alignSlides(source slidown.Slides, existing []pptx.SlideMeta,
 	// Phase 2: align the remaining slides in order within anchor-bounded
 	// segments. A two-pointer walk never pairs across an anchor target, so
 	// mis-pairing is confined to a single gap between unchanged slides. Existing
-	// slides that carry a stable key are reserved for key matching (Phase 1a):
-	// they are never claimed positionally, so a keyless source can't accidentally
-	// reuse (or freeze onto) a keyed page that was removed from the new source.
+	// slides whose stable key is still present in the source are reserved for key
+	// matching (Phase 1a): they are never claimed positionally, so a keyless
+	// source can't accidentally reuse (or freeze onto) a keyed page that was
+	// merely reordered out of this segment. Slides with an orphaned key (one no
+	// longer present in the source) are not reserved, so a page whose key was
+	// renamed can re-pair with its slide by position.
 	ei := 0
 	for i := range rendered {
 		if pairOld[i] >= 0 {
@@ -332,10 +386,10 @@ func alignSlides(source slidown.Slides, existing []pptx.SlideMeta,
 			}
 			continue
 		}
-		for ei < m && !isAnchorTarget[ei] && (oldUsed[ei] || existing[ei].Key != "") {
+		for ei < m && !isAnchorTarget[ei] && (oldUsed[ei] || keyReserved(existing[ei].Key)) {
 			ei++
 		}
-		if ei < m && !oldUsed[ei] && !isAnchorTarget[ei] && existing[ei].Key == "" {
+		if ei < m && !oldUsed[ei] && !isAnchorTarget[ei] && !keyReserved(existing[ei].Key) {
 			pairOld[i] = ei
 			oldUsed[ei] = true
 			ei++

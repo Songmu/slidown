@@ -194,7 +194,7 @@ func parseSlideMeta(slideXML []byte) SlideMeta {
 		return SlideMeta{}
 	}
 	for _, e := range s.ExtLst.Ext {
-		if e.FP.V != "" {
+		if e.FP.V != "" || e.FP.K != "" {
 			return SlideMeta{Fingerprint: e.FP.V, Key: e.FP.K}
 		}
 	}

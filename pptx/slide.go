@@ -74,17 +74,23 @@ const (
 )
 
 // fingerprintExt renders the slide-level extLst carrying the source fingerprint
-// and optional stable key, or an empty string when no fingerprint is set.
+// and optional stable key, or an empty string when neither is set. The key may
+// be present without a fingerprint for slides that carry only an identity (e.g.
+// a slide imported from another presentation that a later key-stamping pass
+// tags so rebuilds can match it by key).
 func fingerprintExt(fp, key string) string {
-	if fp == "" {
+	if fp == "" && key == "" {
 		return ""
 	}
-	attrs := ` v="` + escapeXML(fp) + `"`
+	attrs := ` xmlns:slidown="` + fingerprintNS + `"`
+	if fp != "" {
+		attrs += ` v="` + escapeXML(fp) + `"`
+	}
 	if key != "" {
 		attrs += ` k="` + escapeXML(key) + `"`
 	}
 	return `<p:extLst><p:ext uri="` + fingerprintURI + `">` +
-		`<slidown:fp xmlns:slidown="` + fingerprintNS + `"` + attrs + `/>` +
+		`<slidown:fp` + attrs + `/>` +
 		`</p:ext></p:extLst>`
 }
 
