@@ -20,6 +20,15 @@ func OpenPackage(path string) (*Package, error) {
 	return &Package{parts: parts, order: order}, nil
 }
 
+// OpenPackageBytes inflates a .pptx from in-memory bytes.
+func OpenPackageBytes(data []byte) (*Package, error) {
+	parts, order, err := readZipPartsFromBytes(data)
+	if err != nil {
+		return nil, err
+	}
+	return &Package{parts: parts, order: order}, nil
+}
+
 // SlideMetasAndCoreTitle returns the per-slide slidown metadata (in slide
 // order) and the deck title, mirroring ReadSlideMetasAndCoreTitle.
 func (p *Package) SlideMetasAndCoreTitle() ([]SlideMeta, string) {
