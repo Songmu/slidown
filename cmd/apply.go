@@ -46,6 +46,9 @@ choose a different --output, or remove the existing file first.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		f := args[0]
+		if err := validateApplyFlags(cmd); err != nil {
+			return err
+		}
 		ctx := cmd.Context()
 		if applyWatch {
 			var stop context.CancelFunc
@@ -82,6 +85,14 @@ func runApplyMode(
 		return nil
 	}
 	return watchFn(ctx, cmd, deckPath, apply)
+}
+
+func validateApplyFlags(cmd *cobra.Command) error {
+	if applyWatch && cmd.Flags().Changed("template") {
+		return fmt.Errorf("--watch and --template cannot be used together: --template is only for initial generation. " +
+			"To use watch mode with a template, set template in the config file")
+	}
+	return nil
 }
 
 func applyDeck(ctx context.Context, cmd *cobra.Command, f string) error {
@@ -687,8 +698,7 @@ func defaultOutputPath(input string) string {
 func init() {
 	applyCmd.Flags().StringVarP(&applyOutput, "output", "o", "", "output .pptx file path (default: DECK_FILE with .pptx extension)")
 	applyCmd.Flags().StringVarP(&applyCodeBlockToImageCmd, "code-block-to-image-command", "", "", "command to convert code blocks to images")
-	applyCmd.Flags().StringVarP(&applyTemplate, "template", "t", "", "path to a .pptx or .potx template providing the design")
+	applyCmd.Flags().StringVarP(&applyTemplate, "template", "t", "", "path to a .pptx or .potx template providing the design (initial generation only)")
 	applyCmd.Flags().BoolVarP(&applyWatch, "watch", "w", false, "watch the deck file and re-apply on changes")
-	applyCmd.MarkFlagsMutuallyExclusive("watch", "template")
 	rootCmd.AddCommand(applyCmd)
 }

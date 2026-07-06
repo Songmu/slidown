@@ -716,8 +716,11 @@ func TestApplyCmdRejectsWatchWithTemplate(t *testing.T) {
 		t.Fatal("expected argument parsing error when --watch and --template are both set")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "watch") || !strings.Contains(msg, "template") {
-		t.Fatalf("error %q does not mention both watch and template flags", msg)
+	if !strings.Contains(msg, "--watch and --template cannot be used together") {
+		t.Fatalf("error %q does not contain the expected incompatibility guidance", msg)
+	}
+	if !strings.Contains(msg, "set template in the config file") {
+		t.Fatalf("error %q does not contain the config-based workaround", msg)
 	}
 }
 

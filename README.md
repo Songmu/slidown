@@ -129,6 +129,10 @@ Updated deck.pptx (2 slide(s))
 and debounces bursts so one save triggers one rebuild. If a rebuild fails, the
 error is printed and watch mode keeps running until you stop it with `Ctrl-C`.
 
+`--watch` and `--template` are mutually exclusive. `--template` is only for
+initial generation; when you need watch mode with a template, set `template`
+in the config file instead.
+
 MVP scope: watch mode currently tracks deck markdown file changes only.
 
 ### Using a template
