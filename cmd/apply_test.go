@@ -1081,6 +1081,36 @@ func TestApplyShapeLevelMergePreservesManualEditOnUnchangedShape(t *testing.T) {
 	}
 }
 
+func TestApplyShapeLevelMergeCarriesHandAddedFreeTextBox(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "deck.pptx")
+
+	const v1 = "# Title A\n\nbody one\n"
+	applyFreshForTest(t, v1, out, "")
+
+	rewriteSlidePartForTest(t, out, "ppt/slides/slide1.xml", func(b []byte) []byte {
+		manual := `<p:sp><p:nvSpPr><p:cNvPr id="99" name="Manual Box"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="909090" y="11"/><a:ext cx="1" cy="1"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>manually added textbox</a:t></a:r></a:p></p:txBody></p:sp>`
+		return bytes.Replace(b, []byte(`</p:spTree>`), []byte(manual+`</p:spTree>`), 1)
+	})
+
+	const v2 = "# Title A\n\nbody one edited\n"
+	applyUpdateForTest(t, v2, out, "")
+
+	slide1 := string(readSlidePartsForTest(t, out)["ppt/slides/slide1.xml"])
+	if !strings.Contains(slide1, "manually added textbox") {
+		t.Fatalf("hand-added free text box was not preserved:\n%.500s", slide1)
+	}
+	if !strings.Contains(slide1, `x="909090"`) {
+		t.Fatalf("hand-added free text box geometry was not preserved:\n%.500s", slide1)
+	}
+	if !strings.Contains(slide1, `sk="shape#`) {
+		t.Fatalf("hand-added free text box did not receive a stamped shape key:\n%.500s", slide1)
+	}
+	if !strings.Contains(slide1, "body one edited") {
+		t.Fatalf("generated content was not updated:\n%.500s", slide1)
+	}
+}
+
 // TestApplyShapeLevelMergeWithSkippedSlide guards the position mapping: a
 // skipped source slide emits no output slide, so alignment must use rendered
 // positions. A leading skipped page must not shift shape-level merges onto the

@@ -7,6 +7,7 @@ import (
 	"io"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -30,6 +31,7 @@ var (
 // byte range it occupies within the slide document.
 type shapeInfo struct {
 	slotKey string
+	key     string
 	fp      string
 	hasRels bool
 	cNvPrID string
@@ -51,17 +53,21 @@ func parseSlideShapes(slideXML []byte) (shapes []shapeInfo, rootAttrs []xml.Attr
 	capturing := false
 	depthAtSp := 0
 	var cur shapeInfo
-	var phType, phIdx, role string
+	var phType, phIdx, role, sk string
 	var sawPh bool
 
 	finalize := func(end int64) {
 		cur.end = int(end)
 		cur.raw = slideXML[cur.start:cur.end]
-		// Only placeholders get a stable slot key; a non-placeholder text box is
-		// left keyless so it is never spliced (safe regeneration). This mirrors
-		// shapeSlotKey on the writer side.
+		// Placeholders keep their stable slot key, while non-placeholder text
+		// boxes can be keyed by a stamped shape key (sk) so they can be preserved
+		// across rebuilds even when absent from freshly generated slide XML.
 		if sawPh {
 			cur.slotKey = slotKey(effectiveType(role, phType), atoi(phIdx))
+		}
+		cur.key = cur.slotKey
+		if cur.key == "" {
+			cur.key = sk
 		}
 		// Namespace-aware detection above is authoritative; the substring scan is
 		// a conservative backstop (a false positive only skips an optimisation).
@@ -91,7 +97,7 @@ func parseSlideShapes(slideXML []byte) (shapes []shapeInfo, rootAttrs []xml.Attr
 				capturing = true
 				depthAtSp = len(stack)
 				cur = shapeInfo{start: int(prev)}
-				phType, phIdx, role = "", "", ""
+				phType, phIdx, role, sk = "", "", "", ""
 				sawPh = false
 			case capturing:
 				for _, a := range t.Attr {
@@ -118,6 +124,9 @@ func parseSlideShapes(slideXML []byte) (shapes []shapeInfo, rootAttrs []xml.Attr
 					}
 					if cur.fp == "" {
 						cur.fp = attrValue(t.Attr, "fp")
+					}
+					if sk == "" {
+						sk = attrValue(t.Attr, "sk")
 					}
 				}
 			}
@@ -210,14 +219,14 @@ func mergeSlideShapes(newSld, oldSld []byte) ([]byte, bool) {
 	oldByKey := map[string]shapeInfo{}
 	ambiguous := map[string]bool{}
 	for _, s := range oldShapes {
-		if s.hasRels || s.slotKey == "" {
+		if s.hasRels || s.key == "" {
 			continue
 		}
-		if _, seen := oldByKey[s.slotKey]; seen {
-			ambiguous[s.slotKey] = true
+		if _, seen := oldByKey[s.key]; seen {
+			ambiguous[s.key] = true
 			continue
 		}
-		oldByKey[s.slotKey] = s
+		oldByKey[s.key] = s
 	}
 
 	type replacement struct {
@@ -226,14 +235,20 @@ func mergeSlideShapes(newSld, oldSld []byte) ([]byte, bool) {
 	}
 	var repls []replacement
 	used := map[string]bool{}
+	newKeys := map[string]bool{}
 	for _, ns := range newShapes {
-		if ns.hasRels || ns.fp == "" || ns.slotKey == "" {
+		if ns.key != "" {
+			newKeys[ns.key] = true
+		}
+	}
+	for _, ns := range newShapes {
+		if ns.hasRels || ns.fp == "" || ns.key == "" {
 			continue
 		}
-		if ambiguous[ns.slotKey] || used[ns.slotKey] {
+		if ambiguous[ns.key] || used[ns.key] {
 			continue
 		}
-		os, ok := oldByKey[ns.slotKey]
+		os, ok := oldByKey[ns.key]
 		if !ok || os.fp == "" || os.fp != ns.fp {
 			continue
 		}
@@ -246,9 +261,26 @@ func mergeSlideShapes(newSld, oldSld []byte) ([]byte, bool) {
 			end:   ns.end,
 			data:  data,
 		})
-		used[ns.slotKey] = true
+		used[ns.key] = true
 	}
-	if len(repls) == 0 {
+
+	maxID, haveID := maxCNvPrIDFromXML(newSld)
+	var carry []byte
+	for _, os := range oldShapes {
+		if os.hasRels || os.key == "" || os.slotKey != "" || ambiguous[os.key] || newKeys[os.key] || used[os.key] {
+			continue
+		}
+		if !haveID {
+			continue
+		}
+		maxID++
+		data, ok := rewriteCNvPrID(os.raw, strconv.Itoa(maxID))
+		if !ok {
+			continue
+		}
+		carry = append(carry, data...)
+	}
+	if len(repls) == 0 && len(carry) == 0 {
 		return newSld, false
 	}
 
@@ -265,7 +297,51 @@ func mergeSlideShapes(newSld, oldSld []byte) ([]byte, bool) {
 	}
 	out.Write(newSld[pos:])
 
-	return unionRootNamespaces(out.Bytes(), newRoot, oldRoot), true
+	merged := out.Bytes()
+	if len(carry) > 0 {
+		withCarry, ok := appendShapesToSpTree(merged, carry)
+		if ok {
+			merged = withCarry
+		}
+	}
+	return unionRootNamespaces(merged, newRoot, oldRoot), true
+}
+
+// cNvPrAllIDsRe matches any cNvPr element (across all drawable types: sp, pic,
+// graphicFrame, etc.) and captures its numeric id attribute value.
+var cNvPrAllIDsRe = regexp.MustCompile(`<[A-Za-z0-9]*:?cNvPr\b[^>]*?\bid\s*=\s*["'](\d+)["']`)
+
+// maxCNvPrIDFromXML returns the maximum numeric cNvPr id found anywhere in the
+// slide XML (spanning all drawable object types: sp, pic, graphicFrame, etc.)
+// so that carry-over shapes receive unique IDs even when pictures or other
+// non-sp drawables claim IDs beyond the set of text box shapes.
+func maxCNvPrIDFromXML(slideXML []byte) (int, bool) {
+	matches := cNvPrAllIDsRe.FindAllSubmatch(slideXML, -1)
+	maxID := 0
+	ok := false
+	for _, m := range matches {
+		id, err := strconv.Atoi(string(m[1]))
+		if err != nil {
+			continue
+		}
+		if !ok || id > maxID {
+			maxID = id
+			ok = true
+		}
+	}
+	return maxID, ok
+}
+
+func appendShapesToSpTree(slideXML, shapes []byte) ([]byte, bool) {
+	idx := bytes.Index(slideXML, []byte(`</p:spTree>`))
+	if idx < 0 {
+		return slideXML, false
+	}
+	var out bytes.Buffer
+	out.Write(slideXML[:idx])
+	out.Write(shapes)
+	out.Write(slideXML[idx:])
+	return out.Bytes(), true
 }
 
 // unionRootNamespaces injects into the slide root any xmlns declaration present

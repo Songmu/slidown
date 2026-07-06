@@ -154,6 +154,10 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, 
 		if err != nil {
 			return false, err
 		}
+		stamped, err = pptx.StampShapeKeys(stamped)
+		if err != nil {
+			return false, err
+		}
 		if err := os.WriteFile(out, stamped, 0o600); err != nil {
 			return false, err
 		}
@@ -161,6 +165,10 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, 
 	}
 
 	existingBytes, err := os.ReadFile(out)
+	if err != nil {
+		return false, err
+	}
+	existingStamped, err := pptx.StampShapeKeys(existingBytes)
 	if err != nil {
 		return false, err
 	}
@@ -182,7 +190,7 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, 
 	// This is safe here because an existing output is always rebuilt using
 	// itself as the template (apply refuses --template when the output already
 	// exists), so its design parts are unchanged.
-	if pkg, err := pptx.OpenPackage(out); err == nil {
+	if pkg, err := pptx.OpenPackageBytes(existingStamped); err == nil {
 		existing, existingTitle := pkg.SlideMetasAndCoreTitle()
 		// Per-shape signatures for the freshly generated package and the existing
 		// file feed the shape-level similarity gate. Read best-effort: on failure
@@ -201,7 +209,7 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, 
 			// the existing bytes are the base, and the stamping pass below still
 			// runs so key renames/removals are applied even on this fast path.
 			if existingTitle == desiredTitle {
-				final = existingBytes
+				final = existingStamped
 			} else {
 				final, err = pkg.ReplaceCoreProps(newPPTX)
 				if err != nil {
@@ -232,6 +240,10 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, 
 	}
 
 	final, err = pptx.StampSlideKeys(final, keysByPos)
+	if err != nil {
+		return false, err
+	}
+	final, err = pptx.StampShapeKeys(final)
 	if err != nil {
 		return false, err
 	}
