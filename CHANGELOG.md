@@ -1,5 +1,13 @@
 # Changelog
 
+## [v0.0.4](https://github.com/Songmu/slidown/compare/v0.0.3...v0.0.4) - 2026-07-06
+
+### Other Changes
+- Isolate TestResolveTemplate from the local config by @Songmu in https://github.com/Songmu/slidown/pull/56
+- Add shape-level incremental reuse to preserve manual edits by @Songmu in https://github.com/Songmu/slidown/pull/58
+- Read existing .pptx once per apply instead of up to 4 times by @Songmu in https://github.com/Songmu/slidown/pull/59
+- Stamp deck keys onto slides to make the source authoritative by @Songmu in https://github.com/Songmu/slidown/pull/60
+
 ## [v0.0.3](https://github.com/Songmu/slidown/compare/v0.0.2...v0.0.3) - 2026-07-05
 
 ### Other Changes
