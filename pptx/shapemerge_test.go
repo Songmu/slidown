@@ -149,6 +149,45 @@ func TestMergeSlideShapesCarriesOverStampedNonPlaceholderShape(t *testing.T) {
 	}
 }
 
+func TestMergeSlideShapesDoesNotCarryOverPlaceholderShape(t *testing.T) {
+	// An old slide has an extra placeholder (e.g. a subtitle) that is absent
+	// from the new slide. Even though the placeholder has no match in newKeys,
+	// it must NOT be carried over because it is a placeholder shape.
+	newSld := renderSlideForTest("Title", "new body")
+	oldSld := renderSlideForTest("Title", "old body")
+	// Inject a subtitle placeholder with a stamped sk into the old slide's spTree.
+	// Its slotKey will be "subtitle#..." so the carry-over loop must skip it.
+	subtitlePh := `<p:sp><p:nvSpPr><p:cNvPr id="9" name="Subtitle"/><p:cNvSpPr/><p:nvPr><p:ph type="subTitle" idx="1"/><p:extLst><p:ext uri="` + shapeMetaURI + `"><slidown:shape xmlns:slidown="` + fingerprintNS + `" sk="shape#subtitle"/></p:ext></p:extLst></p:nvPr></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>old subtitle</a:t></a:r></a:p></p:txBody></p:sp>`
+	oldSld = []byte(strings.Replace(string(oldSld), `</p:spTree>`, subtitlePh+`</p:spTree>`, 1))
+
+	merged, _ := mergeSlideShapes(newSld, oldSld)
+	if strings.Contains(string(merged), "old subtitle") {
+		t.Fatalf("placeholder shape must not be carried over into the new slide:\n%s", string(merged))
+	}
+}
+
+func TestMergeSlideShapesCarryOverIDAvoidsPictureID(t *testing.T) {
+	// The new slide contains a <p:pic> with a high cNvPr id. The carried-over
+	// non-placeholder shape must receive an id above the picture's id, not just
+	// above the set of <p:sp> shape ids.
+	newSld := renderSlideForTest("Title", "new body")
+	// Inject a picture element (not a <p:sp>) with id="50" into the new slide.
+	pic := `<p:pic><p:nvPicPr><p:cNvPr id="50" name="Picture 50"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill/><p:spPr/></p:pic>`
+	newSld = []byte(strings.Replace(string(newSld), `</p:spTree>`, pic+`</p:spTree>`, 1))
+
+	oldSld := renderSlideForTest("Title", "old body")
+	manualShape := `<p:sp><p:nvSpPr><p:cNvPr id="9" name="Manual Box"/><p:cNvSpPr/><p:nvPr><p:extLst><p:ext uri="` + shapeMetaURI + `"><slidown:shape xmlns:slidown="` + fingerprintNS + `" sk="shape#manual"/></p:ext></p:extLst></p:nvPr></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>manual keep</a:t></a:r></a:p></p:txBody></p:sp>`
+	oldSld = []byte(strings.Replace(string(oldSld), `</p:spTree>`, manualShape+`</p:spTree>`, 1))
+
+	merged, changed := mergeSlideShapes(newSld, oldSld)
+	if !changed {
+		t.Fatal("expected merge with carried non-placeholder shape")
+	}
+	if !strings.Contains(string(merged), `id="51"`) {
+		t.Fatalf("carried shape must receive id=51 (above picture id=50), got:\n%s", string(merged))
+	}
+}
+
 func TestStampShapeKeysIdempotent(t *testing.T) {
 	in := twoSlidePresentationWithFingerprints(t, "fp-1", "fp-2")
 	parts, order, err := readZipPartsFromBytes(in)

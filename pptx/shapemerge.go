@@ -264,10 +264,10 @@ func mergeSlideShapes(newSld, oldSld []byte) ([]byte, bool) {
 		used[ns.key] = true
 	}
 
-	maxID, haveID := maxShapeID(newShapes)
+	maxID, haveID := maxCNvPrIDFromXML(newSld)
 	var carry []byte
 	for _, os := range oldShapes {
-		if os.hasRels || os.key == "" || ambiguous[os.key] || newKeys[os.key] || used[os.key] {
+		if os.hasRels || os.key == "" || os.slotKey != "" || ambiguous[os.key] || newKeys[os.key] || used[os.key] {
 			continue
 		}
 		if !haveID {
@@ -307,11 +307,20 @@ func mergeSlideShapes(newSld, oldSld []byte) ([]byte, bool) {
 	return unionRootNamespaces(merged, newRoot, oldRoot), true
 }
 
-func maxShapeID(shapes []shapeInfo) (int, bool) {
+// cNvPrAllIDsRe matches any cNvPr element (across all drawable types: sp, pic,
+// graphicFrame, etc.) and captures its numeric id attribute value.
+var cNvPrAllIDsRe = regexp.MustCompile(`<[A-Za-z0-9]*:?cNvPr\b[^>]*?\bid\s*=\s*["'](\d+)["']`)
+
+// maxCNvPrIDFromXML returns the maximum numeric cNvPr id found anywhere in the
+// slide XML (spanning all drawable object types: sp, pic, graphicFrame, etc.)
+// so that carry-over shapes receive unique IDs even when pictures or other
+// non-sp drawables claim IDs beyond the set of text box shapes.
+func maxCNvPrIDFromXML(slideXML []byte) (int, bool) {
+	matches := cNvPrAllIDsRe.FindAllSubmatch(slideXML, -1)
 	maxID := 0
 	ok := false
-	for _, s := range shapes {
-		id, err := strconv.Atoi(s.cNvPrID)
+	for _, m := range matches {
+		id, err := strconv.Atoi(string(m[1]))
 		if err != nil {
 			continue
 		}
