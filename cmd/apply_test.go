@@ -697,6 +697,30 @@ func TestRunApplyMode(t *testing.T) {
 	})
 }
 
+func TestApplyCmdRejectsWatchWithTemplate(t *testing.T) {
+	origWatch := applyWatch
+	origTemplate := applyTemplate
+	t.Cleanup(func() {
+		applyWatch = origWatch
+		applyTemplate = origTemplate
+		rootCmd.SetArgs(nil)
+	})
+
+	rootCmd.SetArgs([]string{"apply", "--watch", "--template", "template.pptx", "deck.md"})
+	var out bytes.Buffer
+	rootCmd.SetOut(&out)
+	rootCmd.SetErr(&out)
+
+	_, err := rootCmd.ExecuteC()
+	if err == nil {
+		t.Fatal("expected argument parsing error when --watch and --template are both set")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "watch") || !strings.Contains(msg, "template") {
+		t.Fatalf("error %q does not mention both watch and template flags", msg)
+	}
+}
+
 func TestWatchApplyReturnsWhenDebouncedChannelCloses(t *testing.T) {
 	dir := t.TempDir()
 	deck := filepath.Join(dir, "deck.md")

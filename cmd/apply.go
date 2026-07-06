@@ -689,5 +689,6 @@ func init() {
 	applyCmd.Flags().StringVarP(&applyCodeBlockToImageCmd, "code-block-to-image-command", "", "", "command to convert code blocks to images")
 	applyCmd.Flags().StringVarP(&applyTemplate, "template", "t", "", "path to a .pptx or .potx template providing the design")
 	applyCmd.Flags().BoolVarP(&applyWatch, "watch", "w", false, "watch the deck file and re-apply on changes")
+	applyCmd.MarkFlagsMutuallyExclusive("watch", "template")
 	rootCmd.AddCommand(applyCmd)
 }
