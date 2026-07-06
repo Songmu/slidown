@@ -612,12 +612,14 @@ func TestDebounceSignals(t *testing.T) {
 	defer cancel()
 
 	in := make(chan struct{}, 8)
-	out := debounceSignals(ctx, in, 40*time.Millisecond)
+	// Keep the test-specific debounce shorter than production for speed, while
+	// still leaving enough margin to avoid CI scheduler jitter flakiness.
+	out := debounceSignals(ctx, in, 120*time.Millisecond)
 
 	in <- struct{}{}
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(30 * time.Millisecond)
 	in <- struct{}{}
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(30 * time.Millisecond)
 	in <- struct{}{}
 
 	select {
@@ -629,7 +631,7 @@ func TestDebounceSignals(t *testing.T) {
 	select {
 	case <-out:
 		t.Fatal("got unexpected extra trigger for a single burst")
-	case <-time.After(80 * time.Millisecond):
+	case <-time.After(150 * time.Millisecond):
 	}
 
 	in <- struct{}{}

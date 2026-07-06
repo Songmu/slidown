@@ -157,6 +157,7 @@ func watchApply(ctx context.Context, cmd *cobra.Command, deckPath string, apply 
 	triggers := make(chan struct{}, 1)
 	defer close(triggers)
 	debounced := debounceSignals(ctx, triggers, applyWatchDebounce)
+	errorsCh := w.Errors
 
 	for {
 		select {
@@ -173,8 +174,9 @@ func watchApply(ctx context.Context, cmd *cobra.Command, deckPath string, apply 
 			case triggers <- struct{}{}:
 			default:
 			}
-		case err, ok := <-w.Errors:
+		case err, ok := <-errorsCh:
 			if !ok {
+				errorsCh = nil
 				continue
 			}
 			cmd.PrintErrf("watch error: %v\n", err)
