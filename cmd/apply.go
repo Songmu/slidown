@@ -149,6 +149,10 @@ func applyDeck(ctx context.Context, cmd *cobra.Command, f string) error {
 }
 
 func watchApply(ctx context.Context, cmd *cobra.Command, deckPath string, apply func(context.Context) error) error {
+	// Ensure helper goroutines (e.g. debounceSignals) are canceled on any return path.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	absDeck, err := filepath.Abs(deckPath)
 	if err != nil {
 		return fmt.Errorf("failed to resolve deck path: %w", err)
