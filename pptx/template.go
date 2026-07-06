@@ -127,8 +127,36 @@ type xmlCNvPr struct {
 type xmlSRGBClr struct {
 	Val string `xml:"val,attr"`
 }
+type xmlSchemeClr struct {
+	Val string `xml:"val,attr"`
+}
+type xmlSysClr struct {
+	Val     string `xml:"val,attr"`
+	LastClr string `xml:"lastClr,attr"`
+}
 type xmlSolidFill struct {
-	SRGBClr xmlSRGBClr `xml:"srgbClr"`
+	SRGBClr   xmlSRGBClr   `xml:"srgbClr"`
+	SchemeClr xmlSchemeClr `xml:"schemeClr"`
+	SysClr    xmlSysClr    `xml:"sysClr"`
+}
+type xmlHighlight struct {
+	SRGBClr   xmlSRGBClr   `xml:"srgbClr"`
+	SchemeClr xmlSchemeClr `xml:"schemeClr"`
+	SysClr    xmlSysClr    `xml:"sysClr"`
+}
+type xmlClrMap struct {
+	Bg1      string `xml:"bg1,attr"`
+	Tx1      string `xml:"tx1,attr"`
+	Bg2      string `xml:"bg2,attr"`
+	Tx2      string `xml:"tx2,attr"`
+	Accent1  string `xml:"accent1,attr"`
+	Accent2  string `xml:"accent2,attr"`
+	Accent3  string `xml:"accent3,attr"`
+	Accent4  string `xml:"accent4,attr"`
+	Accent5  string `xml:"accent5,attr"`
+	Accent6  string `xml:"accent6,attr"`
+	Hlink    string `xml:"hlink,attr"`
+	FolHlink string `xml:"folHlink,attr"`
 }
 type xmlRunPr struct {
 	B         string       `xml:"b,attr"`
@@ -137,10 +165,8 @@ type xmlRunPr struct {
 	Strike    string       `xml:"strike,attr"`
 	Baseline  string       `xml:"baseline,attr"`
 	SolidFill xmlSolidFill `xml:"solidFill"`
-	Highlight struct {
-		SRGBClr xmlSRGBClr `xml:"srgbClr"`
-	} `xml:"highlight"`
-	Latin struct {
+	Highlight xmlHighlight `xml:"highlight"`
+	Latin     struct {
 		Typeface string `xml:"typeface,attr"`
 	} `xml:"latin"`
 }
@@ -213,6 +239,9 @@ type xmlSldLayout struct {
 			GraphicFrame []xmlGraphicFrame `xml:"graphicFrame"`
 		} `xml:"spTree"`
 	} `xml:"cSld"`
+	ClrMapOvr struct {
+		OverrideClrMapping *xmlClrMap `xml:"overrideClrMapping"`
+	} `xml:"clrMapOvr"`
 }
 
 type xmlContentTypes struct {
@@ -286,6 +315,8 @@ func LoadTemplate(path string) (*Template, error) {
 	}
 
 	// Classify overrides into design parts we carry over.
+	var styleLayoutPart string
+	var styleLayoutData []byte
 	for _, o := range types.Overrides {
 		name := strings.TrimPrefix(o.PartName, "/")
 		switch {
@@ -317,7 +348,8 @@ func LoadTemplate(path string) (*Template, error) {
 			t.partTypes[name] = o.ContentType
 			if li := parseLayout(name, parts[name]); li != nil {
 				if li.Name == styleLayoutName {
-					t.loadStyleLayout(parts[name])
+					styleLayoutPart = name
+					styleLayoutData = parts[name]
 					continue
 				}
 				t.Layouts = append(t.Layouts, li)
@@ -362,6 +394,9 @@ func LoadTemplate(path string) (*Template, error) {
 	// themes) can't be mistaken for the presentation theme.
 	if theme := t.themeReferencedBy(t.masterParts[0]); theme != "" {
 		t.themePart = theme
+	}
+	if len(styleLayoutData) > 0 {
+		t.loadStyleLayoutPart(styleLayoutPart, styleLayoutData)
 	}
 
 	if pres, ok := parts["ppt/presentation.xml"]; ok {

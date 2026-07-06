@@ -64,10 +64,11 @@ Inline styles from a text box override the block context, so emphasis inside a
 `blockquote` or a styled table cell is preserved (matching deck, where the block
 or cell style is applied first and inline styles win).
 
-> **Note on colors:** only direct RGB colors (`srgbClr`) are read from the
-> `style` layout. Theme/scheme colors (`schemeClr`, chosen from the theme color
-> palette in PowerPoint) are not resolved; pick an explicit color if a style
-> does not take effect.
+> **Note on colors:** both direct RGB (`srgbClr`) and theme colors
+> (`schemeClr`, plus `sysClr` via `lastClr`) are resolved from the template's
+> theme and color mapping. Color transforms on scheme colors (for example
+> `tint`, `shade`, `lumMod`, `lumOff`, `satMod`) are not applied yet; slidown
+> currently uses the base scheme color.
 
 ### Table styles
 
