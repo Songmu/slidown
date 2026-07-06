@@ -21,6 +21,7 @@ import (
 	"github.com/Songmu/slidown/pptx"
 	"github.com/Songmu/slidown/render"
 	"github.com/fswatcher/fswatcher"
+	"github.com/spf13/cobra"
 )
 
 const (
@@ -639,6 +640,90 @@ func TestDebounceSignals(t *testing.T) {
 	case <-out:
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("timed out waiting for second debounced trigger")
+	}
+}
+
+func TestRunApplyMode(t *testing.T) {
+	t.Run("watch mode continues after initial apply failure", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		var stderr bytes.Buffer
+		cmd.SetErr(&stderr)
+		cmd.SetOut(io.Discard)
+
+		wantErr := fmt.Errorf("apply failed")
+		watchCalled := false
+		err := runApplyMode(
+			context.Background(),
+			cmd,
+			"deck.md",
+			true,
+			func(context.Context) error { return wantErr },
+			func(context.Context, *cobra.Command, string, func(context.Context) error) error {
+				watchCalled = true
+				return nil
+			},
+		)
+		if err != nil {
+			t.Fatalf("runApplyMode returned error in watch mode: %v", err)
+		}
+		if !watchCalled {
+			t.Fatal("watch mode should continue into watchApply after the initial apply failure")
+		}
+		if got := stderr.String(); !strings.Contains(got, wantErr.Error()) {
+			t.Fatalf("stderr %q does not contain initial apply error %q", got, wantErr)
+		}
+	})
+
+	t.Run("one-shot mode returns initial apply failure", func(t *testing.T) {
+		wantErr := fmt.Errorf("apply failed")
+		watchCalled := false
+		err := runApplyMode(
+			context.Background(),
+			&cobra.Command{},
+			"deck.md",
+			false,
+			func(context.Context) error { return wantErr },
+			func(context.Context, *cobra.Command, string, func(context.Context) error) error {
+				watchCalled = true
+				return nil
+			},
+		)
+		if err != wantErr {
+			t.Fatalf("runApplyMode error = %v, want %v", err, wantErr)
+		}
+		if watchCalled {
+			t.Fatal("one-shot mode must not enter watch mode after an apply failure")
+		}
+	})
+}
+
+func TestWatchApplyReturnsWhenDebouncedChannelCloses(t *testing.T) {
+	dir := t.TempDir()
+	deck := filepath.Join(dir, "deck.md")
+	if err := os.WriteFile(deck, []byte("# title\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	orig := debounceWatchSignals
+	debounceWatchSignals = func(context.Context, <-chan struct{}, time.Duration) <-chan struct{} {
+		ch := make(chan struct{})
+		close(ch)
+		return ch
+	}
+	t.Cleanup(func() {
+		debounceWatchSignals = orig
+	})
+
+	applyCalls := 0
+	err := watchApply(context.Background(), &cobra.Command{}, deck, func(context.Context) error {
+		applyCalls++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("watchApply returned error: %v", err)
+	}
+	if applyCalls != 0 {
+		t.Fatalf("watchApply called apply %d times after the debounced channel closed, want 0", applyCalls)
 	}
 }
 

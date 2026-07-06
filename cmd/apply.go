@@ -24,6 +24,7 @@ var (
 	applyCodeBlockToImageCmd string
 	applyTemplate            string
 	applyWatch               bool
+	debounceWatchSignals     = debounceSignals
 )
 
 var applyCmd = &cobra.Command{
@@ -54,20 +55,34 @@ choose a different --output, or remove the existing file first.`,
 		applyOnce := func(runCtx context.Context) error {
 			return applyDeck(runCtx, cmd, f)
 		}
-
-		if err := applyOnce(ctx); err != nil {
-			return err
-		}
-		if applyWatch {
-			if err := watchApply(ctx, cmd, f, applyOnce); err != nil {
-				return err
-			}
-		}
-		return nil
+		return runApplyMode(ctx, cmd, f, applyWatch, applyOnce, watchApply)
 	},
 }
 
 const applyWatchDebounce = 250 * time.Millisecond
+
+func runApplyMode(
+	ctx context.Context,
+	cmd *cobra.Command,
+	deckPath string,
+	watch bool,
+	apply func(context.Context) error,
+	watchFn func(context.Context, *cobra.Command, string, func(context.Context) error) error,
+) error {
+	if err := apply(ctx); err != nil {
+		if !watch {
+			return err
+		}
+		if ctx.Err() != nil {
+			return nil
+		}
+		cmd.PrintErrln(err)
+	}
+	if !watch {
+		return nil
+	}
+	return watchFn(ctx, cmd, deckPath, apply)
+}
 
 func applyDeck(ctx context.Context, cmd *cobra.Command, f string) error {
 	cfg, err := config.Load(profile)
@@ -156,7 +171,7 @@ func watchApply(ctx context.Context, cmd *cobra.Command, deckPath string, apply 
 
 	triggers := make(chan struct{}, 1)
 	defer close(triggers)
-	debounced := debounceSignals(ctx, triggers, applyWatchDebounce)
+	debounced := debounceWatchSignals(ctx, triggers, applyWatchDebounce)
 	errorsCh := w.Errors
 
 	for {
@@ -180,7 +195,10 @@ func watchApply(ctx context.Context, cmd *cobra.Command, deckPath string, apply 
 				continue
 			}
 			cmd.PrintErrf("watch error: %v\n", err)
-		case <-debounced:
+		case _, ok := <-debounced:
+			if !ok {
+				return nil
+			}
 			if err := apply(ctx); err != nil {
 				if ctx.Err() != nil {
 					return nil
