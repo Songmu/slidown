@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	github.com/corona10/goimagehash v1.1.0
+	github.com/fswatcher/fswatcher v0.1.1-0.20260620132924-abd043702c24
 	github.com/goccy/go-yaml v1.19.2
 	github.com/google/cel-go v0.28.1
 	github.com/google/go-cmp v0.7.0
@@ -19,6 +20,7 @@ require (
 	cel.dev/expr v0.25.1 // indirect
 	github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
+	github.com/ebitengine/purego v0.10.1 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/josharian/mapfs v0.0.0-20210615234106-095c008854e6 // indirect
 	github.com/josharian/txtarfs v0.0.0-20240408113805-5dc76b8fe6bf // indirect
@@ -32,7 +34,7 @@ require (
 	golang.org/x/mod v0.37.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260625142307-59b4966ccb57 // indirect
-	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/text v0.38.0 // indirect
 	golang.org/x/tools v0.47.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260319201613-d00831a3d3e7 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260523011958-0a33c5d7ca68 // indirect

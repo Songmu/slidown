@@ -113,6 +113,28 @@ authoritative for keys: a key renamed or removed in the Markdown is updated or
 cleared on the slide accordingly, and `freeze: true` need only stay in the
 Markdown.
 
+### Watch mode
+
+Use `--watch` (or `-w`) to keep `apply` running and automatically re-apply
+when the deck markdown file changes:
+
+```console
+$ slidown apply deck.md --watch
+Wrote deck.pptx (2 slide(s))
+Updated deck.pptx (2 slide(s))
+```
+
+`slidown` watches the deck file's directory so editor atomic-save patterns
+(`rename`/`remove` + `create`) are handled, filters events to the deck file,
+and debounces bursts so one save triggers one rebuild. If a rebuild fails, the
+error is printed and watch mode keeps running until you stop it with `Ctrl-C`.
+
+`--watch` and `--template` are mutually exclusive. `--template` is only for
+initial generation; when you need watch mode with a template, set `template`
+in the config file instead.
+
+MVP scope: watch mode currently tracks deck markdown file changes only.
+
 ### Using a template
 
 Supply a `.pptx` (or `.potx`) whose theme, slide masters and layouts should

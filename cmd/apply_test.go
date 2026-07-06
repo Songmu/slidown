@@ -13,12 +13,15 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/config"
 	"github.com/Songmu/slidown/md"
 	"github.com/Songmu/slidown/pptx"
 	"github.com/Songmu/slidown/render"
+	"github.com/fswatcher/fswatcher"
+	"github.com/spf13/cobra"
 )
 
 const (
@@ -570,6 +573,185 @@ func TestResolveApplyTemplate(t *testing.T) {
 			t.Errorf("got %q, want built-in design (empty)", got)
 		}
 	})
+}
+
+func TestIsDeckFileEvent(t *testing.T) {
+	dir := t.TempDir()
+	deck := filepath.Join(dir, "deck.md")
+	if err := os.WriteFile(deck, []byte("# title\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	canonicalDeck, err := canonicalizeWatchPath(deck)
+	if err != nil {
+		t.Fatalf("canonicalizeWatchPath: %v", err)
+	}
+
+	samePathName, err := fswatcher.Canonicalize(filepath.Join(dir, ".", "deck.md"))
+	if err != nil {
+		t.Fatalf("Canonicalize same path: %v", err)
+	}
+	if !isDeckFileEvent(samePathName, canonicalDeck) {
+		t.Fatalf("same deck path should match watched deck")
+	}
+
+	other := filepath.Join(dir, "other.md")
+	if err := os.WriteFile(other, []byte("# other\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile other: %v", err)
+	}
+	otherName, err := fswatcher.Canonicalize(other)
+	if err != nil {
+		t.Fatalf("Canonicalize other path: %v", err)
+	}
+	if isDeckFileEvent(otherName, canonicalDeck) {
+		t.Fatalf("different file should not match watched deck")
+	}
+}
+
+func TestDebounceSignals(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	in := make(chan struct{}, 8)
+	// Keep the test-specific debounce shorter than production for speed, while
+	// still leaving enough margin to avoid CI scheduler jitter flakiness.
+	out := debounceSignals(ctx, in, 120*time.Millisecond)
+
+	in <- struct{}{}
+	time.Sleep(30 * time.Millisecond)
+	in <- struct{}{}
+	time.Sleep(30 * time.Millisecond)
+	in <- struct{}{}
+
+	select {
+	case <-out:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for first debounced trigger")
+	}
+
+	select {
+	case <-out:
+		t.Fatal("got unexpected extra trigger for a single burst")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	in <- struct{}{}
+	select {
+	case <-out:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for second debounced trigger")
+	}
+}
+
+func TestRunApplyMode(t *testing.T) {
+	t.Run("watch mode continues after initial apply failure", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		var stderr bytes.Buffer
+		cmd.SetErr(&stderr)
+		cmd.SetOut(io.Discard)
+
+		wantErr := fmt.Errorf("apply failed")
+		watchCalled := false
+		err := runApplyMode(
+			context.Background(),
+			cmd,
+			"deck.md",
+			true,
+			func(context.Context) error { return wantErr },
+			func(context.Context, *cobra.Command, string, func(context.Context) error) error {
+				watchCalled = true
+				return nil
+			},
+		)
+		if err != nil {
+			t.Fatalf("runApplyMode returned error in watch mode: %v", err)
+		}
+		if !watchCalled {
+			t.Fatal("watch mode should continue into watchApply after the initial apply failure")
+		}
+		if got := stderr.String(); !strings.Contains(got, wantErr.Error()) {
+			t.Fatalf("stderr %q does not contain initial apply error %q", got, wantErr.Error())
+		}
+	})
+
+	t.Run("one-shot mode returns initial apply failure", func(t *testing.T) {
+		wantErr := fmt.Errorf("apply failed")
+		watchCalled := false
+		err := runApplyMode(
+			context.Background(),
+			&cobra.Command{},
+			"deck.md",
+			false,
+			func(context.Context) error { return wantErr },
+			func(context.Context, *cobra.Command, string, func(context.Context) error) error {
+				watchCalled = true
+				return nil
+			},
+		)
+		if err != wantErr {
+			t.Fatalf("runApplyMode error = %v, want %v", err, wantErr)
+		}
+		if watchCalled {
+			t.Fatal("one-shot mode must not enter watch mode after an apply failure")
+		}
+	})
+}
+
+func TestApplyCmdRejectsWatchWithTemplate(t *testing.T) {
+	origWatch := applyWatch
+	origTemplate := applyTemplate
+	t.Cleanup(func() {
+		applyWatch = origWatch
+		applyTemplate = origTemplate
+		rootCmd.SetArgs(nil)
+	})
+
+	rootCmd.SetArgs([]string{"apply", "--watch", "--template", "template.pptx", "deck.md"})
+	var out bytes.Buffer
+	rootCmd.SetOut(&out)
+	rootCmd.SetErr(&out)
+
+	_, err := rootCmd.ExecuteC()
+	if err == nil {
+		t.Fatal("expected argument parsing error when --watch and --template are both set")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "--watch and --template cannot be used together") {
+		t.Fatalf("error %q does not contain the expected incompatibility guidance", msg)
+	}
+	if !strings.Contains(msg, "set template in the config file") {
+		t.Fatalf("error %q does not contain the config-based workaround", msg)
+	}
+}
+
+func TestWatchApplyReturnsWhenDebouncedChannelCloses(t *testing.T) {
+	dir := t.TempDir()
+	deck := filepath.Join(dir, "deck.md")
+	if err := os.WriteFile(deck, []byte("# title\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	orig := debounceWatchSignals
+	debounceWatchSignals = func(context.Context, <-chan struct{}, time.Duration) <-chan struct{} {
+		ch := make(chan struct{})
+		close(ch)
+		return ch
+	}
+	t.Cleanup(func() {
+		debounceWatchSignals = orig
+	})
+
+	applyCalls := 0
+	err := watchApply(context.Background(), &cobra.Command{}, deck, func(context.Context) error {
+		applyCalls++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("watchApply returned error: %v", err)
+	}
+	if applyCalls != 0 {
+		t.Fatalf("watchApply called apply %d times after the debounced channel closed, want 0", applyCalls)
+	}
 }
 
 // TestApplyUpdatesTitleOnlyChange verifies that editing only the deck title
