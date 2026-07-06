@@ -1140,14 +1140,13 @@ func TestAnchorsReordered(t *testing.T) {
 	}
 }
 
-// TestApplyOrphanedKeyedSlideReusedByFrozenPage documents design B: an existing
-// slide whose stable key is no longer present in the deck source is "orphaned"
-// and is no longer reserved for key matching, so it may be re-paired by
-// position. A frozen page occupying that position therefore keeps the existing
-// slide (freeze's defined behavior) and the final stamping pass clears the
-// now-absent key. This is the deliberate trade-off that lets a renamed key
-// re-pair with its slide (see TestApplyRenamedKeyReclaimsFrozenSlide).
-func TestApplyOrphanedKeyedSlideReusedByFrozenPage(t *testing.T) {
+// TestApplyKeylessFrozenPageDoesNotReuseOrphanedKeyedSlide guards Phase 2: a
+// keyless frozen source slide must not be positionally paired with an existing
+// slide whose stable key is absent from the new source (orphaned). Only a keyed
+// source (a likely rename) may reclaim an orphaned keyed slide, so freeze can't
+// wrongly reuse a removed keyed slide's content. The stamping pass then clears
+// the now-absent key.
+func TestApplyKeylessFrozenPageDoesNotReuseOrphanedKeyedSlide(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "deck.pptx")
 
@@ -1160,11 +1159,39 @@ func TestApplyOrphanedKeyedSlideReusedByFrozenPage(t *testing.T) {
 	applyUpdateForTest(t, v2, out, "")
 
 	slide1 := string(readSlidePartsForTest(t, out)["ppt/slides/slide1.xml"])
-	if !strings.Contains(slide1, "keep body") {
-		t.Errorf("frozen page should keep the existing slide at its position:\n%.400s", slide1)
+	if !strings.Contains(slide1, "other body") {
+		t.Errorf("keyless frozen slide should be regenerated to its own content:\n%.400s", slide1)
 	}
-	if strings.Contains(slide1, `k="k"`) {
-		t.Errorf("orphaned key 'k' should have been cleared by the stamping pass:\n%.400s", slide1)
+	if strings.Contains(slide1, "keep body") {
+		t.Errorf("orphaned keyed slide 'k' was wrongly reused by a keyless frozen page:\n%.400s", slide1)
+	}
+}
+
+// TestApplyDeletedKeyedSlideDoesNotDivertFrozenNeighbor is the multi-slide
+// regression for the same guard: deleting a keyed slide that precedes a modified
+// keyless frozen slide must keep the frozen slide's own previous content, not
+// the deleted keyed slide's content.
+func TestApplyDeletedKeyedSlideDoesNotDivertFrozenNeighbor(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "deck.pptx")
+
+	const v1 = "# A\n\n<!-- {\"key\":\"a\"} -->\n\naaa\n\n---\n\n# B\n\n<!-- {\"freeze\":true} -->\n\nbbb\n"
+	applyFreshForTest(t, v1, out, "")
+
+	// Delete keyed slide A; keep frozen slide B with edited source.
+	const v2 = "# B\n\n<!-- {\"freeze\":true} -->\n\nbbb edited\n"
+	applyUpdateForTest(t, v2, out, "")
+
+	parts := readSlidePartsForTest(t, out)
+	if len(parts) != 1 {
+		t.Fatalf("expected 1 slide after deleting A, got %d", len(parts))
+	}
+	slide1 := string(parts["ppt/slides/slide1.xml"])
+	if !strings.Contains(slide1, "bbb") || strings.Contains(slide1, "bbb edited") {
+		t.Errorf("frozen slide B should keep its own previous content verbatim:\n%.400s", slide1)
+	}
+	if strings.Contains(slide1, "aaa") {
+		t.Errorf("frozen slide B was diverted onto deleted keyed slide A's content:\n%.400s", slide1)
 	}
 }
 

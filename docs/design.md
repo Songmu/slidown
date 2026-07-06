@@ -218,9 +218,11 @@ matches. Because matching is key-based, reuse and `freeze` follow a slide across
 inserts, deletions and reordering rather than being tied to its position.
 
 A key that no longer appears in the deck source is **orphaned** (its page was
-renamed or removed). Orphaned-key slides are *not* reserved for key matching, so
-a page whose key was renamed can re-pair with its slide by position; a still
-present key is reserved so a keyless page cannot steal a merely reordered slide.
+renamed or removed). An orphaned-key slide may be re-paired positionally only by
+a **keyed** source slide — a likely key rename — so a renamed page can re-claim
+its slide, while a keyless page can't divert onto an unrelated removed keyed
+slide. A key still present stays reserved so a keyless page cannot steal a merely
+reordered slide.
 
 ### Authoritative key stamping
 

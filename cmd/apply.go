@@ -296,16 +296,16 @@ func alignSlides(source slidown.Slides, existing []pptx.SlideMeta,
 
 	// sourceKeySet holds the stable keys still present in the deck source. An
 	// existing slide whose key is not in this set is "orphaned" (its source page
-	// was renamed or removed); such slides are treated as keyless for positional
-	// alignment so a renamed/frozen page can re-pair with them by position (and a
-	// later stamping pass re-tags them with the current key).
+	// was renamed or removed). Orphaned-key slides are eligible for positional
+	// re-pairing, but only by a keyed source slide (see keyBlocksPositional), so
+	// a renamed keyed page can re-claim its slide while a keyless page cannot
+	// accidentally divert onto an unrelated removed keyed slide.
 	sourceKeySet := make(map[string]bool)
 	for _, s := range rendered {
 		if s.Key != "" {
 			sourceKeySet[s.Key] = true
 		}
 	}
-	keyReserved := func(k string) bool { return k != "" && sourceKeySet[k] }
 
 	pairOld := make([]int, n)
 	for i := range pairOld {
@@ -375,9 +375,11 @@ func alignSlides(source slidown.Slides, existing []pptx.SlideMeta,
 	// slides whose stable key is still present in the source are reserved for key
 	// matching (Phase 1a): they are never claimed positionally, so a keyless
 	// source can't accidentally reuse (or freeze onto) a keyed page that was
-	// merely reordered out of this segment. Slides with an orphaned key (one no
-	// longer present in the source) are not reserved, so a page whose key was
-	// renamed can re-pair with its slide by position.
+	// merely reordered out of this segment. A slide with an orphaned key (one no
+	// longer present in the source) may be claimed only by a keyed source slide —
+	// a likely key rename — so its slide is re-paired and later re-stamped, while
+	// a keyless source (e.g. a frozen page after an unrelated keyed slide was
+	// deleted) still skips it and keeps its own positional counterpart.
 	ei := 0
 	for i := range rendered {
 		if pairOld[i] >= 0 {
@@ -386,10 +388,11 @@ func alignSlides(source slidown.Slides, existing []pptx.SlideMeta,
 			}
 			continue
 		}
-		for ei < m && !isAnchorTarget[ei] && (oldUsed[ei] || keyReserved(existing[ei].Key)) {
+		srcKeyed := rendered[i].Key != ""
+		for ei < m && !isAnchorTarget[ei] && (oldUsed[ei] || keyBlocksPositional(existing[ei].Key, srcKeyed, sourceKeySet)) {
 			ei++
 		}
-		if ei < m && !oldUsed[ei] && !isAnchorTarget[ei] && !keyReserved(existing[ei].Key) {
+		if ei < m && !oldUsed[ei] && !isAnchorTarget[ei] && !keyBlocksPositional(existing[ei].Key, srcKeyed, sourceKeySet) {
 			pairOld[i] = ei
 			oldUsed[ei] = true
 			ei++
@@ -425,6 +428,23 @@ func alignSlides(source slidown.Slides, existing []pptx.SlideMeta,
 		}
 	}
 	return reuse, shapeMerge
+}
+
+// keyBlocksPositional reports whether an existing slide's stable key prevents it
+// from being claimed positionally in Phase 2. A key still present in the source
+// (sourceKeys) is always reserved for key anchoring. An orphaned key (absent
+// from the source) blocks only keyless source slides: a keyed source slide (a
+// likely key rename) may re-pair with the slide, but a keyless page must not, so
+// deleting a keyed slide can't divert a neighbouring keyless (frozen) page onto
+// the removed slide's content.
+func keyBlocksPositional(existingKey string, srcKeyed bool, sourceKeys map[string]bool) bool {
+	if existingKey == "" {
+		return false
+	}
+	if sourceKeys[existingKey] {
+		return true
+	}
+	return !srcKeyed
 }
 
 // renderedSlides returns the source slides that produce an output slide, in
