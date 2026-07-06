@@ -166,7 +166,7 @@ type xmlRunPr struct {
 	Baseline  string       `xml:"baseline,attr"`
 	SolidFill xmlSolidFill `xml:"solidFill"`
 	Highlight xmlHighlight `xml:"highlight"`
-	Latin struct {
+	Latin     struct {
 		Typeface string `xml:"typeface,attr"`
 	} `xml:"latin"`
 }
