@@ -15,6 +15,12 @@ Slides or PowerPoint — without rewriting your slides.
 
 ## Installation
 
+**Homebrew:**
+
+```console
+$ brew install Songmu/tap/slidown
+```
+
 **go install:**
 
 ```console
