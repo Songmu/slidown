@@ -670,7 +670,7 @@ func TestRunApplyMode(t *testing.T) {
 			t.Fatal("watch mode should continue into watchApply after the initial apply failure")
 		}
 		if got := stderr.String(); !strings.Contains(got, wantErr.Error()) {
-			t.Fatalf("stderr %q does not contain initial apply error %q", got, wantErr)
+			t.Fatalf("stderr %q does not contain initial apply error %q", got, wantErr.Error())
 		}
 	})
 
