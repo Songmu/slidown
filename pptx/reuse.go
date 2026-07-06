@@ -29,6 +29,13 @@ func MergeReusingUnchangedSlides(existingPath string, newPPTX []byte, reuse map[
 	if err != nil {
 		return nil, err
 	}
+	return mergeReusingUnchangedSlides(oldParts, newPPTX, reuse)
+}
+
+// mergeReusingUnchangedSlides implements MergeReusingUnchangedSlides on
+// already-parsed existing parts. It only reads oldParts, so the caller may keep
+// reusing the parsed package afterwards.
+func mergeReusingUnchangedSlides(oldParts map[string][]byte, newPPTX []byte, reuse map[int]string) ([]byte, error) {
 	newParts, newOrder, err := readZipPartsFromBytes(newPPTX)
 	if err != nil {
 		return nil, err

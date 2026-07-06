@@ -38,7 +38,14 @@ func ReadSlideMetasAndCoreTitle(path string) ([]SlideMeta, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	metas, title := slideMetasAndCoreTitle(parts)
+	return metas, title, nil
+}
 
+// slideMetasAndCoreTitle extracts the per-slide metadata (in slide order) and
+// the deck title from already-parsed package parts, so callers that have read
+// the .pptx once can reuse the parsed parts instead of inflating it again.
+func slideMetasAndCoreTitle(parts map[string][]byte) ([]SlideMeta, string) {
 	slideNames := slideNamesFromPresentationOrder(parts)
 	if len(slideNames) == 0 {
 		slideNames = slideNamesByFileName(parts)
@@ -50,7 +57,7 @@ func ReadSlideMetasAndCoreTitle(path string) ([]SlideMeta, string, error) {
 		m.PartName = name
 		metas = append(metas, m)
 	}
-	return metas, coreTitle(parts["docProps/core.xml"]), nil
+	return metas, coreTitle(parts["docProps/core.xml"])
 }
 
 // ReadCoreTitle returns the dc:title recorded in a .pptx file's

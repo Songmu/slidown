@@ -366,13 +366,19 @@ func ShapeSignaturesByPart(path string) (map[string][]ShapeSignature, error) {
 	if err != nil {
 		return nil, err
 	}
+	return shapeSignaturesByPart(parts), nil
+}
+
+// shapeSignaturesByPart implements ShapeSignaturesByPart on already-parsed
+// package parts, so a caller that has read the .pptx once can reuse the parts.
+func shapeSignaturesByPart(parts map[string][]byte) map[string][]ShapeSignature {
 	out := map[string][]ShapeSignature{}
 	for name, data := range parts {
 		if strings.HasPrefix(name, "ppt/slides/slide") && strings.HasSuffix(name, ".xml") {
 			out[name] = shapeSignatures(data)
 		}
 	}
-	return out, nil
+	return out
 }
 
 // ShapeOverlap returns the fraction of shapes shared by two slides, matching by
@@ -417,11 +423,21 @@ func MergeReusingUnchangedShapes(pkg []byte, existingPath string, targets map[in
 	if len(targets) == 0 {
 		return pkg, nil
 	}
-	parts, order, err := readZipPartsFromBytes(pkg)
+	oldParts, _, err := readZipPartsFromPath(existingPath)
 	if err != nil {
 		return nil, err
 	}
-	oldParts, _, err := readZipPartsFromPath(existingPath)
+	return mergeReusingUnchangedShapes(pkg, oldParts, targets)
+}
+
+// mergeReusingUnchangedShapes implements MergeReusingUnchangedShapes on
+// already-parsed existing parts. It only reads oldParts, so the caller may keep
+// reusing the parsed package afterwards.
+func mergeReusingUnchangedShapes(pkg []byte, oldParts map[string][]byte, targets map[int]string) ([]byte, error) {
+	if len(targets) == 0 {
+		return pkg, nil
+	}
+	parts, order, err := readZipPartsFromBytes(pkg)
 	if err != nil {
 		return nil, err
 	}

@@ -161,13 +161,14 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, 
 	// This is safe here because an existing output is always rebuilt using
 	// itself as the template (apply refuses --template when the output already
 	// exists), so its design parts are unchanged.
-	if existing, existingTitle, err := pptx.ReadSlideMetasAndCoreTitle(out); err == nil {
+	if pkg, err := pptx.OpenPackage(out); err == nil {
+		existing, existingTitle := pkg.SlideMetasAndCoreTitle()
 		// Per-shape signatures for the freshly generated package and the existing
 		// file feed the shape-level similarity gate. Read best-effort: on failure
-		// the maps are nil, the gate sees zero overlap and no shape-level merge
-		// is attempted (safe fallback to whole-slide regeneration).
+		// the new-side map is nil, the gate sees zero overlap and no shape-level
+		// merge is attempted (safe fallback to whole-slide regeneration).
 		newSigs, _ := pptx.ShapeSignaturesByPosition(newPPTX)
-		oldSigs, _ := pptx.ShapeSignaturesByPart(out)
+		oldSigs := pkg.ShapeSignaturesByPart()
 		reuse, shapeMerge := alignSlides(sourceSlides, existing, newSigs, oldSigs)
 		switch {
 		case isIdentityReuse(reuse, existing, len(renderedSlides(sourceSlides))):
@@ -179,7 +180,7 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, 
 			if existingTitle == desiredTitle {
 				return true, nil
 			}
-			merged, err := pptx.ReplaceCoreProps(out, newPPTX)
+			merged, err := pkg.ReplaceCoreProps(newPPTX)
 			if err != nil {
 				return false, err
 			}
@@ -190,14 +191,14 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, 
 		case len(reuse) > 0 || len(shapeMerge) > 0:
 			var merged []byte
 			if len(reuse) > 0 {
-				merged, err = pptx.MergeReusingUnchangedSlides(out, newPPTX, reuse)
+				merged, err = pkg.MergeReusingUnchangedSlides(newPPTX, reuse)
 			} else {
-				merged, err = pptx.MergeWithExisting(out, newPPTX)
+				merged, err = pkg.MergeWith(newPPTX)
 			}
 			if err != nil {
 				return false, err
 			}
-			merged, err = pptx.MergeReusingUnchangedShapes(merged, out, shapeMerge)
+			merged, err = pkg.MergeReusingUnchangedShapes(merged, shapeMerge)
 			if err != nil {
 				return false, err
 			}

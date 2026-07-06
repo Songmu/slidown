@@ -59,6 +59,12 @@ func MergeWithExisting(existingPath string, newPPTX []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	return mergeWithExisting(oldParts, oldOrder, newPPTX)
+}
+
+// mergeWithExisting implements MergeWithExisting on already-parsed existing
+// parts, so a caller that has read the existing package once can reuse it.
+func mergeWithExisting(oldParts map[string][]byte, oldOrder []string, newPPTX []byte) ([]byte, error) {
 	newParts, newOrder, err := readZipPartsFromBytes(newPPTX)
 	if err != nil {
 		return nil, err
@@ -108,6 +114,13 @@ func ReplaceCoreProps(existingPath string, newPPTX []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	return replaceCoreProps(oldParts, oldOrder, newPPTX)
+}
+
+// replaceCoreProps implements ReplaceCoreProps on already-parsed existing parts.
+// It does not mutate the passed-in oldParts map (it shallow-copies before
+// swapping the core part) so the caller may keep reusing the parsed package.
+func replaceCoreProps(oldParts map[string][]byte, oldOrder []string, newPPTX []byte) ([]byte, error) {
 	newParts, _, err := readZipPartsFromBytes(newPPTX)
 	if err != nil {
 		return nil, err
@@ -119,12 +132,16 @@ func ReplaceCoreProps(existingPath string, newPPTX []byte) ([]byte, error) {
 		// broken generated package rather than a normal case.
 		return nil, fmt.Errorf("generated package is missing %s", coreName)
 	}
+	parts := make(map[string][]byte, len(oldParts))
+	for name, data := range oldParts {
+		parts[name] = data
+	}
 	order := oldOrder
-	if _, existed := oldParts[coreName]; !existed {
+	if _, existed := parts[coreName]; !existed {
 		order = append(append([]string(nil), oldOrder...), coreName)
 	}
-	oldParts[coreName] = newCore
-	return zipFromParts(order, oldParts)
+	parts[coreName] = newCore
+	return zipFromParts(order, parts)
 }
 
 func readZipPartsFromPath(path string) (map[string][]byte, []string, error) {
