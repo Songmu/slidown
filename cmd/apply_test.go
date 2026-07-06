@@ -378,6 +378,41 @@ func injectZipPartForTest(t *testing.T, path, name string, data []byte) {
 	}
 }
 
+// slideMetaExtRe matches the slidown fingerprint extLst embedded in a slide, so
+// tests can strip it to simulate a slide imported from another presentation
+// (which carries no slidown metadata).
+var slideMetaExtRe = regexp.MustCompile(`<p:extLst><p:ext uri="\{[^"]+\}"><slidown:fp[^>]*/></p:ext></p:extLst>`)
+
+// stripSlideMetaForTest rewrites a .pptx file removing the slidown fingerprint
+// extension from every slide, simulating slides pasted in from another deck.
+func stripSlideMetaForTest(t *testing.T, path string) {
+	t.Helper()
+	parts := zipRawPartsForTest(t, path)
+	for name, data := range parts {
+		if !strings.HasPrefix(name, "ppt/slides/slide") || !strings.HasSuffix(name, ".xml") {
+			continue
+		}
+		parts[name] = slideMetaExtRe.ReplaceAll(data, nil)
+	}
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for n, d := range parts {
+		fw, err := zw.Create(n)
+		if err != nil {
+			t.Fatalf("zip create %s: %v", n, err)
+		}
+		if _, err := fw.Write(d); err != nil {
+			t.Fatalf("zip write %s: %v", n, err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("zip close: %v", err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+}
+
 // TestApplyIncrementalReuse covers the incremental-rebuild behavior: applying a
 // deck, then re-applying a changed deck to the same output, and asserting which
 // slides are reused verbatim (unchanged or frozen) and which are regenerated.
@@ -1105,27 +1140,111 @@ func TestAnchorsReordered(t *testing.T) {
 	}
 }
 
-// TestApplyKeylessFrozenSlideDoesNotReuseKeyedSlide guards Phase 2 alignment: a
-// keyless (frozen) source slide must not be positionally paired with an existing
-// slide that carries a stable key but is absent from the new source. Otherwise
-// Freeze would wrongly reuse the removed keyed slide's content.
-func TestApplyKeylessFrozenSlideDoesNotReuseKeyedSlide(t *testing.T) {
+// TestApplyKeylessFrozenPageDoesNotReuseOrphanedKeyedSlide guards Phase 2: a
+// keyless frozen source slide must not be positionally paired with an existing
+// slide whose stable key is absent from the new source (orphaned). Only a keyed
+// source (a likely rename) may reclaim an orphaned keyed slide, so freeze can't
+// wrongly reuse a removed keyed slide's content. The stamping pass then clears
+// the now-absent key.
+func TestApplyKeylessFrozenPageDoesNotReuseOrphanedKeyedSlide(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "deck.pptx")
 
 	const v1 = "# Keep\n\n<!-- {\"key\":\"k\"} -->\n\nkeep body\n"
 	applyFreshForTest(t, v1, out, "")
 
-	// New source has no slide with key "k"; instead a keyless frozen slide with
-	// different content sits at the same position.
+	// New source has no slide with key "k"; a keyless frozen slide sits at the
+	// same position.
 	const v2 = "# Other\n\n<!-- {\"freeze\": true} -->\n\nother body\n"
 	applyUpdateForTest(t, v2, out, "")
 
 	slide1 := string(readSlidePartsForTest(t, out)["ppt/slides/slide1.xml"])
 	if !strings.Contains(slide1, "other body") {
-		t.Errorf("expected the keyless slide to be regenerated to its own content:\n%.400s", slide1)
+		t.Errorf("keyless frozen slide should be regenerated to its own content:\n%.400s", slide1)
 	}
 	if strings.Contains(slide1, "keep body") {
-		t.Errorf("keyed slide 'k' (absent from the new source) was wrongly reused:\n%.400s", slide1)
+		t.Errorf("orphaned keyed slide 'k' was wrongly reused by a keyless frozen page:\n%.400s", slide1)
+	}
+}
+
+// TestApplyDeletedKeyedSlideDoesNotDivertFrozenNeighbor is the multi-slide
+// regression for the same guard: deleting a keyed slide that precedes a modified
+// keyless frozen slide must keep the frozen slide's own previous content, not
+// the deleted keyed slide's content.
+func TestApplyDeletedKeyedSlideDoesNotDivertFrozenNeighbor(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "deck.pptx")
+
+	const v1 = "# A\n\n<!-- {\"key\":\"a\"} -->\n\naaa\n\n---\n\n# B\n\n<!-- {\"freeze\":true} -->\n\nbbb\n"
+	applyFreshForTest(t, v1, out, "")
+
+	// Delete keyed slide A; keep frozen slide B with edited source.
+	const v2 = "# B\n\n<!-- {\"freeze\":true} -->\n\nbbb edited\n"
+	applyUpdateForTest(t, v2, out, "")
+
+	parts := readSlidePartsForTest(t, out)
+	if len(parts) != 1 {
+		t.Fatalf("expected 1 slide after deleting A, got %d", len(parts))
+	}
+	slide1 := string(parts["ppt/slides/slide1.xml"])
+	if !strings.Contains(slide1, "bbb") || strings.Contains(slide1, "bbb edited") {
+		t.Errorf("frozen slide B should keep its own previous content verbatim:\n%.400s", slide1)
+	}
+	if strings.Contains(slide1, "aaa") {
+		t.Errorf("frozen slide B was diverted onto deleted keyed slide A's content:\n%.400s", slide1)
+	}
+}
+
+// TestApplyRenamedKeyReclaimsFrozenSlide is the motivating case for design B and
+// the key-stamping pass: when a frozen page's key is renamed, the existing slide
+// (whose old key is now orphaned) is re-paired by position, kept verbatim by
+// freeze even though the body changed, and re-tagged with the new key so later
+// rebuilds match it by key.
+func TestApplyRenamedKeyReclaimsFrozenSlide(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "deck.pptx")
+
+	const v1 = "# Slide\n\n<!-- {\"key\":\"k1\",\"freeze\":true} -->\n\noriginal body\n"
+	applyFreshForTest(t, v1, out, "")
+
+	const v2 = "# Slide\n\n<!-- {\"key\":\"k2\",\"freeze\":true} -->\n\nedited body\n"
+	applyUpdateForTest(t, v2, out, "")
+
+	slide1 := string(readSlidePartsForTest(t, out)["ppt/slides/slide1.xml"])
+	if !strings.Contains(slide1, "original body") || strings.Contains(slide1, "edited body") {
+		t.Errorf("frozen slide should be kept verbatim across the key rename:\n%.400s", slide1)
+	}
+	if !strings.Contains(slide1, `k="k2"`) {
+		t.Errorf("slide should be re-stamped with the new key k2:\n%.400s", slide1)
+	}
+	if strings.Contains(slide1, `k="k1"`) {
+		t.Errorf("old key k1 should no longer be present:\n%.400s", slide1)
+	}
+}
+
+// TestApplyImportedSlideStampedWithKey mirrors bringing in a slide from another
+// presentation: a slide that carries no slidown metadata but sits where a keyed
+// frozen page is declared should be tagged with that key by the stamping pass,
+// so subsequent rebuilds can match it by key rather than by position.
+func TestApplyImportedSlideStampedWithKey(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "deck.pptx")
+
+	const v1 = "# Placeholder\n\n<!-- {\"key\":\"imported\",\"freeze\":true} -->\n\nplaceholder\n"
+	applyFreshForTest(t, v1, out, "")
+
+	// Simulate an imported slide by stripping all slidown metadata from slide 1,
+	// as a paste from another presentation would carry none.
+	stripSlideMetaForTest(t, out)
+	before := string(readSlidePartsForTest(t, out)["ppt/slides/slide1.xml"])
+	if strings.Contains(before, "slidown:fp") {
+		t.Fatalf("test setup failed to strip slidown metadata:\n%.400s", before)
+	}
+
+	applyUpdateForTest(t, v1, out, "")
+
+	slide1 := string(readSlidePartsForTest(t, out)["ppt/slides/slide1.xml"])
+	if !strings.Contains(slide1, `k="imported"`) {
+		t.Errorf("imported slide should be stamped with its page key:\n%.400s", slide1)
 	}
 }

@@ -96,6 +96,23 @@ changed — useful for pinning a slide you have hand-tuned in PowerPoint:
 <!-- {"freeze": true} -->
 ```
 
+To bring in a slide **pasted from another presentation**, declare a keyed,
+frozen placeholder page for it in the Markdown and paste the slide at that
+position in PowerPoint:
+
+```markdown
+# Imported slide
+
+<!-- {"key": "imported-architecture", "freeze": true} -->
+```
+
+On rebuild, `apply` pairs the placeholder with the pasted slide by position,
+keeps the pasted slide verbatim (`freeze`), and stamps the `key` onto it — so
+later rebuilds match it by key even after reordering. The deck source is
+authoritative for keys: a key renamed or removed in the Markdown is updated or
+cleared on the slide accordingly, and `freeze: true` need only stay in the
+Markdown.
+
 ### Using a template
 
 Supply a `.pptx` (or `.potx`) whose theme, slide masters and layouts should
