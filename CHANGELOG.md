@@ -1,5 +1,13 @@
 # Changelog
 
+## [v0.0.5](https://github.com/Songmu/slidown/compare/v0.0.4...v0.0.5) - 2026-07-06
+
+### Other Changes
+- Document that placeholder overflow handling differs from deck and may change by @Songmu in https://github.com/Songmu/slidown/pull/61
+- Resolve style-layout theme colors (`schemeClr`/`sysClr`) via theme `clrScheme` + master/layout color mapping by @Songmu with @Copilot in https://github.com/Songmu/slidown/pull/63
+- Preserve hand-added non-placeholder text boxes via stamped shape keys by @Songmu with @Copilot in https://github.com/Songmu/slidown/pull/64
+- Add `apply --watch` with fswatcher-based rebuild loop and debounce by @Songmu with @Copilot in https://github.com/Songmu/slidown/pull/65
+
 ## [v0.0.4](https://github.com/Songmu/slidown/compare/v0.0.3...v0.0.4) - 2026-07-06
 
 ### Other Changes
