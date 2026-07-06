@@ -102,6 +102,14 @@ func fingerprintExt(fp, key string) string {
 // rebuilds. Returns an empty string when all attributes are empty so callers can
 // drop it into the XML unconditionally.
 func shapeMetaExt(role, fp, sk string) string {
+	elem := shapeMetaElem(role, fp, sk)
+	if elem == "" {
+		return ""
+	}
+	return `<p:extLst><p:ext uri="` + shapeMetaURI + `">` + elem + `</p:ext></p:extLst>`
+}
+
+func shapeMetaElem(role, fp, sk string) string {
 	if role == "" && fp == "" && sk == "" {
 		return ""
 	}
@@ -115,9 +123,7 @@ func shapeMetaExt(role, fp, sk string) string {
 	if sk != "" {
 		attrs += ` sk="` + escapeXML(sk) + `"`
 	}
-	return `<p:extLst><p:ext uri="` + shapeMetaURI + `">` +
-		`<slidown:shape xmlns:slidown="` + fingerprintNS + `"` + attrs + `/>` +
-		`</p:ext></p:extLst>`
+	return `<slidown:shape xmlns:slidown="` + fingerprintNS + `"` + attrs + `/>`
 }
 
 func renderPicture(pic *Picture, id int, relIdx *int, rels *[]slideRel, mediaIdx *int, media *[]mediaPart) string {

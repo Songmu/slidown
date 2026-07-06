@@ -109,7 +109,7 @@ func stampShapeKey(shapeXML []byte, key string) ([]byte, bool) {
 		return []byte(s[:loc[0]] + newElem + s[loc[1]:]), true
 	}
 
-	ext := `<p:ext uri="` + shapeMetaURI + `"><slidown:shape xmlns:slidown="` + fingerprintNS + `" sk="` + escapeXML(key) + `"/></p:ext>`
+	ext := `<p:ext uri="` + shapeMetaURI + `">` + shapeMetaElem("", "", key) + `</p:ext>`
 	if strings.Contains(s, `<p:nvPr/>`) {
 		return []byte(strings.Replace(s, `<p:nvPr/>`, `<p:nvPr><p:extLst>`+ext+`</p:extLst></p:nvPr>`, 1)), true
 	}
