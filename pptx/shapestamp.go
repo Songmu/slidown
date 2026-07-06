@@ -9,6 +9,10 @@ import (
 
 var shapeElemRe = regexp.MustCompile(`<slidown:shape\b[^>]*/>`)
 
+// emptyNvPrRe matches a self-closing empty <p:nvPr/>, tolerating whitespace
+// before the slash (e.g. "<p:nvPr />") as produced by some XML serializers.
+var emptyNvPrRe = regexp.MustCompile(`<p:nvPr\s*/>`)
+
 // StampShapeKeys stamps stable keys on keyless non-placeholder top-level shapes
 // in every slide part. Stamping is idempotent and only touches shape metadata
 // extensions, which are excluded from source fingerprints.
@@ -110,8 +114,8 @@ func stampShapeKey(shapeXML []byte, key string) ([]byte, bool) {
 	}
 
 	ext := `<p:ext uri="` + shapeMetaURI + `">` + shapeMetaElem("", "", key) + `</p:ext>`
-	if strings.Contains(s, `<p:nvPr/>`) {
-		return []byte(strings.Replace(s, `<p:nvPr/>`, `<p:nvPr><p:extLst>`+ext+`</p:extLst></p:nvPr>`, 1)), true
+	if loc := emptyNvPrRe.FindStringIndex(s); loc != nil {
+		return []byte(s[:loc[0]] + `<p:nvPr><p:extLst>` + ext + `</p:extLst></p:nvPr>` + s[loc[1]:]), true
 	}
 	nvClose := strings.Index(s, `</p:nvPr>`)
 	if nvClose < 0 {

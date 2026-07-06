@@ -221,3 +221,35 @@ func TestStampShapeKeysIdempotent(t *testing.T) {
 		t.Fatalf("manual shape key was not stamped: %s", slide1)
 	}
 }
+
+func TestStampShapeKeysHandlesSpacedSelfClosingNvPr(t *testing.T) {
+	in := twoSlidePresentationWithFingerprints(t, "fp-1", "fp-2")
+	parts, order, err := readZipPartsFromBytes(in)
+	if err != nil {
+		t.Fatalf("readZipPartsFromBytes: %v", err)
+	}
+	// Some serializers emit "<p:nvPr />" (space before the slash) for a
+	// hand-added text box; stamping must still apply.
+	parts["ppt/slides/slide1.xml"] = []byte(strings.Replace(string(parts["ppt/slides/slide1.xml"]), `</p:spTree>`,
+		`<p:sp><p:nvSpPr><p:cNvPr id="9" name="Manual Box"/><p:cNvSpPr/><p:nvPr /></p:nvSpPr><p:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>manual keep</a:t></a:r></a:p></p:txBody></p:sp></p:spTree>`, 1))
+	withManual, err := zipFromParts(order, parts)
+	if err != nil {
+		t.Fatalf("zipFromParts: %v", err)
+	}
+
+	stamped, err := StampShapeKeys(withManual)
+	if err != nil {
+		t.Fatalf("StampShapeKeys: %v", err)
+	}
+	stampedParts, _, err := readZipPartsFromBytes(stamped)
+	if err != nil {
+		t.Fatalf("readZipPartsFromBytes(stamped): %v", err)
+	}
+	slide1 := string(stampedParts["ppt/slides/slide1.xml"])
+	if !strings.Contains(slide1, `sk="shape#9"`) {
+		t.Fatalf("shape with spaced self-closing nvPr was not stamped: %s", slide1)
+	}
+	if !strings.Contains(slide1, `<p:nvPr><p:extLst>`) {
+		t.Fatalf("spaced nvPr was not expanded to carry the extension: %s", slide1)
+	}
+}
