@@ -212,3 +212,13 @@ Visual order is resolved from each placeholder's geometry, inherited from the
 slide master when the layout itself does not position the placeholder. When the
 layout exposes **no** subtitle placeholder at all, every subtitle is folded into
 the first body placeholder as emphasized (bold) lead paragraphs instead.
+
+> [!NOTE]
+> **Placeholder overflow handling differs from `deck` and may change.** When
+> content exceeds the available placeholders, `slidown` keeps it rather than
+> dropping it: extra body groups overflow into the last body placeholder, and
+> when a layout has no subtitle placeholder the subtitles are folded into the
+> first body placeholder. `deck` currently leaves such unmatched content
+> unrendered. This overflow/fold behavior is not yet a stable contract and may
+> change in a future release — possibly to align `slidown` and `deck` with each
+> other.

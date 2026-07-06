@@ -176,7 +176,9 @@ Within each slide, headings are mapped to placeholders by depth:
 
 See [docs/markdown.md](docs/markdown.md) for the full Markdown reference,
 including supported/unsupported features, inline-style mappings and
-line-break handling.
+line-break handling. A few edge behaviors (notably how content that overflows
+the available placeholders is handled) currently differ from `deck` and are not
+yet a stable contract; these are called out inline in that reference.
 
 ## Configuration file
 
