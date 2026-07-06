@@ -2,7 +2,7 @@ package slidown
 
 const (
 	Name    = "slidown"
-	Version = "0.0.4"
+	Version = "0.0.5"
 )
 
 var Revision = "HEAD"
