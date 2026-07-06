@@ -13,12 +13,14 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/config"
 	"github.com/Songmu/slidown/md"
 	"github.com/Songmu/slidown/pptx"
 	"github.com/Songmu/slidown/render"
+	"github.com/fswatcher/fswatcher"
 )
 
 const (
@@ -570,6 +572,72 @@ func TestResolveApplyTemplate(t *testing.T) {
 			t.Errorf("got %q, want built-in design (empty)", got)
 		}
 	})
+}
+
+func TestIsDeckFileEvent(t *testing.T) {
+	dir := t.TempDir()
+	deck := filepath.Join(dir, "deck.md")
+	if err := os.WriteFile(deck, []byte("# title\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	canonicalDeck, err := canonicalizeWatchPath(deck)
+	if err != nil {
+		t.Fatalf("canonicalizeWatchPath: %v", err)
+	}
+
+	samePathName, err := fswatcher.Canonicalize(filepath.Join(dir, ".", "deck.md"))
+	if err != nil {
+		t.Fatalf("Canonicalize same path: %v", err)
+	}
+	if !isDeckFileEvent(samePathName, canonicalDeck) {
+		t.Fatalf("same deck path should match watched deck")
+	}
+
+	other := filepath.Join(dir, "other.md")
+	if err := os.WriteFile(other, []byte("# other\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile other: %v", err)
+	}
+	otherName, err := fswatcher.Canonicalize(other)
+	if err != nil {
+		t.Fatalf("Canonicalize other path: %v", err)
+	}
+	if isDeckFileEvent(otherName, canonicalDeck) {
+		t.Fatalf("different file should not match watched deck")
+	}
+}
+
+func TestDebounceSignals(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	in := make(chan struct{}, 8)
+	out := debounceSignals(ctx, in, 40*time.Millisecond)
+
+	in <- struct{}{}
+	time.Sleep(10 * time.Millisecond)
+	in <- struct{}{}
+	time.Sleep(10 * time.Millisecond)
+	in <- struct{}{}
+
+	select {
+	case <-out:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for first debounced trigger")
+	}
+
+	select {
+	case <-out:
+		t.Fatal("got unexpected extra trigger for a single burst")
+	case <-time.After(80 * time.Millisecond):
+	}
+
+	in <- struct{}{}
+	select {
+	case <-out:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for second debounced trigger")
+	}
 }
 
 // TestApplyUpdatesTitleOnlyChange verifies that editing only the deck title

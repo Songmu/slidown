@@ -2,16 +2,20 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/config"
 	"github.com/Songmu/slidown/md"
 	"github.com/Songmu/slidown/pptx"
 	"github.com/Songmu/slidown/render"
+	"github.com/fswatcher/fswatcher"
 	"github.com/spf13/cobra"
 )
 
@@ -19,6 +23,7 @@ var (
 	applyOutput              string
 	applyCodeBlockToImageCmd string
 	applyTemplate            string
+	applyWatch               bool
 )
 
 var applyCmd = &cobra.Command{
@@ -40,69 +45,202 @@ choose a different --output, or remove the existing file first.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		f := args[0]
-
-		cfg, err := config.Load(profile)
-		if err != nil {
-			return fmt.Errorf("failed to load config: %w", err)
+		ctx := cmd.Context()
+		if applyWatch {
+			var stop context.CancelFunc
+			ctx, stop = signal.NotifyContext(ctx, os.Interrupt)
+			defer stop()
+		}
+		applyOnce := func(runCtx context.Context) error {
+			return applyDeck(runCtx, cmd, f)
 		}
 
-		m, err := md.ParseFile(f, cfg)
-		if err != nil {
+		if err := applyOnce(ctx); err != nil {
 			return err
 		}
-
-		out := applyOutput
-		if out == "" && m.Frontmatter != nil && m.Frontmatter.Output != "" {
-			out = m.Frontmatter.Output
-		}
-		if out == "" {
-			out = defaultOutputPath(f)
-		}
-
-		var cfgTemplate string
-		if cfg != nil {
-			cfgTemplate = cfg.Template
-		}
-		templatePath, err := resolveApplyTemplate(out, applyTemplate, cfgTemplate)
-		if err != nil {
-			return err
-		}
-
-		slides, err := m.ToSlides(cmd.Context(), applyCodeBlockToImageCmd)
-		if err != nil {
-			return fmt.Errorf("failed to convert markdown to slides: %w", err)
-		}
-
-		var pres *pptx.Presentation
-		if templatePath != "" {
-			tmpl, err := pptx.LoadTemplate(templatePath)
-			if err != nil {
-				return fmt.Errorf("failed to load template: %w", err)
+		if applyWatch {
+			if err := watchApply(ctx, cmd, f, applyOnce); err != nil {
+				return err
 			}
-			pres = render.ToPresentationWithTemplate(slides, tmpl)
-		} else {
-			pres = render.ToPresentation(slides)
-		}
-		if m.Frontmatter != nil {
-			pres.Title = m.Frontmatter.Title
-		}
-
-		var buf bytes.Buffer
-		if _, err := pres.WriteTo(&buf); err != nil {
-			return fmt.Errorf("failed to write presentation: %w", err)
-		}
-
-		updated, err := writePresentation(out, buf.Bytes(), slides, pres.Title)
-		if err != nil {
-			return fmt.Errorf("failed to write presentation: %w", err)
-		}
-		if updated {
-			cmd.Printf("Updated %s (%d slide(s))\n", out, len(slides))
-		} else {
-			cmd.Printf("Wrote %s (%d slide(s))\n", out, len(slides))
 		}
 		return nil
 	},
+}
+
+const applyWatchDebounce = 250 * time.Millisecond
+
+func applyDeck(ctx context.Context, cmd *cobra.Command, f string) error {
+	cfg, err := config.Load(profile)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	m, err := md.ParseFile(f, cfg)
+	if err != nil {
+		return err
+	}
+
+	out := applyOutput
+	if out == "" && m.Frontmatter != nil && m.Frontmatter.Output != "" {
+		out = m.Frontmatter.Output
+	}
+	if out == "" {
+		out = defaultOutputPath(f)
+	}
+
+	var cfgTemplate string
+	if cfg != nil {
+		cfgTemplate = cfg.Template
+	}
+	templatePath, err := resolveApplyTemplate(out, applyTemplate, cfgTemplate)
+	if err != nil {
+		return err
+	}
+
+	slides, err := m.ToSlides(ctx, applyCodeBlockToImageCmd)
+	if err != nil {
+		return fmt.Errorf("failed to convert markdown to slides: %w", err)
+	}
+
+	var pres *pptx.Presentation
+	if templatePath != "" {
+		tmpl, err := pptx.LoadTemplate(templatePath)
+		if err != nil {
+			return fmt.Errorf("failed to load template: %w", err)
+		}
+		pres = render.ToPresentationWithTemplate(slides, tmpl)
+	} else {
+		pres = render.ToPresentation(slides)
+	}
+	if m.Frontmatter != nil {
+		pres.Title = m.Frontmatter.Title
+	}
+
+	var buf bytes.Buffer
+	if _, err := pres.WriteTo(&buf); err != nil {
+		return fmt.Errorf("failed to write presentation: %w", err)
+	}
+
+	updated, err := writePresentation(out, buf.Bytes(), slides, pres.Title)
+	if err != nil {
+		return fmt.Errorf("failed to write presentation: %w", err)
+	}
+	if updated {
+		cmd.Printf("Updated %s (%d slide(s))\n", out, len(slides))
+	} else {
+		cmd.Printf("Wrote %s (%d slide(s))\n", out, len(slides))
+	}
+	return nil
+}
+
+func watchApply(ctx context.Context, cmd *cobra.Command, deckPath string, apply func(context.Context) error) error {
+	absDeck, err := filepath.Abs(deckPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve deck path: %w", err)
+	}
+	canonicalDeck, err := canonicalizeWatchPath(absDeck)
+	if err != nil {
+		return fmt.Errorf("failed to canonicalize deck path: %w", err)
+	}
+
+	w, err := fswatcher.NewWatcher()
+	if err != nil {
+		return fmt.Errorf("failed to create watcher: %w", err)
+	}
+	defer w.Close()
+
+	watchDir := filepath.Dir(absDeck)
+	if err := w.Add(watchDir, fswatcher.Write|fswatcher.Create|fswatcher.Rename|fswatcher.Remove); err != nil {
+		return fmt.Errorf("failed to watch %q: %w", watchDir, err)
+	}
+
+	triggers := make(chan struct{}, 1)
+	defer close(triggers)
+	debounced := debounceSignals(ctx, triggers, applyWatchDebounce)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case ev, ok := <-w.Events:
+			if !ok {
+				return nil
+			}
+			if !isDeckFileEvent(ev.Name, canonicalDeck) {
+				continue
+			}
+			select {
+			case triggers <- struct{}{}:
+			default:
+			}
+		case err, ok := <-w.Errors:
+			if !ok {
+				continue
+			}
+			cmd.PrintErrf("watch error: %v\n", err)
+		case <-debounced:
+			if err := apply(ctx); err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
+				cmd.PrintErrln(err)
+			}
+		}
+	}
+}
+
+func debounceSignals(ctx context.Context, in <-chan struct{}, delay time.Duration) <-chan struct{} {
+	out := make(chan struct{})
+	go func() {
+		defer close(out)
+
+		var timer *time.Timer
+		var timerC <-chan time.Time
+		for {
+			select {
+			case <-ctx.Done():
+				if timer != nil {
+					timer.Stop()
+				}
+				return
+			case _, ok := <-in:
+				if !ok {
+					if timer != nil {
+						timer.Stop()
+					}
+					return
+				}
+				if timer == nil {
+					timer = time.NewTimer(delay)
+				} else {
+					if !timer.Stop() {
+						select {
+						case <-timer.C:
+						default:
+						}
+					}
+					timer.Reset(delay)
+				}
+				timerC = timer.C
+			case <-timerC:
+				timerC = nil
+				select {
+				case out <- struct{}{}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	return out
+}
+
+func canonicalizeWatchPath(path string) (string, error) {
+	return fswatcher.Canonicalize(path)
+}
+
+func isDeckFileEvent(eventName, canonicalDeckPath string) bool {
+	return eventName == canonicalDeckPath
 }
 
 // resolveApplyTemplate decides which template (if any) apply should use, given
@@ -526,5 +664,6 @@ func init() {
 	applyCmd.Flags().StringVarP(&applyOutput, "output", "o", "", "output .pptx file path (default: DECK_FILE with .pptx extension)")
 	applyCmd.Flags().StringVarP(&applyCodeBlockToImageCmd, "code-block-to-image-command", "", "", "command to convert code blocks to images")
 	applyCmd.Flags().StringVarP(&applyTemplate, "template", "t", "", "path to a .pptx or .potx template providing the design")
+	applyCmd.Flags().BoolVarP(&applyWatch, "watch", "w", false, "watch the deck file and re-apply on changes")
 	rootCmd.AddCommand(applyCmd)
 }
