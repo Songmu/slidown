@@ -6,7 +6,7 @@ require (
 	github.com/corona10/goimagehash v1.1.0
 	github.com/fswatcher/fswatcher v0.1.1-0.20260620132924-abd043702c24
 	github.com/goccy/go-yaml v1.19.2
-	github.com/google/cel-go v0.28.1
+	github.com/google/cel-go v0.29.1
 	github.com/google/go-cmp v0.7.0
 	github.com/k1LoW/errors v1.2.0
 	github.com/k1LoW/exec v0.5.0
