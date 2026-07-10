@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.0.7](https://github.com/Songmu/slidown/compare/v0.0.6...v0.0.7) - 2026-07-10
+
+### Other Changes
+- Order body placeholders by visual position by @Songmu in https://github.com/Songmu/slidown/pull/69
+- Make the leading slide the title slide unless it is ignored by @Songmu in https://github.com/Songmu/slidown/pull/71
+- Re-render slides when the implicit first-slide layout changes by @Songmu in https://github.com/Songmu/slidown/pull/72
+
 ## [v0.0.6](https://github.com/Songmu/slidown/compare/v0.0.5...v0.0.6) - 2026-07-10
 
 ### Other Changes
