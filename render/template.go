@@ -18,16 +18,18 @@ func ToPresentationWithTemplate(ss slidown.Slides, tmpl *pptx.Template) *pptx.Pr
 	c := &converter{styles: tmpl.SyntaxStyles}
 	firstRendered := true
 	for _, s := range ss {
-		if s.Skip {
-			continue
+		// Skipped slides are still rendered (as hidden) but must not consume
+		// the title-layout slot; only the first visible slide does.
+		sl := c.renderSlideWithLayout(p, s, tmpl, firstRendered && !s.Skip)
+		sl.Hidden = s.Skip
+		if !s.Skip {
+			firstRendered = false
 		}
-		c.renderSlideWithLayout(p, s, tmpl, firstRendered)
-		firstRendered = false
 	}
 	return p
 }
 
-func (c *converter) renderSlideWithLayout(p *pptx.Presentation, s *slidown.Slide, tmpl *pptx.Template, first bool) {
+func (c *converter) renderSlideWithLayout(p *pptx.Presentation, s *slidown.Slide, tmpl *pptx.Template, first bool) *pptx.Slide {
 	layout := resolveLayout(s, tmpl, first)
 	sl := p.AddSlide()
 	sl.LayoutName = layout.Name
@@ -72,6 +74,7 @@ func (c *converter) renderSlideWithLayout(p *pptx.Presentation, s *slidown.Slide
 	sl.Note = s.SpeakerNote
 	sl.Fingerprint = s.Fingerprint()
 	sl.Key = s.Key
+	return sl
 }
 
 // distributeBodyContent places body paragraphs into the available body

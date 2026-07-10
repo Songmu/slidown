@@ -43,12 +43,17 @@ func (p *Presentation) WriteTo(w io.Writer) (int64, error) {
 	}
 	hasNotes := len(notesSlideNums) > 0
 
+	hidden := make([]bool, n)
+	for i, s := range p.Slides {
+		hidden[i] = s.Hidden
+	}
+
 	parts := []part{
 		{"[Content_Types].xml", contentTypes(n, notesSlideNums)},
 		{"_rels/.rels", rootRels},
 		{"docProps/core.xml", coreProps(p.Title)},
 		{"docProps/app.xml", appProps},
-		{"ppt/presentation.xml", presentation(width, height, n, hasNotes)},
+		{"ppt/presentation.xml", presentation(width, height, n, hasNotes, hidden)},
 		{"ppt/_rels/presentation.xml.rels", presentationRels(n, hasNotes)},
 		{"ppt/presProps.xml", presProps},
 		{"ppt/viewProps.xml", viewProps},

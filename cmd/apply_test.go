@@ -1294,9 +1294,10 @@ func TestApplyShapeLevelMergeCarriesHandAddedFreeTextBox(t *testing.T) {
 }
 
 // TestApplyShapeLevelMergeWithSkippedSlide guards the position mapping: a
-// skipped source slide emits no output slide, so alignment must use rendered
-// positions. A leading skipped page must not shift shape-level merges onto the
-// wrong slide.
+// skipped source slide is still rendered (as a hidden slide) and therefore
+// occupies an output position, so alignment must keep rendered positions in
+// step. A leading skipped page must not shift shape-level merges onto the wrong
+// slide.
 func TestApplyShapeLevelMergeWithSkippedSlide(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "deck.pptx")
@@ -1305,13 +1306,13 @@ func TestApplyShapeLevelMergeWithSkippedSlide(t *testing.T) {
 	applyFreshForTest(t, v1, out, "")
 
 	parts := readSlidePartsForTest(t, out)
-	if len(parts) != 2 {
-		t.Fatalf("expected 2 rendered slides (one skipped), got %d", len(parts))
+	if len(parts) != 3 {
+		t.Fatalf("expected 3 rendered slides (one hidden), got %d", len(parts))
 	}
-	origSlide2 := parts["ppt/slides/slide2.xml"] // Bravo, must stay reused verbatim
+	origSlide3 := parts["ppt/slides/slide3.xml"] // Bravo, must stay reused verbatim
 
 	const xfrmMarker = `x="515151"`
-	rewriteSlidePartForTest(t, out, "ppt/slides/slide1.xml", func(b []byte) []byte {
+	rewriteSlidePartForTest(t, out, "ppt/slides/slide2.xml", func(b []byte) []byte {
 		marker := `<a:xfrm><a:off x="515151" y="9"/><a:ext cx="1" cy="1"/></a:xfrm>`
 		return bytes.Replace(b, []byte(`<p:spPr>`), []byte(`<p:spPr>`+marker), 1)
 	})
@@ -1321,25 +1322,25 @@ func TestApplyShapeLevelMergeWithSkippedSlide(t *testing.T) {
 	applyUpdateForTest(t, v2, out, "")
 
 	now := readSlidePartsForTest(t, out)
-	slide1 := string(now["ppt/slides/slide1.xml"])
-	if !strings.Contains(slide1, xfrmMarker) {
-		t.Errorf("Alpha's manual title edit was lost; positions likely misaligned by the skipped slide:\n%.400s", slide1)
+	slide2 := string(now["ppt/slides/slide2.xml"])
+	if !strings.Contains(slide2, xfrmMarker) {
+		t.Errorf("Alpha's manual title edit was lost; positions likely misaligned by the skipped slide:\n%.400s", slide2)
 	}
-	if !strings.Contains(slide1, "body a EDITED") {
-		t.Errorf("Alpha's body was not updated:\n%.400s", slide1)
+	if !strings.Contains(slide2, "body a EDITED") {
+		t.Errorf("Alpha's body was not updated:\n%.400s", slide2)
 	}
-	if !bytes.Equal(origSlide2, now["ppt/slides/slide2.xml"]) {
-		t.Errorf("Bravo (slide 2) was not reused verbatim")
+	if !bytes.Equal(origSlide3, now["ppt/slides/slide3.xml"]) {
+		t.Errorf("Bravo (slide 3) was not reused verbatim")
 	}
 }
 
-func TestRenderedSlidesExcludesSkipped(t *testing.T) {
+func TestRenderedSlidesKeepsSkippedDropsNil(t *testing.T) {
 	skip := &slidown.Slide{Skip: true}
 	a := &slidown.Slide{Titles: []string{"A"}}
 	b := &slidown.Slide{Titles: []string{"B"}}
 	got := renderedSlides(slidown.Slides{skip, a, nil, b})
-	if len(got) != 2 || got[0] != a || got[1] != b {
-		t.Fatalf("renderedSlides did not drop skipped/nil slides: %+v", got)
+	if len(got) != 3 || got[0] != skip || got[1] != a || got[2] != b {
+		t.Fatalf("renderedSlides should keep skipped slides and drop only nil: %+v", got)
 	}
 }
 

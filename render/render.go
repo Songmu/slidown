@@ -26,15 +26,13 @@ func ToPresentation(ss slidown.Slides) *pptx.Presentation {
 	p := pptx.New()
 	c := &converter{}
 	for _, s := range ss {
-		if s.Skip {
-			continue
-		}
-		c.renderSlide(p, s)
+		sl := c.renderSlide(p, s)
+		sl.Hidden = s.Skip
 	}
 	return p
 }
 
-func (c *converter) renderSlide(p *pptx.Presentation, s *slidown.Slide) {
+func (c *converter) renderSlide(p *pptx.Presentation, s *slidown.Slide) *pptx.Slide {
 	sl := p.AddSlide()
 
 	if title := c.titleParagraphs(s); len(title) > 0 {
@@ -61,6 +59,7 @@ func (c *converter) renderSlide(p *pptx.Presentation, s *slidown.Slide) {
 	sl.Note = s.SpeakerNote
 	sl.Fingerprint = s.Fingerprint()
 	sl.Key = s.Key
+	return sl
 }
 
 // renderTablesAt maps internal tables to pptx tables placed within the given

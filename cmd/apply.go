@@ -472,9 +472,10 @@ func alignSlides(source slidown.Slides, existing []pptx.SlideMeta,
 	newSigs map[int][]pptx.ShapeSignature, oldSigs map[string][]pptx.ShapeSignature,
 ) (map[int]string, map[int]string) {
 	// Only slides that are actually rendered occupy a position in the output
-	// package. Skipped (and defensively, nil) source slides emit no slide, so
-	// align on the rendered subsequence to keep 1-based positions in step with
-	// ppt/slides/slideN.xml and the shape-signature maps.
+	// package. Skipped source slides are still rendered (as hidden), so only
+	// defensively nil source slides emit no slide; align on the rendered
+	// subsequence to keep 1-based positions in step with ppt/slides/slideN.xml
+	// and the shape-signature maps.
 	rendered := renderedSlides(source)
 	n := len(rendered)
 	m := len(existing)
@@ -633,12 +634,13 @@ func keyBlocksPositional(existingKey string, srcKeyed bool, sourceKeys map[strin
 }
 
 // renderedSlides returns the source slides that produce an output slide, in
-// order — i.e. excluding skipped (and defensively nil) slides — so their index
-// matches the 1-based position of ppt/slides/slideN.xml in the package.
+// order — i.e. excluding defensively nil slides — so their index matches the
+// 1-based position of ppt/slides/slideN.xml in the package. Skipped slides are
+// still rendered (as hidden slides), so they are retained here.
 func renderedSlides(source slidown.Slides) []*slidown.Slide {
 	out := make([]*slidown.Slide, 0, len(source))
 	for _, s := range source {
-		if s == nil || s.Skip {
+		if s == nil {
 			continue
 		}
 		out = append(out, s)
