@@ -16,6 +16,13 @@ func ToPresentationWithTemplate(ss slidown.Slides, tmpl *pptx.Template) *pptx.Pr
 	p := pptx.New()
 	p.Template = tmpl
 	c := &converter{styles: tmpl.SyntaxStyles}
+	// The first-slide default only changes a slide's rendered layout when the
+	// template actually resolves the title and content slots to different
+	// layouts. When they coincide (e.g. a single-layout design), the title-slot
+	// distinction is cosmetically irrelevant, so it is left out of the
+	// fingerprint to avoid needlessly re-rendering a slide that merely moves
+	// between the first and a later position.
+	titleContentDiffer := layoutsDiffer(tmpl.TitleLayout(), tmpl.ContentLayout())
 	for i, s := range ss {
 		// The first slide takes the title-layout slot, whether or not it is
 		// hidden (Skip). Ignored slides never reach here — they are dropped at
@@ -23,10 +30,28 @@ func ToPresentationWithTemplate(ss slidown.Slides, tmpl *pptx.Template) *pptx.Pr
 		// means a leading `ignore` (or a run of them) passes the title
 		// designation to the next slide, while a leading `skip` keeps it and is
 		// rendered hidden.
-		sl := c.renderSlideWithLayout(p, s, tmpl, i == 0)
+		first := i == 0
+		// Record the title-slot designation on the slide before its fingerprint
+		// is computed so a slide that later moves into or out of the first
+		// position (switching between the title and content default layout) is
+		// re-rendered rather than reused verbatim with a stale layout. Only the
+		// implicit default matters here; an explicit or config-assigned layout
+		// is already captured by the fingerprint via Layout.
+		s.TitleSlot = first && titleContentDiffer
+		sl := c.renderSlideWithLayout(p, s, tmpl, first)
 		sl.Hidden = s.Skip
 	}
 	return p
+}
+
+// layoutsDiffer reports whether two resolved layouts are distinct, treating nil
+// as a wildcard that never differs (so a template with no usable layouts never
+// spuriously flips the title-slot marker).
+func layoutsDiffer(a, b *pptx.LayoutInfo) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	return a != b
 }
 
 func (c *converter) renderSlideWithLayout(p *pptx.Presentation, s *slidown.Slide, tmpl *pptx.Template, first bool) *pptx.Slide {
