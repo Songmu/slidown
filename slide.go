@@ -12,7 +12,15 @@ type Slide struct {
 	// config) used to match a slide to its existing counterpart across inserts,
 	// deletions and reordering during an incremental rebuild. It is identity,
 	// not content, so it is excluded from the content fingerprint.
-	Key            string        `json:"-"`
+	Key string `json:"-"`
+	// TitleSlot reports that the slide occupies the deck's title-layout slot
+	// (the first rendered slide) under the built-in first-slide layout default.
+	// It only matters when Layout is empty: it is folded into the content
+	// fingerprint so a slide that moves into or out of the first position — and
+	// therefore switches between the title and content default layout — is
+	// re-rendered instead of being reused verbatim with a stale layout. It is
+	// identity-adjacent, not authored content, so it is excluded from JSON.
+	TitleSlot      bool          `json:"-"`
 	Titles         []string      `json:"titles,omitempty"`
 	TitleBodies    []*Body       `json:"title_bodies,omitempty"`
 	Subtitles      []string      `json:"subtitles,omitempty"`

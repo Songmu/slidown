@@ -122,7 +122,7 @@ func (s *Slide) signature() slideSignature {
 
 func (s *Slide) contentHash() string {
 	b, err := json.Marshal(slideContent{
-		Layout:         s.Layout,
+		Layout:         s.effectiveLayoutKey(),
 		Freeze:         s.Freeze,
 		Skip:           s.Skip,
 		Titles:         s.Titles,
@@ -139,6 +139,26 @@ func (s *Slide) contentHash() string {
 	}
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
+}
+
+// titleSlotKey is the sentinel folded into the content fingerprint for a slide
+// that occupies the title-layout slot only by the built-in first-slide default
+// (i.e. it has no explicit or config-assigned layout). The leading NUL cannot
+// collide with any authored or template layout name, so it distinguishes a
+// default-title slide from a default-content one while leaving the fingerprint
+// of every explicitly-laid or non-first slide byte-for-byte unchanged.
+const titleSlotKey = "\x00title-slot"
+
+// effectiveLayoutKey returns the layout value hashed into the fingerprint. It is
+// the authored layout name, except that a slide taking the title-layout slot
+// solely via the first-slide default (empty Layout, TitleSlot set) is
+// represented by titleSlotKey so a change in that implicit default forces a
+// re-render.
+func (s *Slide) effectiveLayoutKey() string {
+	if s.Layout == "" && s.TitleSlot {
+		return titleSlotKey
+	}
+	return s.Layout
 }
 
 type slideContent struct {
