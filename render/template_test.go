@@ -277,6 +277,18 @@ func TestMultiBodyPlaceholderOrderedByPosition(t *testing.T) {
 	if layout == nil {
 		t.Fatal("template has no content layout")
 	}
+	// Drop any body placeholders the built-in layout already declares so the
+	// test controls the full body pool; a leftover body with a duplicate idx
+	// would make the assertion flaky.
+	kept := layout.Placeholders[:0]
+	for _, ph := range layout.Placeholders {
+		switch ph.Type {
+		case "body", "obj", "tx", "":
+		default:
+			kept = append(kept, ph)
+		}
+	}
+	layout.Placeholders = kept
 	// Two body placeholders in shape-tree order idx=1, idx=2, but positioned so
 	// idx=2 sits above idx=1. Ordering by Y must send the first body group to
 	// idx=2 (top) and the second to idx=1 (bottom).
