@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.0.6](https://github.com/Songmu/slidown/compare/v0.0.5...v0.0.6) - 2026-07-10
+
+### Other Changes
+- Render "skip" pages as hidden slides instead of dropping them by @Songmu in https://github.com/Songmu/slidown/pull/68
+- chore(deps): bump github.com/google/cel-go from 0.28.1 to 0.29.1 in the dependencies group by @dependabot[bot] in https://github.com/Songmu/slidown/pull/67
+
 ## [v0.0.5](https://github.com/Songmu/slidown/compare/v0.0.4...v0.0.5) - 2026-07-06
 
 ### Other Changes
