@@ -90,9 +90,12 @@ right and bottom borders define inner borders for that region.
 ## Default layout selection
 
 When no per-page layout is specified, the first slide uses a title-style
-layout and the rest use a content-style layout. A specific layout name can
-be selected per page via page configuration (an HTML comment with a JSON
-object):
+layout and the rest use a content-style layout. "First slide" means the first
+slide that is not `ignore`d: a leading `ignore` page (which is dropped entirely)
+passes the title designation to the next slide, and this continues across a run
+of consecutive leading `ignore`s. A leading `skip` page keeps the title slot and
+is rendered hidden. A specific layout name can be selected per page via page
+configuration (an HTML comment with a JSON object):
 
 ```markdown
 # Section break
