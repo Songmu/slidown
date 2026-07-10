@@ -55,6 +55,9 @@ func (c *converter) renderSlideWithLayout(p *pptx.Presentation, s *slidown.Slide
 	orderSubtitleSlots(tmpl, layout, subSlots)
 	c.distributeSubtitleContent(sl, s, subSlots)
 
+	// Body content is distributed top-to-bottom, so order the body
+	// placeholders by their visual position on the layout as well.
+	bodyPHs = orderPlaceholdersByPosition(tmpl, layout, bodyPHs)
 	hasBody := c.distributeBodyContent(sl, s, len(subSlots) > 0, bodyPHs)
 
 	// Position images/tables using the layout's body geometry when available.
