@@ -433,10 +433,9 @@ func TestMultipleSubtitleSlotDistribution(t *testing.T) {
 	}
 }
 
-// TestToPresentationWithTemplateSkippedLeadingSlide guards the contract that
-// "first slide" means "first visible slide" — a leading Skip slide is still
-// rendered (as hidden) but must not consume the title-layout slot, so the first
-// visible slide still gets TitleLayout instead of ContentLayout.
+// TestToPresentationWithTemplateSkippedLeadingSlide guards the contract that a
+// leading Skip slide IS the title slide: it is rendered hidden but still takes
+// the title-layout slot, so following slides get ContentLayout.
 func TestToPresentationWithTemplateSkippedLeadingSlide(t *testing.T) {
 	const fixture = "../testdata/template_base.pptx"
 	if _, err := os.Stat(fixture); err != nil {
@@ -453,7 +452,7 @@ func TestToPresentationWithTemplateSkippedLeadingSlide(t *testing.T) {
 	}
 
 	slides := slidown.Slides{
-		{Skip: true, Titles: []string{"hidden"}},
+		{Skip: true, Titles: []string{"hidden title"}},
 		{Titles: []string{"first visible"}},
 		{Titles: []string{"second visible"}},
 	}
@@ -465,14 +464,61 @@ func TestToPresentationWithTemplateSkippedLeadingSlide(t *testing.T) {
 	if !pres.Slides[0].Hidden {
 		t.Errorf("leading skipped slide should be marked Hidden")
 	}
-	if got := pres.Slides[0].LayoutName; got != contentName {
-		t.Errorf("hidden leading slide layout = %q, want %q (ContentLayout, must not consume title slot)", got, contentName)
+	if got := pres.Slides[0].LayoutName; got != titleName {
+		t.Errorf("hidden leading slide layout = %q, want %q (TitleLayout: a leading skip slide is the hidden title slide)", got, titleName)
 	}
-	if got := pres.Slides[1].LayoutName; got != titleName {
-		t.Errorf("first visible slide layout = %q, want %q (TitleLayout)", got, titleName)
+	if got := pres.Slides[1].LayoutName; got != contentName {
+		t.Errorf("first visible slide layout = %q, want %q (ContentLayout)", got, contentName)
 	}
 	if got := pres.Slides[2].LayoutName; got != contentName {
 		t.Errorf("second visible slide layout = %q, want %q (ContentLayout)", got, contentName)
+	}
+}
+
+// TestToPresentationWithTemplateLeadingIgnoredSlide guards that a leading
+// `ignore` page (dropped at parse time) passes the title designation to the
+// next slide, and that a run of consecutive leading `ignore`s does the same.
+func TestToPresentationWithTemplateLeadingIgnoredSlide(t *testing.T) {
+	const fixture = "../testdata/template_base.pptx"
+	if _, err := os.Stat(fixture); err != nil {
+		t.Skipf("template fixture missing: %v", err)
+	}
+	tmpl, err := pptx.LoadTemplate(fixture)
+	if err != nil {
+		t.Fatalf("LoadTemplate(%s): %v", fixture, err)
+	}
+	titleName := tmpl.TitleLayout().Name
+	contentName := tmpl.ContentLayout().Name
+	if titleName == contentName {
+		t.Skipf("template does not distinguish title vs content layouts (both %q)", titleName)
+	}
+
+	const markdown = "# Ignored One\n\n<!-- {\"ignore\": true} -->\n\n" +
+		"---\n\n# Ignored Two\n\n<!-- {\"ignore\": true} -->\n\n" +
+		"---\n\n# Real Title\n\n---\n\n# Second\n"
+
+	parsed, err := md.Parse("", []byte(markdown), nil)
+	if err != nil {
+		t.Fatalf("md.Parse: %v", err)
+	}
+	slides, err := parsed.ToSlides(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ToSlides: %v", err)
+	}
+	// Both leading ignored pages are dropped at parse time.
+	if got, want := len(slides), 2; got != want {
+		t.Fatalf("slide count after parse = %d, want %d (leading ignores dropped)", got, want)
+	}
+
+	pres := ToPresentationWithTemplate(slides, tmpl)
+	if got, want := len(pres.Slides), 2; got != want {
+		t.Fatalf("rendered slide count = %d, want %d", got, want)
+	}
+	if got := pres.Slides[0].LayoutName; got != titleName {
+		t.Errorf("first non-ignored slide layout = %q, want %q (TitleLayout)", got, titleName)
+	}
+	if got := pres.Slides[1].LayoutName; got != contentName {
+		t.Errorf("second slide layout = %q, want %q (ContentLayout)", got, contentName)
 	}
 }
 

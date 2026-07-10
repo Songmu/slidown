@@ -16,15 +16,15 @@ func ToPresentationWithTemplate(ss slidown.Slides, tmpl *pptx.Template) *pptx.Pr
 	p := pptx.New()
 	p.Template = tmpl
 	c := &converter{styles: tmpl.SyntaxStyles}
-	firstRendered := true
-	for _, s := range ss {
-		// Skipped slides are still rendered (as hidden) but must not consume
-		// the title-layout slot; only the first visible slide does.
-		sl := c.renderSlideWithLayout(p, s, tmpl, firstRendered && !s.Skip)
+	for i, s := range ss {
+		// The first slide takes the title-layout slot, whether or not it is
+		// hidden (Skip). Ignored slides never reach here — they are dropped at
+		// parse time — so ss[0] is already the first non-ignored slide, which
+		// means a leading `ignore` (or a run of them) passes the title
+		// designation to the next slide, while a leading `skip` keeps it and is
+		// rendered hidden.
+		sl := c.renderSlideWithLayout(p, s, tmpl, i == 0)
 		sl.Hidden = s.Skip
-		if !s.Skip {
-			firstRendered = false
-		}
 	}
 	return p
 }
