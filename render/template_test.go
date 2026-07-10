@@ -262,6 +262,76 @@ func TestMultiBodyPlaceholderDistribution(t *testing.T) {
 	}
 }
 
+// TestMultiBodyPlaceholderOrderedByPosition verifies that body placeholders
+// receive content top-to-bottom by visual position, not shape-tree order: a
+// placeholder that appears later in the shape tree but sits higher on the slide
+// must receive the earlier body group.
+func TestMultiBodyPlaceholderOrderedByPosition(t *testing.T) {
+	tmplPath := buildTemplateFile(t)
+	tmpl, err := pptx.LoadTemplate(tmplPath)
+	if err != nil {
+		t.Fatalf("LoadTemplate: %v", err)
+	}
+
+	layout := tmpl.ContentLayout()
+	if layout == nil {
+		t.Fatal("template has no content layout")
+	}
+	// Two body placeholders in shape-tree order idx=1, idx=2, but positioned so
+	// idx=2 sits above idx=1. Ordering by Y must send the first body group to
+	// idx=2 (top) and the second to idx=1 (bottom).
+	layout.Placeholders = append(layout.Placeholders,
+		&pptx.PlaceholderInfo{
+			Type: "body", Idx: 1, Name: "Content Placeholder 1",
+			HasGeom: true, X: 100, Y: 3000, W: 500, H: 100,
+		},
+		&pptx.PlaceholderInfo{
+			Type: "body", Idx: 2, Name: "Content Placeholder 2",
+			HasGeom: true, X: 100, Y: 1000, W: 500, H: 100,
+		},
+	)
+
+	const markdown = "# Title\n\nTop content\n\n- - -\n\nBottom content\n"
+	parsed, err := md.Parse("", []byte(markdown), nil)
+	if err != nil {
+		t.Fatalf("md.Parse: %v", err)
+	}
+	slides, err := parsed.ToSlides(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ToSlides: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if _, err := ToPresentationWithTemplate(slides, tmpl).WriteTo(&buf); err != nil {
+		t.Fatalf("WriteTo: %v", err)
+	}
+	parts := zipParts(t, buf.Bytes())
+	slideXML := string(parts["ppt/slides/slide1.xml"])
+	if slideXML == "" {
+		t.Fatal("ppt/slides/slide1.xml missing from output")
+	}
+
+	shapeText := func(ph string) string {
+		start := strings.Index(slideXML, ph)
+		if start == -1 {
+			t.Fatalf("placeholder %q not found in slide XML:\n%s", ph, slideXML)
+		}
+		end := strings.Index(slideXML[start:], "</p:sp>")
+		if end == -1 {
+			t.Fatalf("no closing </p:sp> after %q", ph)
+		}
+		return slideXML[start : start+end]
+	}
+
+	// idx=2 is visually on top, so it gets the first ("Top content") group.
+	if !strings.Contains(shapeText(`<p:ph type="body" idx="2"/>`), "Top content") {
+		t.Errorf("visually-top placeholder (idx=2) should contain 'Top content'")
+	}
+	if !strings.Contains(shapeText(`<p:ph type="body" idx="1"/>`), "Bottom content") {
+		t.Errorf("visually-bottom placeholder (idx=1) should contain 'Bottom content'")
+	}
+}
+
 // TestMultipleSubtitleSlotDistribution verifies that when a layout exposes two
 // subtitle-capable placeholders (a real subTitle and a hint-named body), each
 // subtitle heading is distributed to a separate placeholder, ordered by visual
