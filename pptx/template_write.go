@@ -52,7 +52,7 @@ func (p *Presentation) writeWithTemplate(w io.Writer) (int64, error) {
 	textParts["_rels/.rels"] = rootRels
 	textParts["docProps/core.xml"] = coreProps(p.Title)
 	textParts["docProps/app.xml"] = appProps
-	textParts["ppt/presentation.xml"] = t.presentationXML(width, height, n, hasNotes)
+	textParts["ppt/presentation.xml"] = t.presentationXML(width, height, n, hasNotes, p.Slides)
 	textParts["ppt/_rels/presentation.xml.rels"] = t.presentationRelsXML(n, hasNotes)
 
 	// presProps/viewProps: use template's if present, else generate.
@@ -115,8 +115,8 @@ func (p *Presentation) writeWithTemplate(w io.Writer) (int64, error) {
 }
 
 // presentationXML generates ppt/presentation.xml referencing the template's
-// masters and the new slides.
-func (t *Template) presentationXML(width, height int64, slideCount int, hasNotes bool) string {
+// masters and the new slides. Slides marked Hidden get a sldId show="0" entry.
+func (t *Template) presentationXML(width, height int64, slideCount int, hasNotes bool, slides []*Slide) string {
 	var b strings.Builder
 	b.WriteString(xmlDecl)
 	b.WriteString(`<p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" ` +
@@ -136,7 +136,11 @@ func (t *Template) presentationXML(width, height int64, slideCount int, hasNotes
 	b.WriteString(`<p:sldIdLst>`)
 	slideRelStart := len(t.masterParts) + 1 + 1 // masters + theme
 	for i := 0; i < slideCount; i++ {
-		b.WriteString(fmt.Sprintf(`<p:sldId id="%d" r:id="rId%d"/>`, 256+i, slideRelStart+i))
+		if i < len(slides) && slides[i].Hidden {
+			b.WriteString(fmt.Sprintf(`<p:sldId id="%d" r:id="rId%d" show="0"/>`, 256+i, slideRelStart+i))
+		} else {
+			b.WriteString(fmt.Sprintf(`<p:sldId id="%d" r:id="rId%d"/>`, 256+i, slideRelStart+i))
+		}
 	}
 	b.WriteString(`</p:sldIdLst>`)
 	b.WriteString(fmt.Sprintf(`<p:sldSz cx="%d" cy="%d"/><p:notesSz cx="6858000" cy="9144000"/>`, width, height))

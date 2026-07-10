@@ -50,6 +50,10 @@ type Slide struct {
 	// embedded alongside the fingerprint so a rebuild can match slides across
 	// inserts, deletions and reordering. Empty omits it.
 	Key string
+	// Hidden marks the slide as skipped in the presentation: it is still
+	// generated as a slide part but its sldId entry carries show="0" so
+	// PowerPoint hides it during a slideshow.
+	Hidden bool
 }
 
 // AddShape appends a shape to the slide and returns it.
