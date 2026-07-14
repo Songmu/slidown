@@ -274,36 +274,40 @@ func (i *Image) RasterPNG(scale float64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	w := clampRasterDimension(float64(intrinsicW) * scale)
-	h := clampRasterDimension(float64(intrinsicH) * scale)
+	w := float64(intrinsicW) * scale
+	h := float64(intrinsicH) * scale
+	// Apply a single shared downscale so the raster keeps the SVG's aspect
+	// ratio even when only one axis exceeds the cap (avoids stretching the
+	// fallback in older viewers).
+	const maxRasterDimension = 4096
+	if mx := math.Max(w, h); mx > maxRasterDimension {
+		f := maxRasterDimension / mx
+		w *= f
+		h *= f
+	}
+	iw, ih := int(math.Round(w)), int(math.Round(h))
+	if iw < 1 {
+		iw = 1
+	}
+	if ih < 1 {
+		ih = 1
+	}
 	if icon.ViewBox.W <= 0 {
 		icon.ViewBox.W = float64(intrinsicW)
 	}
 	if icon.ViewBox.H <= 0 {
 		icon.ViewBox.H = float64(intrinsicH)
 	}
-	icon.SetTarget(0, 0, float64(w), float64(h))
-	rgba := image.NewRGBA(image.Rect(0, 0, w, h))
-	scanner := rasterx.NewScannerGV(w, h, rgba, rgba.Bounds())
-	raster := rasterx.NewDasher(w, h, scanner)
+	icon.SetTarget(0, 0, float64(iw), float64(ih))
+	rgba := image.NewRGBA(image.Rect(0, 0, iw, ih))
+	scanner := rasterx.NewScannerGV(iw, ih, rgba, rgba.Bounds())
+	raster := rasterx.NewDasher(iw, ih, scanner)
 	icon.Draw(raster, 1.0)
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, rgba); err != nil {
 		return nil, fmt.Errorf("failed to encode rasterized SVG: %w", err)
 	}
 	return buf.Bytes(), nil
-}
-
-func clampRasterDimension(v float64) int {
-	const maxDimension = 4096
-	n := int(math.Round(v))
-	if n < 1 {
-		return 1
-	}
-	if n > maxDimension {
-		return maxDimension
-	}
-	return n
 }
 
 func (i *Image) parseSVG() (*oksvg.SvgIcon, error) {

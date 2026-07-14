@@ -286,3 +286,31 @@ func TestClipPathAndMaskAttrsFallback(t *testing.T) {
 		}
 	}
 }
+
+func TestReviewBatchFallbacks(t *testing.T) {
+	// Leaf element opacity still applies (multiplied into fill alpha).
+	g := mustConvert(t, `<svg viewBox="0 0 10 10"><rect width="10" height="10" fill="red" opacity="0.5"/></svg>`)
+	if a := g.Geoms[0].Fill.Alpha; a < 0.49 || a > 0.51 {
+		t.Fatalf("leaf opacity should apply, got alpha=%v", a)
+	}
+	// CSS display:none must hide the matched element (resolved style, not just attrs).
+	g = mustConvert(t, `<svg viewBox="0 0 10 10"><style>.h{display:none}</style>`+
+		`<rect class="h" width="1" height="1" fill="red"/><rect width="1" height="1" fill="green"/></svg>`)
+	if len(g.Geoms) != 1 || g.Geoms[0].Fill.Color != "008000" {
+		t.Fatalf("CSS display:none should hide element, got %#v", g.Geoms)
+	}
+	for name, svg := range map[string]string{
+		"group opacity":       `<svg viewBox="0 0 10 10"><g opacity="0.5"><rect width="1" height="1" fill="red"/></g></svg>`,
+		"unsupported css":     `<svg viewBox="0 0 10 10"><rect width="1" height="1" style="mix-blend-mode:multiply"/></svg>`,
+		"dash array":          `<svg viewBox="0 0 10 10"><rect width="1" height="1" fill="none" stroke="black" stroke-width="1" stroke-dasharray="1 2"/></svg>`,
+		"radial geometry":     `<svg viewBox="0 0 10 10"><defs><radialGradient id="g" cx="0" cy="0" r="50%"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></radialGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`,
+		"use width":           `<svg viewBox="0 0 10 10"><defs><rect id="r" width="2" height="2"/></defs><use href="#r" width="5" height="5"/></svg>`,
+		"symbol viewbox":      `<svg viewBox="0 0 10 10"><defs><symbol id="s" viewBox="0 0 4 4"><rect width="4" height="4"/></symbol></defs><use href="#s"/></svg>`,
+		"text scale":          `<svg viewBox="0 0 100 100"><text x="1" y="1" transform="scale(2)" fill="red" font-size="10">Hi</text></svg>`,
+		"mixed text ordering": `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10">A<tspan>B</tspan>C</text></svg>`,
+	} {
+		if _, ok := Convert([]byte(svg)); ok {
+			t.Errorf("%s: expected fallback (ok=false)", name)
+		}
+	}
+}

@@ -23,8 +23,13 @@ func (m matrix) avgScale() float64 {
 	}
 	return math.Sqrt(det)
 }
-func (m matrix) hasRotationOrSkew() bool {
-	return math.Abs(m.b) > 1e-9 || math.Abs(m.c) > 1e-9
+
+// isTranslateOnly reports whether the matrix is a pure translation (no scale,
+// rotation or skew). Text conversion only translates the anchor point, so any
+// other component would misplace/mis-size glyphs.
+func (m matrix) isTranslateOnly() bool {
+	return math.Abs(m.a-1) < 1e-9 && math.Abs(m.d-1) < 1e-9 &&
+		math.Abs(m.b) < 1e-9 && math.Abs(m.c) < 1e-9
 }
 
 func parseTransform(s string) (matrix, bool) {

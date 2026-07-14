@@ -90,6 +90,17 @@ func (c *conv) gradient(id string, seen map[string]bool) (*pptx.Gradient, bool) 
 		}
 	} else {
 		gr.Kind = pptx.GradientRadial
+		// The writer always emits a centered radial fill, so reject any custom
+		// radial geometry or non-default gradientUnits rather than silently
+		// rendering a different gradient.
+		for _, a := range []string{"cx", "cy", "r", "fx", "fy", "fr"} {
+			if n.Attrs[a] != "" {
+				return nil, false
+			}
+		}
+		if gu := n.Attrs["gradientunits"]; gu != "" && strings.ToLower(gu) != "objectboundingbox" {
+			return nil, false
+		}
 	}
 	stops, ok := c.gradientStops(n)
 	if !ok {
@@ -183,6 +194,17 @@ func (c *conv) expandUse(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 		return false
 	}
 	if c.resolvingUse[id] {
+		return false
+	}
+	// <use> compositing opacity and viewport remapping (width/height plus a
+	// referenced <symbol viewBox>) are not modeled; fall back when present.
+	if op, ok := containerOpacity(st); !ok || op < 1 {
+		return false
+	}
+	if n.Attrs["width"] != "" || n.Attrs["height"] != "" {
+		return false
+	}
+	if ref.Name == "symbol" && ref.Attrs["viewbox"] != "" {
 		return false
 	}
 	x, ok1 := attrLen(n, "x", 0)

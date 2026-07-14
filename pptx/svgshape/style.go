@@ -16,8 +16,8 @@ type cssRule struct {
 	decl style
 }
 
-var inheritedProps = map[string]bool{"fill": true, "stroke": true, "opacity": true, "fill-opacity": true, "stroke-opacity": true, "stroke-width": true, "stroke-linecap": true, "stroke-linejoin": true, "stroke-dasharray": true, "fill-rule": true, "font-size": true, "font-family": true, "text-anchor": true, "color": true}
-var paintProps = []string{"fill", "stroke", "opacity", "fill-opacity", "stroke-opacity", "stroke-width", "stroke-linecap", "stroke-linejoin", "stroke-dasharray", "fill-rule", "font-size", "font-family", "text-anchor", "color"}
+var inheritedProps = map[string]bool{"fill": true, "stroke": true, "opacity": true, "fill-opacity": true, "stroke-opacity": true, "stroke-width": true, "stroke-linecap": true, "stroke-linejoin": true, "stroke-dasharray": true, "fill-rule": true, "font-size": true, "font-family": true, "text-anchor": true, "color": true, "display": true, "visibility": true}
+var paintProps = []string{"fill", "stroke", "opacity", "fill-opacity", "stroke-opacity", "stroke-width", "stroke-linecap", "stroke-linejoin", "stroke-dasharray", "fill-rule", "font-size", "font-family", "text-anchor", "color", "display", "visibility"}
 
 func defaultStyle() style {
 	return style{"fill": "black", "stroke": "none", "opacity": "1", "fill-opacity": "1", "stroke-opacity": "1", "stroke-width": "1", "stroke-linecap": "butt", "stroke-linejoin": "miter", "fill-rule": "nonzero", "font-size": "16", "text-anchor": "start", "color": "black"}
@@ -46,7 +46,13 @@ func parseStyleDecl(s string) (style, bool) {
 		v := strings.TrimSpace(kv[1])
 		if inheritedProps[k] || k == "stop-color" || k == "stop-opacity" {
 			out[k] = v
+			continue
 		}
+		// An unsupported declaration that affects rendering (e.g. display,
+		// clip-path, filter, mix-blend-mode) would otherwise be silently
+		// dropped and produce an altered image reported as a faithful
+		// conversion. Reject so the whole SVG takes the native-picture fallback.
+		return nil, false
 	}
 	return out, true
 }
@@ -126,6 +132,10 @@ func isIdent(s string) bool {
 
 func (c *conv) resolveStyle(n *node, inherited style) (style, bool) {
 	st := inherited.clone()
+	// opacity and display are not inherited: opacity composites per
+	// element/group, and display applies only to the element it is set on.
+	st["opacity"] = "1"
+	delete(st, "display")
 	for _, p := range paintProps {
 		if v := n.Attrs[p]; v != "" {
 			st[p] = v
@@ -272,8 +282,11 @@ func (c *conv) paint(st style, m matrix, forceFillNone bool) (pptx.Fill, *pptx.S
 			return fill, nil, false
 		}
 		stroke = &pptx.Stroke{Color: col, Alpha: op * so, Width: round(w * emuPerUnit * m.avgScale()), Cap: cap, Join: join}
+		// Arbitrary dash patterns can't be mapped to a single OOXML preset
+		// faithfully, so fall back to the native SVG picture rather than
+		// silently rendering a different dash.
 		if da := strings.TrimSpace(st.get("stroke-dasharray")); da != "" && da != "none" {
-			stroke.Dash = "dash"
+			return fill, nil, false
 		}
 	}
 	return fill, stroke, true

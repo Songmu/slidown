@@ -7,7 +7,9 @@ import (
 )
 
 func (c *conv) text(n *node, st style, m matrix, g *pptx.GroupShape) bool {
-	if m.hasRotationOrSkew() {
+	// Only the anchor point is transformed; font size and box dimensions are
+	// not, so fall back for any non-translation transform (scale/rotate/skew).
+	if !m.isTranslateOnly() {
 		return false
 	}
 	x, ok1 := attrLen(n, "x", 0)
@@ -87,6 +89,12 @@ func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]
 			return nil, false
 		}
 		if ch.Name != "tspan" {
+			return nil, false
+		}
+		// Mixed content whose character data follows a child element loses
+		// document order once flattened (e.g. <text>A<tspan>B</tspan>C</text>
+		// would emit A,C,B); reject it rather than reorder.
+		if ch.textAfterChild || n.textAfterChild {
 			return nil, false
 		}
 		child, ok := c.resolveStyle(ch, st)

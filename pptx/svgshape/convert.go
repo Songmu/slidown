@@ -20,6 +20,9 @@ const emuPerUnit = 9525.0
 const (
 	maxDepth  = 1000
 	maxShapes = 100000
+	// maxCommands bounds the total number of path commands across all shapes,
+	// so a single huge <path> can't drive unbounded allocations or slide XML.
+	maxCommands = 2000000
 )
 
 // errTooComplex is returned when parsing exceeds the resource limits above.
@@ -30,6 +33,10 @@ type node struct {
 	Attrs    map[string]string
 	Children []*node
 	Text     string
+	// textAfterChild is set when character data appears after a child element
+	// within this node (mixed content like <text>A<tspan/>C</text>), which the
+	// parser flattens into Text and Children separately, losing order.
+	textAfterChild bool
 }
 
 type conv struct {
@@ -45,6 +52,7 @@ type conv struct {
 	chH          int64
 	geomCount    int
 	textCount    int
+	cmdCount     int
 	depth        int
 	resolvingUse map[string]bool
 }
@@ -113,7 +121,11 @@ func parseXML(data []byte) (*node, error) {
 			}
 		case xml.CharData:
 			if len(stack) > 0 {
-				stack[len(stack)-1].Text += string([]byte(t))
+				top := stack[len(stack)-1]
+				if len(top.Children) > 0 && strings.TrimSpace(string(t)) != "" {
+					top.textAfterChild = true
+				}
+				top.Text += string([]byte(t))
 			}
 		}
 	}
@@ -166,31 +178,27 @@ func (c *conv) collectDefsAndCSS(n *node) bool {
 	return true
 }
 
-// isHidden reports whether an element is hidden via display:none or
-// visibility:hidden/collapse, set either as a presentation attribute or inline
-// style. Hidden elements (and their subtrees) are not rendered.
-func isHidden(n *node) bool {
-	display := n.Attrs["display"]
-	visibility := n.Attrs["visibility"]
-	if inline := n.Attrs["style"]; inline != "" {
-		for _, part := range strings.Split(inline, ";") {
-			kv := strings.SplitN(part, ":", 2)
-			if len(kv) != 2 {
-				continue
-			}
-			switch strings.ToLower(strings.TrimSpace(kv[0])) {
-			case "display":
-				display = strings.TrimSpace(kv[1])
-			case "visibility":
-				visibility = strings.TrimSpace(kv[1])
-			}
-		}
-	}
-	if strings.EqualFold(strings.TrimSpace(display), "none") {
+// isHiddenStyle reports whether the resolved style hides the element via
+// display:none or visibility:hidden/collapse. Because it reads the resolved
+// style, it accounts for presentation attributes, inline style and matched CSS
+// alike. Hidden elements (and their subtrees) are not rendered.
+func isHiddenStyle(st style) bool {
+	if strings.EqualFold(strings.TrimSpace(st.get("display")), "none") {
 		return true
 	}
-	v := strings.ToLower(strings.TrimSpace(visibility))
+	v := strings.ToLower(strings.TrimSpace(st.get("visibility")))
 	return v == "hidden" || v == "collapse"
+}
+
+// containerOpacity reports the element's own opacity (0..1) when it is a
+// container whose opacity would need group compositing that DrawingML custom
+// geometry can't reproduce.
+func containerOpacity(st style) (float64, bool) {
+	op, ok := parseUnit(st.get("opacity"), 1)
+	if !ok {
+		return 0, false
+	}
+	return op, true
 }
 
 func countSubpaths(gp pptx.GeomPath) int {
@@ -224,14 +232,14 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 	if hasUnsupportedAttrs(n) {
 		return false
 	}
-	if !root && isHidden(n) {
-		// display:none / visibility:hidden elements are not rendered.
-		return true
-	}
 
 	st, ok := c.resolveStyle(n, inherited)
 	if !ok {
 		return false
+	}
+	if !root && isHiddenStyle(st) {
+		// display:none / visibility:hidden elements are not rendered.
+		return true
 	}
 	if tr := n.Attrs["transform"]; tr != "" {
 		tm, ok := parseTransform(tr)
@@ -243,6 +251,14 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 
 	switch n.Name {
 	case "svg", "g", "symbol":
+		// A container with opacity < 1 requires group compositing (its content
+		// is flattened and blended as a whole), which flat custom-geometry
+		// shapes can't reproduce; fall back to the native SVG picture.
+		if op, ok := containerOpacity(st); !ok {
+			return false
+		} else if op < 1 {
+			return false
+		}
 		for _, ch := range n.Children {
 			if !c.walk(ch, st, m, g, false) {
 				return false
@@ -256,6 +272,10 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 		}
 		if len(gp.Cmds) == 0 {
 			return true
+		}
+		c.cmdCount += len(gp.Cmds)
+		if c.cmdCount > maxCommands {
+			return false
 		}
 		fill, stroke, ok := c.paint(st, m, forceFillNone)
 		if !ok {
