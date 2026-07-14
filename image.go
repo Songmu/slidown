@@ -229,12 +229,19 @@ func (i *Image) Dimensions() (w, h int, err error) {
 }
 
 func roundDimension(v, fallback float64) int {
-	if v <= 0 {
+	// Guard against NaN/Inf and non-positive sizes, and cap absurdly large
+	// viewBox values so downstream EMU math (px * 9525) can't overflow or drive
+	// huge rasterization allocations.
+	const maxDimension = 100000 // px; ~10.4m at 96dpi, far beyond any real slide
+	if math.IsNaN(v) || math.IsInf(v, 0) || v <= 0 {
 		v = fallback
 	}
 	n := int(math.Round(v))
 	if n < 1 {
 		return 1
+	}
+	if n > maxDimension {
+		return maxDimension
 	}
 	return n
 }

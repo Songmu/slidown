@@ -316,7 +316,7 @@ func renderGradient(g *Gradient, overallAlpha float64) string {
 			alpha *= overallAlpha
 		}
 		b.WriteString(fmt.Sprintf(`<a:gs pos="%d"><a:srgbClr val="%s">%s</a:srgbClr></a:gs>`,
-			int(pos*100000), escapeXML(stop.Color), renderAlpha(alpha)))
+			int(math.Round(pos*100000)), escapeXML(stop.Color), renderAlpha(alpha)))
 	}
 	b.WriteString(`</a:gsLst>`)
 	switch g.Kind {
@@ -378,7 +378,7 @@ func renderAlpha(alpha float64) string {
 	if alpha < 0 {
 		alpha = 0
 	}
-	return fmt.Sprintf(`<a:alpha val="%d"/>`, int(alpha*100000))
+	return fmt.Sprintf(`<a:alpha val="%d"/>`, int(math.Round(alpha*100000)))
 }
 
 // picNvPr returns the picture's <p:nvPr> element, embedding a <p:ph> binding
