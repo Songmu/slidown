@@ -2,6 +2,7 @@ package pptx
 
 import (
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -293,28 +294,49 @@ func renderFill(fill Fill) string {
 		if fill.Gradient == nil {
 			return `<a:noFill/>`
 		}
-		return renderGradient(fill.Gradient)
+		return renderGradient(fill.Gradient, fill.Alpha)
 	default:
 		return `<a:noFill/>`
 	}
 }
 
-func renderGradient(g *Gradient) string {
+func renderGradient(g *Gradient, overallAlpha float64) string {
 	var b strings.Builder
 	b.WriteString(`<a:gradFill><a:gsLst>`)
 	for _, stop := range g.Stops {
+		pos := stop.Pos
+		if pos < 0 {
+			pos = 0
+		}
+		if pos > 1 {
+			pos = 1
+		}
+		alpha := stop.Alpha
+		if overallAlpha < 1 {
+			alpha *= overallAlpha
+		}
 		b.WriteString(fmt.Sprintf(`<a:gs pos="%d"><a:srgbClr val="%s">%s</a:srgbClr></a:gs>`,
-			int(stop.Pos*100000), escapeXML(stop.Color), renderAlpha(stop.Alpha)))
+			int(pos*100000), escapeXML(stop.Color), renderAlpha(alpha)))
 	}
 	b.WriteString(`</a:gsLst>`)
 	switch g.Kind {
 	case GradientRadial:
 		b.WriteString(`<a:path path="circle"><a:fillToRect l="50000" t="50000" r="50000" b="50000"/></a:path>`)
 	default:
-		b.WriteString(fmt.Sprintf(`<a:lin ang="%d" scaled="1"/>`, int(g.Angle*60000)))
+		b.WriteString(fmt.Sprintf(`<a:lin ang="%d" scaled="1"/>`, normalizeAngle60000(g.Angle)))
 	}
 	b.WriteString(`</a:gradFill>`)
 	return b.String()
+}
+
+// normalizeAngle60000 converts an angle in degrees to OOXML's 60000ths of a
+// degree in the valid positive range [0, 21600000).
+func normalizeAngle60000(deg float64) int {
+	deg = math.Mod(deg, 360)
+	if deg < 0 {
+		deg += 360
+	}
+	return int(deg * 60000)
 }
 
 func renderStroke(st *Stroke) string {
@@ -352,6 +374,9 @@ func renderStroke(st *Stroke) string {
 func renderAlpha(alpha float64) string {
 	if alpha >= 1 {
 		return ""
+	}
+	if alpha < 0 {
+		alpha = 0
 	}
 	return fmt.Sprintf(`<a:alpha val="%d"/>`, int(alpha*100000))
 }

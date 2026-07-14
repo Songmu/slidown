@@ -19,8 +19,11 @@ func parsePath(d string, mapPt pathMapper) (pptx.GeomPath, bool, bool) {
 	var lastC, lastQ point
 	lastWasC, lastWasQ := false, false
 	for p.more() {
+		startIdx := p.i
+		consumedCmd := false
 		if p.isCommand() {
 			cmd = p.nextCommand()
+			consumedCmd = true
 		} else if cmd == 0 {
 			return pptx.GeomPath{}, false, false
 		}
@@ -217,6 +220,12 @@ func parsePath(d string, mapPt pathMapper) (pptx.GeomPath, bool, bool) {
 			cur = start
 			lastWasC, lastWasQ = false, false
 		default:
+			return pptx.GeomPath{}, false, false
+		}
+		// Guard against non-progressing iterations (e.g. a persisting command
+		// such as "Z" followed by stray tokens, or an operand-less command that
+		// consumed nothing): without progress the loop would spin forever.
+		if !consumedCmd && p.i == startIdx {
 			return pptx.GeomPath{}, false, false
 		}
 	}

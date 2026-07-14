@@ -12,6 +12,13 @@ import (
 
 const emuPerUnit = 9525.0
 
+// Conversion resource limits guard against pathological or malicious SVGs
+// (deeply nested groups, exponential <use> fan-out) exhausting stack/memory.
+const (
+	maxDepth  = 1000
+	maxShapes = 100000
+)
+
 type node struct {
 	Name     string
 	Attrs    map[string]string
@@ -32,6 +39,7 @@ type conv struct {
 	chH          int64
 	geomCount    int
 	textCount    int
+	depth        int
 	resolvingUse map[string]bool
 }
 
@@ -138,7 +146,49 @@ func (c *conv) collectDefsAndCSS(n *node) bool {
 	return true
 }
 
+// isHidden reports whether an element is hidden via display:none or
+// visibility:hidden/collapse, set either as a presentation attribute or inline
+// style. Hidden elements (and their subtrees) are not rendered.
+func isHidden(n *node) bool {
+	display := n.Attrs["display"]
+	visibility := n.Attrs["visibility"]
+	if inline := n.Attrs["style"]; inline != "" {
+		for _, part := range strings.Split(inline, ";") {
+			kv := strings.SplitN(part, ":", 2)
+			if len(kv) != 2 {
+				continue
+			}
+			switch strings.ToLower(strings.TrimSpace(kv[0])) {
+			case "display":
+				display = strings.TrimSpace(kv[1])
+			case "visibility":
+				visibility = strings.TrimSpace(kv[1])
+			}
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(display), "none") {
+		return true
+	}
+	v := strings.ToLower(strings.TrimSpace(visibility))
+	return v == "hidden" || v == "collapse"
+}
+
+func countSubpaths(gp pptx.GeomPath) int {
+	n := 0
+	for _, cmd := range gp.Cmds {
+		if cmd.Verb == pptx.MoveTo {
+			n++
+		}
+	}
+	return n
+}
+
 func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root bool) bool {
+	c.depth++
+	defer func() { c.depth-- }()
+	if c.depth > maxDepth || c.geomCount+c.textCount > maxShapes {
+		return false
+	}
 	if !root && isFallbackElement(n.Name) {
 		return false
 	}
@@ -153,6 +203,10 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 	}
 	if hasUnsupportedAttrs(n) {
 		return false
+	}
+	if !root && isHidden(n) {
+		// display:none / visibility:hidden elements are not rendered.
+		return true
 	}
 
 	st, ok := c.resolveStyle(n, inherited)
@@ -187,8 +241,16 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 		if !ok {
 			return false
 		}
+		evenOdd := strings.EqualFold(st.get("fill-rule"), "evenodd")
+		// DrawingML custom geometry fills use nonzero winding. For a single
+		// subpath evenodd and nonzero are equivalent, but a filled evenodd path
+		// with multiple subpaths (holes) would mis-render as a solid fill, so
+		// fall back to embedding the SVG as an image instead.
+		if evenOdd && fill.Kind != pptx.FillNone && countSubpaths(gp) > 1 {
+			return false
+		}
 		c.geomCount++
-		g.Geoms = append(g.Geoms, &pptx.GeomShape{Name: shapeName(n, "Shape", c.geomCount), X: 0, Y: 0, W: c.chW, H: c.chH, PathW: c.chW, PathH: c.chH, Paths: []pptx.GeomPath{gp}, Fill: fill, Stroke: stroke, EvenOdd: strings.EqualFold(st.get("fill-rule"), "evenodd")})
+		g.Geoms = append(g.Geoms, &pptx.GeomShape{Name: shapeName(n, "Shape", c.geomCount), X: 0, Y: 0, W: c.chW, H: c.chH, PathW: c.chW, PathH: c.chH, Paths: []pptx.GeomPath{gp}, Fill: fill, Stroke: stroke, EvenOdd: evenOdd})
 		return true
 	case "use":
 		return c.expandUse(n, st, m, g)

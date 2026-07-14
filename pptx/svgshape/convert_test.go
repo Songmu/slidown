@@ -2,6 +2,7 @@ package svgshape
 
 import (
 	"testing"
+	"time"
 
 	"github.com/Songmu/slidown/pptx"
 )
@@ -145,8 +146,61 @@ func TestColorsFallbackAndFillRule(t *testing.T) {
 			t.Fatalf("expected fallback: %s", s)
 		}
 	}
-	g := mustConvert(t, `<svg viewBox="0 0 10 10"><path fill-rule="evenodd" d="M0 0L10 0L10 10L0 10z M2 2L2 8L8 8L8 2z"/></svg>`)
+	// A single-subpath evenodd path is equivalent to nonzero and still converts.
+	g := mustConvert(t, `<svg viewBox="0 0 10 10"><path fill-rule="evenodd" d="M0 0L10 0L10 10L0 10z"/></svg>`)
 	if !g.Geoms[0].EvenOdd || len(g.Geoms[0].Paths) != 1 {
-		t.Fatal("evenodd/multi-subpath failed")
+		t.Fatal("single-subpath evenodd failed")
+	}
+	// A filled evenodd path with holes (multiple subpaths) cannot be faithfully
+	// reproduced with DrawingML's nonzero winding, so it falls back.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><path fill-rule="evenodd" d="M0 0L10 0L10 10L0 10z M2 2L2 8L8 8L8 2z"/></svg>`)); ok {
+		t.Fatal("expected fallback for filled evenodd donut")
+	}
+	// The same holed path with no fill (stroke only) converts, since winding
+	// does not affect an unfilled outline.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><path fill="none" stroke="black" fill-rule="evenodd" d="M0 0L10 0L10 10L0 10z M2 2L2 8L8 8L8 2z"/></svg>`)); !ok {
+		t.Fatal("expected unfilled evenodd donut to convert")
+	}
+}
+
+// TestMalformedPathTerminates ensures malformed path data cannot spin the
+// parser forever (progress guard). The whole test is bounded by a timeout so a
+// regression manifests as a timeout rather than a hang.
+func TestMalformedPathTerminates(t *testing.T) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for _, d := range []string{"M0 0 Z 1", "M0 0 Lx", "Z", "M0 0 L", "M0 0 C 1 1", "garbage"} {
+			// Must not hang; result (ok) is irrelevant here.
+			Convert([]byte(`<svg viewBox="0 0 10 10"><path d="` + d + `"/></svg>`))
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Convert did not terminate on malformed path data")
+	}
+}
+
+func TestTransparentAndCurrentColor(t *testing.T) {
+	// fill:transparent renders as no fill.
+	g := mustConvert(t, `<svg viewBox="0 0 1 1"><rect width="1" height="1" fill="transparent"/></svg>`)
+	if g.Geoms[0].Fill.Kind != pptx.FillNone {
+		t.Fatalf("transparent should be no fill, got %#v", g.Geoms[0].Fill)
+	}
+	// currentColor resolves to the inherited color.
+	g = mustConvert(t, `<svg viewBox="0 0 1 1"><g color="#00ff00"><rect width="1" height="1" fill="currentColor"/></g></svg>`)
+	if g.Geoms[0].Fill.Kind != pptx.FillSolid || g.Geoms[0].Fill.Color != "00ff00" {
+		t.Fatalf("currentColor should resolve to inherited color, got %#v", g.Geoms[0].Fill)
+	}
+}
+
+func TestHiddenElementsNotRendered(t *testing.T) {
+	g := mustConvert(t, `<svg viewBox="0 0 10 10">`+
+		`<rect width="1" height="1" fill="red" display="none"/>`+
+		`<rect width="1" height="1" fill="blue" style="visibility:hidden"/>`+
+		`<rect width="1" height="1" fill="green"/></svg>`)
+	if len(g.Geoms) != 1 || g.Geoms[0].Fill.Color != "008000" {
+		t.Fatalf("hidden elements should be skipped, got %#v", g.Geoms)
 	}
 }

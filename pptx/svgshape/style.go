@@ -197,26 +197,39 @@ func cssSpec(r cssRule) int {
 	return max
 }
 
+// resolvePaint normalizes a fill/stroke paint value: currentColor resolves to
+// the inherited color, and transparent maps to no paint ("none").
+func resolvePaint(st style, v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "currentcolor":
+		return st.get("color")
+	case "transparent":
+		return "none"
+	}
+	return v
+}
+
 func (c *conv) paint(st style, m matrix, forceFillNone bool) (pptx.Fill, *pptx.Stroke, bool) {
 	op, ok := parseUnit(st.get("opacity"), 1)
 	if !ok {
 		return pptx.Fill{}, nil, false
 	}
 	fill := pptx.Fill{Kind: pptx.FillNone}
-	if !forceFillNone && st.get("fill") != "none" && st.get("fill") != "" {
+	fillVal := resolvePaint(st, st.get("fill"))
+	if !forceFillNone && fillVal != "none" && fillVal != "" {
 		fo, ok := parseUnit(st.get("fill-opacity"), 1)
 		if !ok {
 			return fill, nil, false
 		}
-		if strings.HasPrefix(st.get("fill"), "url(") {
-			id := urlID(st.get("fill"))
+		if strings.HasPrefix(fillVal, "url(") {
+			id := urlID(fillVal)
 			gr := c.gradients[id]
 			if id == "" || gr == nil {
 				return fill, nil, false
 			}
 			fill = pptx.Fill{Kind: pptx.FillGradient, Alpha: op * fo, Gradient: gr}
 		} else {
-			col, ok := parseColor(st.get("fill"))
+			col, ok := parseColor(fillVal)
 			if !ok {
 				return fill, nil, false
 			}
@@ -224,8 +237,9 @@ func (c *conv) paint(st style, m matrix, forceFillNone bool) (pptx.Fill, *pptx.S
 		}
 	}
 	var stroke *pptx.Stroke
-	if st.get("stroke") != "none" && st.get("stroke") != "" {
-		col, ok := parseColor(st.get("stroke"))
+	strokeVal := resolvePaint(st, st.get("stroke"))
+	if strokeVal != "none" && strokeVal != "" {
+		col, ok := parseColor(strokeVal)
 		if !ok {
 			return fill, nil, false
 		}
