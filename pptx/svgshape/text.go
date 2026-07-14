@@ -33,11 +33,26 @@ func (c *conv) text(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 	default:
 		return false
 	}
-	fill := st.get("fill")
-	if fill == "" || fill == "none" {
-		fill = st.get("color")
+	fillVal := resolvePaint(st, st.get("fill"))
+	if fillVal == "none" || fillVal == "" {
+		// Text with no visible fill is invisible; render nothing rather than
+		// emitting opaque text.
+		return true
 	}
-	color, ok := parseColor(fill)
+	// pptx runs carry no alpha, so any translucent text cannot be represented
+	// faithfully: fall back to the native SVG picture for the whole document.
+	op, ok := parseUnit(st.get("opacity"), 1)
+	if !ok {
+		return false
+	}
+	fo, ok := parseUnit(st.get("fill-opacity"), 1)
+	if !ok {
+		return false
+	}
+	if op*fo < 1 {
+		return false
+	}
+	color, ok := parseColor(fillVal)
 	if !ok {
 		return false
 	}
@@ -49,8 +64,14 @@ func (c *conv) text(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 	if len(runs) == 0 {
 		return true
 	}
+	// Clamp the text box width so an x beyond the viewBox cannot produce a
+	// negative (invalid) OOXML extent.
+	w := c.chW - xemu
+	if minW := round(fs * emuPerUnit); w < minW {
+		w = minW
+	}
 	c.textCount++
-	g.Texts = append(g.Texts, &pptx.Shape{Name: shapeName(n, "Text", c.textCount), X: xemu, Y: yemu - round(fs*emuPerUnit), W: c.chW - xemu, H: round(fs * emuPerUnit * 1.5), Paragraphs: []*pptx.Paragraph{{Align: align, Runs: runs}}})
+	g.Texts = append(g.Texts, &pptx.Shape{Name: shapeName(n, "Text", c.textCount), X: xemu, Y: yemu - round(fs*emuPerUnit), W: w, H: round(fs * emuPerUnit * 1.5), Paragraphs: []*pptx.Paragraph{{Align: align, Runs: runs}}})
 	return true
 }
 func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]*pptx.Run, bool) {

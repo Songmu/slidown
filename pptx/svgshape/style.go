@@ -132,7 +132,7 @@ func (c *conv) resolveStyle(n *node, inherited style) (style, bool) {
 		}
 	}
 	matched := c.matchedCSS(n)
-	sort.SliceStable(matched, func(i, j int) bool { return cssSpec(matched[i]) < cssSpec(matched[j]) })
+	sort.SliceStable(matched, func(i, j int) bool { return matched[i].spec < matched[j].spec })
 	for _, r := range matched {
 		for k, v := range r.decl {
 			st[k] = v
@@ -154,14 +154,27 @@ func (c *conv) resolveStyle(n *node, inherited style) (style, bool) {
 	}
 	return st, true
 }
-func (c *conv) matchedCSS(n *node) []cssRule {
-	var out []cssRule
+
+// matchedRule pairs a rule's declarations with the specificity of the most
+// specific selector in the rule that actually matched the element.
+type matchedRule struct {
+	spec int
+	decl style
+}
+
+func (c *conv) matchedCSS(n *node) []matchedRule {
+	var out []matchedRule
 	for _, r := range c.css {
+		best := -1
 		for _, sel := range r.sels {
 			if matchSelector(n, sel) {
-				out = append(out, r)
-				break
+				if s := selSpec(sel); s > best {
+					best = s
+				}
 			}
+		}
+		if best >= 0 {
+			out = append(out, matchedRule{spec: best, decl: r.decl})
 		}
 	}
 	return out
@@ -180,21 +193,17 @@ func matchSelector(n *node, sel string) bool {
 	}
 	return strings.ToLower(n.Name) == sel
 }
-func cssSpec(r cssRule) int {
-	max := 0
-	for _, s := range r.sels {
-		v := 1
-		if strings.HasPrefix(s, ".") {
-			v = 10
-		}
-		if strings.HasPrefix(s, "#") {
-			v = 100
-		}
-		if v > max {
-			max = v
-		}
+
+// selSpec returns the specificity of a single selector: id (100) > class (10) >
+// type (1).
+func selSpec(sel string) int {
+	if strings.HasPrefix(sel, "#") {
+		return 100
 	}
-	return max
+	if strings.HasPrefix(sel, ".") {
+		return 10
+	}
+	return 1
 }
 
 // resolvePaint normalizes a fill/stroke paint value: currentColor resolves to

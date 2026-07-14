@@ -1,6 +1,7 @@
 package svgshape
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -202,5 +203,62 @@ func TestHiddenElementsNotRendered(t *testing.T) {
 		`<rect width="1" height="1" fill="green"/></svg>`)
 	if len(g.Geoms) != 1 || g.Geoms[0].Fill.Color != "008000" {
 		t.Fatalf("hidden elements should be skipped, got %#v", g.Geoms)
+	}
+}
+
+func TestTextFillEdgeCases(t *testing.T) {
+	// Text with fill:none is invisible and is simply skipped (no text emitted).
+	g := mustConvert(t, `<svg viewBox="0 0 100 100"><text x="10" y="20" fill="none" font-size="10">Hi</text></svg>`)
+	if len(g.Texts) != 0 {
+		t.Fatalf("fill:none text should be skipped, got %d", len(g.Texts))
+	}
+	// Translucent text cannot be represented (pptx runs have no alpha) -> fallback.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="10" y="20" fill="red" fill-opacity="0.5" font-size="10">Hi</text></svg>`)); ok {
+		t.Fatal("expected fallback for translucent text")
+	}
+	// x beyond the viewBox must not yield a negative text-box width.
+	g = mustConvert(t, `<svg viewBox="0 0 100 100"><text x="500" y="20" fill="red" font-size="10">Hi</text></svg>`)
+	if len(g.Texts) != 1 || g.Texts[0].W <= 0 {
+		t.Fatalf("text width must stay positive, got %#v", g.Texts)
+	}
+}
+
+func TestTransparentGradientStop(t *testing.T) {
+	g := mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="g">`+
+		`<stop offset="0" stop-color="red"/><stop offset="1" stop-color="transparent"/>`+
+		`</linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)
+	gr := g.Geoms[0].Fill.Gradient
+	if gr == nil || len(gr.Stops) != 2 {
+		t.Fatalf("expected 2 gradient stops, got %#v", gr)
+	}
+	if gr.Stops[1].Alpha != 0 {
+		t.Fatalf("transparent stop should have alpha 0, got %v", gr.Stops[1].Alpha)
+	}
+}
+
+func TestCSSSpecificityPerMatchingSelector(t *testing.T) {
+	// The rule "rect, #hot" must apply type-level specificity to an element that
+	// only matches "rect", so a later class rule (higher specificity) wins.
+	g := mustConvert(t, `<svg viewBox="0 0 10 10">`+
+		`<style>rect, #hot{fill:#ff0000} .b{fill:#0000ff}</style>`+
+		`<rect class="b" width="1" height="1"/></svg>`)
+	if g.Geoms[0].Fill.Color != "0000ff" {
+		t.Fatalf("class rule should win over type selector in a list, got %s", g.Geoms[0].Fill.Color)
+	}
+}
+
+func TestDeeplyNestedFallsBack(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`<svg viewBox="0 0 10 10">`)
+	for i := 0; i < maxDepth+5; i++ {
+		b.WriteString("<g>")
+	}
+	b.WriteString(`<rect width="1" height="1"/>`)
+	for i := 0; i < maxDepth+5; i++ {
+		b.WriteString("</g>")
+	}
+	b.WriteString("</svg>")
+	if _, ok := Convert([]byte(b.String())); ok {
+		t.Fatal("expected fallback for excessively nested SVG")
 	}
 }

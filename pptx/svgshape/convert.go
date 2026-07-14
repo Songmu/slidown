@@ -22,6 +22,9 @@ const (
 	maxShapes = 100000
 )
 
+// errTooComplex is returned when parsing exceeds the resource limits above.
+var errTooComplex = errors.New("svg too complex")
+
 type node struct {
 	Name     string
 	Attrs    map[string]string
@@ -69,6 +72,7 @@ func parseXML(data []byte) (*node, error) {
 	dec := xml.NewDecoder(bytes.NewReader(data))
 	var stack []*node
 	var root *node
+	nodeCount := 0
 	for {
 		tok, err := dec.Token()
 		if err != nil {
@@ -79,6 +83,16 @@ func parseXML(data []byte) (*node, error) {
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
+			// Bound the tree so pathological inputs (deeply nested or huge
+			// element counts) cannot allocate an enormous tree before Convert
+			// aborts.
+			if len(stack) >= maxDepth {
+				return nil, errTooComplex
+			}
+			nodeCount++
+			if nodeCount > maxShapes {
+				return nil, errTooComplex
+			}
 			n := &node{Name: strings.ToLower(t.Name.Local), Attrs: map[string]string{}}
 			for _, a := range t.Attr {
 				key := strings.ToLower(a.Name.Local)

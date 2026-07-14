@@ -133,10 +133,6 @@ func (c *conv) gradientStops(n *node) ([]pptx.GradientStop, bool) {
 		if color == "" {
 			color = "black"
 		}
-		col, ok := parseColor(color)
-		if !ok {
-			return nil, false
-		}
 		op := ch.Attrs["stop-opacity"]
 		if op == "" {
 			op = st.get("stop-opacity")
@@ -144,6 +140,16 @@ func (c *conv) gradientStops(n *node) ([]pptx.GradientStop, bool) {
 		alpha, ok := parseUnit(op, 1)
 		if !ok {
 			return nil, false
+		}
+		var col string
+		if strings.EqualFold(strings.TrimSpace(color), "transparent") {
+			// transparent means fully transparent regardless of stop-opacity.
+			col, alpha = "000000", 0
+		} else {
+			col, ok = parseColor(color)
+			if !ok {
+				return nil, false
+			}
 		}
 		out = append(out, pptx.GradientStop{Pos: off, Color: col, Alpha: alpha})
 	}
