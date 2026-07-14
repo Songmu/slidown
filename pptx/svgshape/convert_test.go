@@ -273,3 +273,16 @@ func TestNoViewBoxPerDimensionFallback(t *testing.T) {
 		t.Fatalf("height should default to 150, got ChH=%d", g.ChH)
 	}
 }
+
+func TestClipPathAndMaskAttrsFallback(t *testing.T) {
+	// clip-path/mask via presentation attribute must trigger fallback even if
+	// the referenced element is external/missing (so not caught as an element).
+	for _, s := range []string{
+		`<svg viewBox="0 0 10 10"><rect width="10" height="10" clip-path="url(ext.svg#c)"/></svg>`,
+		`<svg viewBox="0 0 10 10"><rect width="10" height="10" mask="url(ext.svg#m)"/></svg>`,
+	} {
+		if _, ok := Convert([]byte(s)); ok {
+			t.Fatalf("expected fallback for: %s", s)
+		}
+	}
+}

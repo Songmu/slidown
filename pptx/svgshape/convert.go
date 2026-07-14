@@ -406,9 +406,14 @@ func isFallbackElement(name string) bool {
 	return name == "clippath" || name == "mask" || name == "pattern" || name == "filter" || name == "image" || name == "foreignobject" || name == "textpath" || name == "switch" || name == "set" || strings.HasPrefix(name, "animate")
 }
 func hasUnsupportedAttrs(n *node) bool {
-	_, f := n.Attrs["filter"]
-	if f {
-		return true
+	// clip-path, mask and filter applied via presentation attributes reference
+	// features DrawingML can't reproduce. The referenced element usually also
+	// triggers isFallbackElement, but checking the attributes directly is cheap
+	// defense-in-depth (e.g. external or otherwise-missed references).
+	for _, a := range []string{"filter", "clip-path", "mask"} {
+		if _, ok := n.Attrs[a]; ok {
+			return true
+		}
 	}
 	if _, m := n.Attrs["marker"]; m {
 		return true
