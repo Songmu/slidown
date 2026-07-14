@@ -224,13 +224,24 @@ func buildSVGPicture(img *slidown.Image, x, y, w, h int64) *pptx.Picture {
 	if !ok {
 		return nil
 	}
-	scale := 2.0
+	// Rasterize at roughly 2x the on-slide size for crispness. Use the larger of
+	// the width/height ratios so the PNG is not under-sized when one dimension is
+	// the tighter bound after fit()'s rounding.
+	ratio := 0.0
 	if natW > 0 {
-		if s := 2 * float64(w) / float64(natW); s > 0 {
-			scale = s
+		if r := float64(w) / float64(natW); r > ratio {
+			ratio = r
 		}
 	}
-	_ = natH
+	if natH > 0 {
+		if r := float64(h) / float64(natH); r > ratio {
+			ratio = r
+		}
+	}
+	scale := 2.0
+	if ratio > 0 {
+		scale = 2 * ratio
+	}
 	png, err := img.RasterPNG(scale)
 	if err != nil || len(png) == 0 {
 		return nil
