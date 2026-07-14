@@ -9,16 +9,20 @@ import (
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
-	_ "image/png"
+	"image/png"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/corona10/goimagehash"
 	"github.com/k1LoW/errors"
+	"github.com/srwiley/oksvg"
+	"github.com/srwiley/rasterx"
 )
 
 type MIMEType string
@@ -27,6 +31,7 @@ const (
 	MIMETypeImagePNG  MIMEType = "image/png"
 	MIMETypeImageJPEG MIMEType = "image/jpeg"
 	MIMETypeImageGIF  MIMEType = "image/gif"
+	MIMETypeImageSVG  MIMEType = "image/svg+xml"
 )
 
 type Image struct {
@@ -39,6 +44,10 @@ type Image struct {
 	pHash        *goimagehash.ImageHash // Perceptual hash for JPEG images
 	modTime      time.Time              // Modification time of the image file, if applicable
 	link         string                 // External link associated with the image
+	svgIcon      *oksvg.SvgIcon
+	width        int
+	height       int
+	dimensionsOK bool
 }
 
 func NewImage(pathOrURL string) (_ *Image, err error) {
@@ -123,6 +132,12 @@ func newImageFromBuffer(r io.Reader) (_ *Image, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read image data: %w", err)
 	}
+	if isSVG(b) {
+		return &Image{
+			b:        b,
+			mimeType: MIMETypeImageSVG,
+		}, nil
+	}
 	_, mimeType, err := image.DecodeConfig(bytes.NewReader(b))
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode image: %w", err)
@@ -144,6 +159,32 @@ func newImageFromBuffer(r io.Reader) (_ *Image, err error) {
 	}, nil
 }
 
+func isSVG(b []byte) bool {
+	b = bytes.TrimPrefix(b, []byte{0xef, 0xbb, 0xbf})
+	b = bytes.TrimLeftFunc(b, unicode.IsSpace)
+	if len(b) == 0 {
+		return false
+	}
+	limit := min(len(b), 1024)
+	prefix := bytes.ToLower(b[:limit])
+	if hasSVGTag(prefix) {
+		return true
+	}
+	if bytes.HasPrefix(prefix, []byte("<?xml")) {
+		return hasSVGTag(prefix)
+	}
+	return bytes.Contains(prefix, []byte("http://www.w3.org/2000/svg")) && hasSVGTag(prefix)
+}
+
+func hasSVGTag(b []byte) bool {
+	idx := bytes.Index(b, []byte("<svg"))
+	if idx < 0 {
+		return false
+	}
+	next := idx + len("<svg")
+	return next == len(b) || b[next] == '>' || b[next] == '/' || unicode.IsSpace(rune(b[next]))
+}
+
 func (i *Image) SetLink(link string) {
 	i.link = link
 }
@@ -158,12 +199,122 @@ func (i *Image) Checksum() uint32 {
 	return i.checksum
 }
 
+func (i *Image) IsSVG() bool {
+	return i != nil && i.mimeType == MIMETypeImageSVG
+}
+
+func (i *Image) Dimensions() (w, h int, err error) {
+	if i == nil {
+		return 0, 0, fmt.Errorf("image is nil")
+	}
+	if i.dimensionsOK {
+		return i.width, i.height, nil
+	}
+	if i.IsSVG() {
+		icon, err := i.parseSVG()
+		if err != nil {
+			return 0, 0, fmt.Errorf("failed to parse SVG: %w", err)
+		}
+		w = roundDimension(icon.ViewBox.W, 300)
+		h = roundDimension(icon.ViewBox.H, 150)
+	} else {
+		cfg, _, err := image.DecodeConfig(bytes.NewReader(i.b))
+		if err != nil {
+			return 0, 0, fmt.Errorf("failed to decode image config: %w", err)
+		}
+		w, h = cfg.Width, cfg.Height
+	}
+	i.width, i.height, i.dimensionsOK = w, h, true
+	return w, h, nil
+}
+
+func roundDimension(v, fallback float64) int {
+	if v <= 0 {
+		v = fallback
+	}
+	n := int(math.Round(v))
+	if n < 1 {
+		return 1
+	}
+	return n
+}
+
+func (i *Image) RasterPNG(scale float64) ([]byte, error) {
+	if i == nil {
+		return nil, fmt.Errorf("image is nil")
+	}
+	if !i.IsSVG() {
+		return i.b, nil
+	}
+	if scale <= 0 {
+		scale = 1
+	}
+	icon, err := i.parseSVG()
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse SVG: %w", err)
+	}
+	intrinsicW, intrinsicH, err := i.Dimensions()
+	if err != nil {
+		return nil, err
+	}
+	w := clampRasterDimension(float64(intrinsicW) * scale)
+	h := clampRasterDimension(float64(intrinsicH) * scale)
+	if icon.ViewBox.W <= 0 {
+		icon.ViewBox.W = float64(intrinsicW)
+	}
+	if icon.ViewBox.H <= 0 {
+		icon.ViewBox.H = float64(intrinsicH)
+	}
+	icon.SetTarget(0, 0, float64(w), float64(h))
+	rgba := image.NewRGBA(image.Rect(0, 0, w, h))
+	scanner := rasterx.NewScannerGV(w, h, rgba, rgba.Bounds())
+	raster := rasterx.NewDasher(w, h, scanner)
+	icon.Draw(raster, 1.0)
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, rgba); err != nil {
+		return nil, fmt.Errorf("failed to encode rasterized SVG: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+func clampRasterDimension(v float64) int {
+	const maxDimension = 4096
+	n := int(math.Round(v))
+	if n < 1 {
+		return 1
+	}
+	if n > maxDimension {
+		return maxDimension
+	}
+	return n
+}
+
+func (i *Image) parseSVG() (*oksvg.SvgIcon, error) {
+	if i.svgIcon != nil {
+		return i.svgIcon, nil
+	}
+	icon, err := oksvg.ReadIconStream(bytes.NewReader(i.b))
+	if err != nil {
+		return nil, err
+	}
+	i.svgIcon = icon
+	return icon, nil
+}
+
 func (i *Image) Image() (image.Image, error) {
 	if i == nil {
 		return nil, fmt.Errorf("image is nil")
 	}
 	if i.i == nil {
-		img, _, err := image.Decode(bytes.NewReader(i.b))
+		b := i.b
+		if i.IsSVG() {
+			pngBytes, err := i.RasterPNG(1)
+			if err != nil {
+				return nil, err
+			}
+			b = pngBytes
+		}
+		img, _, err := image.Decode(bytes.NewReader(b))
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode image: %w", err)
 		}
@@ -250,6 +401,13 @@ func (iimg *internalImage) toImage(i *Image) error {
 	i.fromMarkdown = iimg.FromMarkdown
 	i.modTime = iimg.ModTime
 	i.link = iimg.Link
+	i.i = nil
+	i.checksum = 0
+	i.pHash = nil
+	i.svgIcon = nil
+	i.width = 0
+	i.height = 0
+	i.dimensionsOK = false
 
 	data := []byte(iimg.Data)
 	if !bytes.HasPrefix(data, []byte(`data:`)) {
@@ -263,6 +421,13 @@ func (iimg *internalImage) toImage(i *Image) error {
 	decoded, err := base64.StdEncoding.DecodeString(string(splitted[1]))
 	if err != nil {
 		return fmt.Errorf("failed to decode base64 image data: %w", err)
+	}
+	if i.mimeType == MIMETypeImageSVG {
+		if !isSVG(decoded) {
+			return fmt.Errorf("invalid SVG image data")
+		}
+		i.b = decoded
+		return nil
 	}
 	_, mimeType, err := image.DecodeConfig(bytes.NewReader(decoded))
 	if err != nil {

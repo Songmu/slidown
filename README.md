@@ -208,6 +208,11 @@ line-break handling. A few edge behaviors (notably how content that overflows
 the available placeholders is handled) currently differ from `deck` and are not
 yet a stable contract; these are called out inline in that reference.
 
+SVG images are, where possible, converted into native editable PowerPoint
+shapes; SVGs using features that cannot be faithfully converted fall back to a
+native SVG picture with a rasterized PNG fallback. See
+[Images](docs/markdown.md#images) for details.
+
 ## Configuration file
 
 `slidown` reads optional global configuration:

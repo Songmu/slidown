@@ -14,6 +14,7 @@ import (
 
 	"github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/pptx"
+	"github.com/Songmu/slidown/pptx/svgshape"
 )
 
 type converter struct {
@@ -157,13 +158,10 @@ func renderImagesAt(sl *pptx.Slide, images []*slidown.Image, rx, ry, rw, rh int6
 		if img == nil {
 			continue
 		}
-		data := img.Bytes()
-		cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
-		if err != nil || cfg.Width == 0 || cfg.Height == 0 {
+		natW, natH, format, ok := imageNatEMU(img)
+		if !ok {
 			continue
 		}
-		natW := int64(cfg.Width) * emuPerPixel
-		natH := int64(cfg.Height) * emuPerPixel
 
 		// Scale to fit the cell (cellW x regionH) preserving aspect ratio.
 		w, h := fit(natW, natH, cellW, regionH)
@@ -171,11 +169,77 @@ func renderImagesAt(sl *pptx.Slide, images []*slidown.Image, rx, ry, rw, rh int6
 		x := cellX + (cellW-w)/2
 		y := regionY + (regionH-h)/2
 
+		if img.IsSVG() {
+			// Prefer converting the SVG into native, editable PowerPoint shapes.
+			// Fall back to embedding it as a native SVG picture when the
+			// document uses features the converter can't faithfully reproduce.
+			if g, converted := svgshape.Convert(img.Bytes()); converted {
+				g.X, g.Y, g.W, g.H = x, y, w, h
+				sl.AddGroup(g)
+				continue
+			}
+			if pic := buildSVGPicture(img, x, y, w, h); pic != nil {
+				sl.AddPicture(pic)
+			}
+			continue
+		}
+
 		sl.AddPicture(&pptx.Picture{
-			Data: data,
+			Data: img.Bytes(),
 			Ext:  imageExt(format),
 			X:    x, Y: y, W: w, H: h,
 		})
+	}
+}
+
+// imageNatEMU returns the natural image dimensions in EMUs, handling both
+// raster images (decoded via image.DecodeConfig) and SVG images (whose
+// intrinsic size comes from the viewBox/width/height). format is the raster
+// image format ("png"/"jpeg"/"gif") and is empty for SVG. ok is false when the
+// dimensions cannot be determined.
+func imageNatEMU(img *slidown.Image) (natW, natH int64, format string, ok bool) {
+	if img == nil {
+		return 0, 0, "", false
+	}
+	if img.IsSVG() {
+		w, h, err := img.Dimensions()
+		if err != nil || w == 0 || h == 0 {
+			return 0, 0, "", false
+		}
+		return int64(w) * emuPerPixel, int64(h) * emuPerPixel, "", true
+	}
+	cfg, f, err := image.DecodeConfig(bytes.NewReader(img.Bytes()))
+	if err != nil || cfg.Width == 0 || cfg.Height == 0 {
+		return 0, 0, "", false
+	}
+	return int64(cfg.Width) * emuPerPixel, int64(cfg.Height) * emuPerPixel, f, true
+}
+
+// buildSVGPicture builds a native SVG picture: the raster PNG fallback lives in
+// Data (rendered at roughly the placed size for crispness) while SVGData holds
+// the original SVG so PowerPoint 2016+ renders the vector version. Returns nil
+// when the SVG cannot be rasterized.
+func buildSVGPicture(img *slidown.Image, x, y, w, h int64) *pptx.Picture {
+	natW, natH, _, ok := imageNatEMU(img)
+	if !ok {
+		return nil
+	}
+	scale := 2.0
+	if natW > 0 {
+		if s := 2 * float64(w) / float64(natW); s > 0 {
+			scale = s
+		}
+	}
+	_ = natH
+	png, err := img.RasterPNG(scale)
+	if err != nil || len(png) == 0 {
+		return nil
+	}
+	return &pptx.Picture{
+		Data:    png,
+		Ext:     "png",
+		SVGData: img.Bytes(),
+		X:       x, Y: y, W: w, H: h,
 	}
 }
 
@@ -208,18 +272,29 @@ func distributeImagePlaceholders(sl *pptx.Slide, tmpl *pptx.Template, layout *pp
 		if img == nil {
 			continue
 		}
-		data := img.Bytes()
-		cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
-		if err != nil || cfg.Width == 0 || cfg.Height == 0 {
+		natW, natH, format, ok := imageNatEMU(img)
+		if !ok {
 			continue
 		}
-		natW := int64(cfg.Width) * emuPerPixel
-		natH := int64(cfg.Height) * emuPerPixel
 		w, h := fit(natW, natH, pw, ph2)
 		x := px + (pw-w)/2
 		y := py + (ph2-h)/2
+		if img.IsSVG() {
+			// Picture placeholders bind a native picture; SVGs are embedded as
+			// native SVG images (with a raster fallback) rather than converted
+			// to shapes, which would not fill the picture placeholder.
+			pic := buildSVGPicture(img, x, y, w, h)
+			if pic == nil {
+				continue
+			}
+			pic.IsPlaceholder = true
+			pic.Placeholder = pptx.PlaceholderType(ph.Type)
+			pic.PlaceholderIdx = ph.Idx
+			sl.AddPicture(pic)
+			continue
+		}
 		sl.AddPicture(&pptx.Picture{
-			Data:           data,
+			Data:           img.Bytes(),
 			Ext:            imageExt(format),
 			X:              x,
 			Y:              y,

@@ -15,6 +15,7 @@ func contentTypes(slideCount int, notesSlideNums []int) string {
 		`<Default Extension="jpeg" ContentType="image/jpeg"/>`+
 		`<Default Extension="jpg" ContentType="image/jpeg"/>`+
 		`<Default Extension="gif" ContentType="image/gif"/>`+
+		`<Default Extension="svg" ContentType="image/svg+xml"/>`+
 		`<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>`+
 		`<Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>`+
 		`<Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>`+

@@ -35,6 +35,8 @@ type Slide struct {
 	Shapes []*Shape
 	// Pictures are raster images placed on the slide.
 	Pictures []*Picture
+	// Groups are grouped custom-geometry shapes and text boxes placed on the slide.
+	Groups []*GroupShape
 	// Tables are tables placed on the slide.
 	Tables []*Table
 	// LayoutName is the template layout name this slide should use. Ignored in
@@ -68,6 +70,12 @@ func (s *Slide) AddPicture(p *Picture) *Picture {
 	return p
 }
 
+// AddGroup appends a group shape to the slide and returns it.
+func (s *Slide) AddGroup(g *GroupShape) *GroupShape {
+	s.Groups = append(s.Groups, g)
+	return g
+}
+
 // AddTable appends a table to the slide and returns it.
 func (s *Slide) AddTable(t *Table) *Table {
 	s.Tables = append(s.Tables, t)
@@ -79,6 +87,9 @@ type Picture struct {
 	Name string
 	// Data is the raw encoded image (PNG/JPEG/GIF).
 	Data []byte
+	// SVGData, when set, embeds a native SVG alongside Data as the raster
+	// fallback via an asvg:svgBlip extension.
+	SVGData []byte
 	// Ext is the file extension without the dot: "png", "jpeg" or "gif".
 	Ext string
 	// Geometry in EMUs.
@@ -99,6 +110,118 @@ type Picture struct {
 // isPlaceholder reports whether the picture should emit a placeholder element.
 func (p *Picture) isPlaceholder() bool {
 	return p.IsPlaceholder || p.Placeholder != PlaceholderNone
+}
+
+// FillKind enumerates fill types for custom-geometry shapes.
+type FillKind int
+
+const (
+	// FillNone means the shape has no fill.
+	FillNone FillKind = iota
+	// FillSolid means the shape uses a single solid color fill.
+	FillSolid
+	// FillGradient means the shape uses a gradient fill.
+	FillGradient
+)
+
+// GradientKind enumerates gradient fill types.
+type GradientKind int
+
+const (
+	// GradientLinear is a linear gradient.
+	GradientLinear GradientKind = iota
+	// GradientRadial is a radial gradient.
+	GradientRadial
+)
+
+// GradientStop is one color stop in a gradient fill.
+type GradientStop struct {
+	Pos   float64 // 0..1 position along the gradient
+	Color string  // RRGGBB hex, no '#'
+	Alpha float64 // 0..1 (1 = opaque)
+}
+
+// Gradient describes a linear or radial gradient fill.
+type Gradient struct {
+	Kind  GradientKind
+	Angle float64 // degrees clockwise from 3 o'clock; used for linear
+	Stops []GradientStop
+}
+
+// Fill describes the fill style for a custom-geometry shape.
+type Fill struct {
+	Kind     FillKind
+	Color    string    // RRGGBB for FillSolid
+	Alpha    float64   // 0..1 for FillSolid
+	Gradient *Gradient // for FillGradient
+}
+
+// Stroke describes the outline style for a custom-geometry shape.
+type Stroke struct {
+	Color string  // RRGGBB
+	Alpha float64 // 0..1
+	Width int64   // EMU; 0 renders a hairline-safe minimum
+	Cap   string  // "rnd", "sq", "flat"; empty => "flat"
+	Join  string  // "round", "bevel", "miter"; empty => "round"
+	Dash  string  // OOXML preset dash val (e.g. "dash", "sysDot"); empty => solid
+}
+
+// PathVerb enumerates supported path commands for custom geometry.
+type PathVerb int
+
+const (
+	// MoveTo moves the current point to one point.
+	MoveTo PathVerb = iota
+	// LineTo draws a line to one point.
+	LineTo
+	// CubicTo draws a cubic Bezier curve using control1, control2 and end points.
+	CubicTo
+	// QuadTo draws a quadratic Bezier curve using control and end points.
+	QuadTo
+	// ClosePath closes the current subpath.
+	ClosePath
+)
+
+// PathPoint is a point in the GeomShape's path coordinate space.
+type PathPoint struct{ X, Y int64 }
+
+// PathCmd is one command in a custom-geometry path.
+type PathCmd struct {
+	Verb PathVerb
+	Pts  []PathPoint
+}
+
+// GeomPath is a sequence of path commands.
+type GeomPath struct {
+	Cmds []PathCmd
+}
+
+// GeomShape is a single custom-geometry shape inside a group.
+type GeomShape struct {
+	Name string
+	// Placement of this shape within the parent group's child coordinate space (EMU).
+	X, Y, W, H int64
+	// Path coordinate space size (the <a:path w=.. h=..>). Path points use this space.
+	PathW, PathH int64
+	Paths        []GeomPath
+	Fill         Fill
+	Stroke       *Stroke // nil => no outline
+	// EvenOdd records the source SVG fill rule. PowerPoint custom geometry uses
+	// nonzero winding, so writers preserve the field but do not emit XML for it.
+	EvenOdd bool
+}
+
+// GroupShape is a <p:grpSp> containing geometry shapes and optional text boxes.
+type GroupShape struct {
+	Name string
+	// Placement on the slide (EMU).
+	X, Y, W, H int64
+	// Child coordinate space: chOff and chExt. Child shapes (Geoms/Texts) are
+	// positioned in this space; PowerPoint scales child space (ChW x ChH) into
+	// the group's on-slide W x H.
+	ChX, ChY, ChW, ChH int64
+	Geoms              []*GeomShape
+	Texts              []*Shape
 }
 
 // PlaceholderType enumerates the OOXML placeholder types relevant to slidown's
