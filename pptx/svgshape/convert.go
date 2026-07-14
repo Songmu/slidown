@@ -1,7 +1,10 @@
 package svgshape
 
 import (
+	"bytes"
 	"encoding/xml"
+	"errors"
+	"io"
 	"math"
 	"strconv"
 	"strings"
@@ -63,13 +66,13 @@ func Convert(svg []byte) (g *pptx.GroupShape, ok bool) {
 }
 
 func parseXML(data []byte) (*node, error) {
-	dec := xml.NewDecoder(strings.NewReader(string(data)))
+	dec := xml.NewDecoder(bytes.NewReader(data))
 	var stack []*node
 	var root *node
 	for {
 		tok, err := dec.Token()
 		if err != nil {
-			if err.Error() == "EOF" {
+			if errors.Is(err, io.EOF) {
 				return root, nil
 			}
 			return nil, err

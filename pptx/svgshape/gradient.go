@@ -118,7 +118,10 @@ func (c *conv) gradientStops(n *node) ([]pptx.GradientStop, bool) {
 		if ch.Name != "stop" {
 			continue
 		}
-		st, _ := c.resolveStyle(ch, defaultStyle())
+		st, ok := c.resolveStyle(ch, defaultStyle())
+		if !ok {
+			return nil, false
+		}
 		off, ok := parseOffset(ch.Attrs["offset"])
 		if !ok {
 			return nil, false

@@ -22,9 +22,15 @@ func renderSlidesToParts(t *testing.T, slides slidown.Slides) map[string][]byte 
 	}
 	parts := map[string][]byte{}
 	for _, f := range zr.File {
-		rc, _ := f.Open()
-		b, _ := io.ReadAll(rc)
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("open zip entry %s: %v", f.Name, err)
+		}
+		b, err := io.ReadAll(rc)
 		rc.Close()
+		if err != nil {
+			t.Fatalf("read zip entry %s: %v", f.Name, err)
+		}
 		parts[f.Name] = b
 	}
 	return parts

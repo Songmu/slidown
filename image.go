@@ -244,7 +244,17 @@ func (i *Image) RasterPNG(scale float64) ([]byte, error) {
 		return nil, fmt.Errorf("image is nil")
 	}
 	if !i.IsSVG() {
-		return i.b, nil
+		// Contract: always return PNG-encoded bytes. Re-encode raster sources
+		// (which may be JPEG/GIF) rather than returning their original bytes.
+		img, err := i.Image()
+		if err != nil {
+			return nil, err
+		}
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, img); err != nil {
+			return nil, fmt.Errorf("failed to encode image as PNG: %w", err)
+		}
+		return buf.Bytes(), nil
 	}
 	if scale <= 0 {
 		scale = 1
