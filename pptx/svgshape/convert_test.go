@@ -262,3 +262,14 @@ func TestDeeplyNestedFallsBack(t *testing.T) {
 		t.Fatal("expected fallback for excessively nested SVG")
 	}
 }
+
+func TestNoViewBoxPerDimensionFallback(t *testing.T) {
+	// width present, height omitted: width must be preserved, height defaults 150.
+	g := mustConvert(t, `<svg xmlns="http://www.w3.org/2000/svg" width="200"><rect width="10" height="10" fill="red"/></svg>`)
+	if g.ChW != round(200*emuPerUnit) {
+		t.Fatalf("width should be preserved (200), got ChW=%d", g.ChW)
+	}
+	if g.ChH != round(150*emuPerUnit) {
+		t.Fatalf("height should default to 150, got ChH=%d", g.ChH)
+	}
+}

@@ -127,13 +127,16 @@ func (c *conv) initViewport() bool {
 		}
 		c.vbMinX, c.vbMinY, c.vbW, c.vbH = n[0], n[1], n[2], n[3]
 	} else {
+		// No viewBox: fall back per-dimension to the SVG spec defaults
+		// (300x150) so a valid width/height isn't discarded when only the other
+		// is missing/invalid. This matches Image.Dimensions()'s handling.
 		w, okw := parseLength(c.root.Attrs["width"], false)
 		h, okh := parseLength(c.root.Attrs["height"], false)
-		if !okw || !okh {
-			w, h = 300, 150
+		if !okw || w <= 0 {
+			w = 300
 		}
-		if w <= 0 || h <= 0 {
-			return false
+		if !okh || h <= 0 {
+			h = 150
 		}
 		c.vbW, c.vbH = w, h
 	}
