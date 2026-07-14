@@ -214,6 +214,14 @@ type GeomShape struct {
 	EvenOdd bool
 }
 
+// GroupChild is one ordered child of a GroupShape: exactly one of Geom or Text
+// is non-nil. Children preserves document order across geometry and text nodes
+// so their z-order matches the source SVG.
+type GroupChild struct {
+	Geom *GeomShape
+	Text *Shape
+}
+
 // GroupShape is a <p:grpSp> containing geometry shapes and optional text boxes.
 type GroupShape struct {
 	Name string
@@ -223,8 +231,12 @@ type GroupShape struct {
 	// positioned in this space; PowerPoint scales child space (ChW x ChH) into
 	// the group's on-slide W x H.
 	ChX, ChY, ChW, ChH int64
-	Geoms              []*GeomShape
-	Texts              []*Shape
+	// Children, when non-empty, is the ordered list of child shapes rendered in
+	// document order (preferred over Geoms/Texts, which are retained for
+	// convenient typed access).
+	Children []GroupChild
+	Geoms    []*GeomShape
+	Texts    []*Shape
 }
 
 // PlaceholderType enumerates the OOXML placeholder types relevant to slidown's
@@ -270,6 +282,10 @@ type Shape struct {
 	// Geometry in EMUs. Used for non-placeholder shapes and as an explicit
 	// override for placeholders.
 	X, Y, W, H int64
+	// NoInset, when true, emits a zero-inset text body (lIns/rIns/tIns/bIns=0)
+	// so text placed at explicit coordinates (e.g. converted SVG text) is not
+	// shifted by DrawingML's default insets.
+	NoInset    bool
 	Paragraphs []*Paragraph
 }
 

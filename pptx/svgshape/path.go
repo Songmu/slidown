@@ -11,7 +11,7 @@ import (
 
 type pathMapper func(x, y float64) pptx.PathPoint
 
-func parsePath(d string, mapPt pathMapper) (pptx.GeomPath, bool, bool) {
+func parsePath(d string, budget int, mapPt pathMapper) (pptx.GeomPath, bool, bool) {
 	p := &pathParser{s: d}
 	var cmds []pptx.PathCmd
 	var cmd byte
@@ -19,6 +19,9 @@ func parsePath(d string, mapPt pathMapper) (pptx.GeomPath, bool, bool) {
 	var lastC, lastQ point
 	lastWasC, lastWasQ := false, false
 	for p.more() {
+		if len(cmds) > budget {
+			return pptx.GeomPath{}, false, false
+		}
 		startIdx := p.i
 		consumedCmd := false
 		if p.isCommand() {

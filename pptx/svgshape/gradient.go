@@ -55,38 +55,36 @@ func (c *conv) gradient(id string, seen map[string]bool) (*pptx.Gradient, bool) 
 	}
 	if n.Name == "lineargradient" {
 		gr.Kind = pptx.GradientLinear
-		x1 := 0.0
-		y1 := 0.0
-		x2 := 1.0
-		y2 := 0.0
-		var ok bool
-		if n.Attrs["x1"] != "" {
-			x1, ok = parseGradCoord(n.Attrs["x1"])
-			if !ok {
-				return nil, false
-			}
+		if gu := n.Attrs["gradientunits"]; gu != "" && strings.ToLower(gu) != "objectboundingbox" {
+			return nil, false
 		}
-		if n.Attrs["y1"] != "" {
-			y1, ok = parseGradCoord(n.Attrs["y1"])
-			if !ok {
-				return nil, false
+		// DrawingML's <a:lin> expresses only a direction and always spans the
+		// whole bounding box, so only a full-box vector (endpoints on the 0/1
+		// edges) is representable. Recompute the angle only when this gradient
+		// declares its own vector; otherwise keep the inherited (parent) angle.
+		hasCoord := n.Attrs["x1"] != "" || n.Attrs["y1"] != "" || n.Attrs["x2"] != "" || n.Attrs["y2"] != ""
+		if hasCoord || parent == nil {
+			coords := map[string]float64{"x1": 0, "y1": 0, "x2": 1, "y2": 0}
+			for k := range coords {
+				if s := n.Attrs[k]; s != "" {
+					v, ok := parseGradCoord(s)
+					if !ok {
+						return nil, false
+					}
+					coords[k] = v
+				}
 			}
-		}
-		if n.Attrs["x2"] != "" {
-			x2, ok = parseGradCoord(n.Attrs["x2"])
-			if !ok {
-				return nil, false
+			// Reject partial vectors: each endpoint coordinate must sit on a box
+			// edge (0 or 1) so the gradient covers the full box.
+			for _, v := range coords {
+				if math.Abs(v) > 1e-9 && math.Abs(v-1) > 1e-9 {
+					return nil, false
+				}
 			}
-		}
-		if n.Attrs["y2"] != "" {
-			y2, ok = parseGradCoord(n.Attrs["y2"])
-			if !ok {
-				return nil, false
+			gr.Angle = math.Atan2(coords["y2"]-coords["y1"], coords["x2"]-coords["x1"]) * 180 / math.Pi
+			if gr.Angle < 0 {
+				gr.Angle += 360
 			}
-		}
-		gr.Angle = math.Atan2(y2-y1, x2-x1) * 180 / math.Pi
-		if gr.Angle < 0 {
-			gr.Angle += 360
 		}
 	} else {
 		gr.Kind = pptx.GradientRadial
@@ -111,6 +109,12 @@ func (c *conv) gradient(id string, seen map[string]bool) (*pptx.Gradient, bool) 
 	}
 	if len(gr.Stops) == 0 {
 		return nil, false
+	}
+	if len(gr.Stops) == 1 {
+		// DrawingML requires at least two gradient stops; a single SVG stop is
+		// visually a solid color, so duplicate it at both ends.
+		s := gr.Stops[0]
+		gr.Stops = []pptx.GradientStop{{Pos: 0, Color: s.Color, Alpha: s.Alpha}, {Pos: 1, Color: s.Color, Alpha: s.Alpha}}
 	}
 	c.gradients[id] = gr
 	return gr, true

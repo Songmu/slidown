@@ -214,13 +214,28 @@ func renderGroup(g *GroupShape, id *int, relIdx *int, rels *[]slideRel) string {
 	b.WriteString(`<a:chOff x="` + itoa64(g.ChX) + `" y="` + itoa64(g.ChY) + `"/>`)
 	b.WriteString(`<a:chExt cx="` + itoa64(g.ChW) + `" cy="` + itoa64(g.ChH) + `"/>`)
 	b.WriteString(`</a:xfrm></p:grpSpPr>`)
-	for _, gs := range g.Geoms {
-		b.WriteString(renderGeom(gs, *id))
-		*id++
-	}
-	for _, sh := range g.Texts {
-		b.WriteString(renderShape(sh, *id, relIdx, rels))
-		*id++
+	if len(g.Children) > 0 {
+		// Preferred path: render children in document order so geometry and
+		// text z-order matches the source.
+		for _, ch := range g.Children {
+			switch {
+			case ch.Geom != nil:
+				b.WriteString(renderGeom(ch.Geom, *id))
+				*id++
+			case ch.Text != nil:
+				b.WriteString(renderShape(ch.Text, *id, relIdx, rels))
+				*id++
+			}
+		}
+	} else {
+		for _, gs := range g.Geoms {
+			b.WriteString(renderGeom(gs, *id))
+			*id++
+		}
+		for _, sh := range g.Texts {
+			b.WriteString(renderShape(sh, *id, relIdx, rels))
+			*id++
+		}
 	}
 	b.WriteString(`</p:grpSp>`)
 	return b.String()
@@ -436,7 +451,11 @@ func renderShape(sh *Shape, id int, relIdx *int, rels *[]slideRel) string {
 	}
 	b.WriteString(`</p:spPr>`)
 
-	b.WriteString(`<p:txBody><a:bodyPr/><a:lstStyle/>`)
+	bodyPr := `<a:bodyPr/>`
+	if sh.NoInset {
+		bodyPr = `<a:bodyPr lIns="0" tIns="0" rIns="0" bIns="0"/>`
+	}
+	b.WriteString(`<p:txBody>` + bodyPr + `<a:lstStyle/>`)
 	if len(sh.Paragraphs) == 0 {
 		b.WriteString(`<a:p><a:endParaRPr/></a:p>`)
 	}

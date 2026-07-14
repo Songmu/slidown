@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"hash/crc32"
 	"image"
@@ -17,7 +18,6 @@ import (
 	"os"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/corona10/goimagehash"
 	"github.com/k1LoW/errors"
@@ -159,30 +159,28 @@ func newImageFromBuffer(r io.Reader) (_ *Image, err error) {
 	}, nil
 }
 
+// isSVG reports whether b is an SVG document by decoding XML tokens and
+// requiring the first start element to be <svg> (in the SVG namespace when a
+// namespace is declared). This avoids false positives from a stray "<svg"
+// substring in a comment or an unrelated (e.g. HTML) document.
 func isSVG(b []byte) bool {
 	b = bytes.TrimPrefix(b, []byte{0xef, 0xbb, 0xbf})
-	b = bytes.TrimLeftFunc(b, unicode.IsSpace)
-	if len(b) == 0 {
-		return false
+	dec := xml.NewDecoder(bytes.NewReader(b))
+	dec.Strict = false
+	dec.AutoClose = xml.HTMLAutoClose
+	dec.Entity = xml.HTMLEntity
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return false
+		}
+		if se, ok := tok.(xml.StartElement); ok {
+			if !strings.EqualFold(se.Name.Local, "svg") {
+				return false
+			}
+			return se.Name.Space == "" || se.Name.Space == "http://www.w3.org/2000/svg"
+		}
 	}
-	limit := min(len(b), 1024)
-	prefix := bytes.ToLower(b[:limit])
-	if hasSVGTag(prefix) {
-		return true
-	}
-	if bytes.HasPrefix(prefix, []byte("<?xml")) {
-		return hasSVGTag(prefix)
-	}
-	return bytes.Contains(prefix, []byte("http://www.w3.org/2000/svg")) && hasSVGTag(prefix)
-}
-
-func hasSVGTag(b []byte) bool {
-	idx := bytes.Index(b, []byte("<svg"))
-	if idx < 0 {
-		return false
-	}
-	next := idx + len("<svg")
-	return next == len(b) || b[next] == '>' || b[next] == '/' || unicode.IsSpace(rune(b[next]))
 }
 
 func (i *Image) SetLink(link string) {

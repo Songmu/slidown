@@ -24,17 +24,15 @@ func (c *conv) text(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 	if !ok {
 		return false
 	}
-	align := pptx.AlignLeft
+	// The text box starts at x and extends rightward, which only matches
+	// text-anchor:start. middle/end would need the box geometry computed from
+	// the anchor, so fall back rather than mis-anchor the text.
 	switch strings.ToLower(st.get("text-anchor")) {
-	case "middle":
-		align = pptx.AlignCenter
-	case "end":
-		align = pptx.AlignRight
 	case "start", "":
-		align = pptx.AlignLeft
 	default:
 		return false
 	}
+	align := pptx.AlignLeft
 	fillVal := resolvePaint(st, st.get("fill"))
 	if fillVal == "none" || fillVal == "" {
 		// Text with no visible fill is invisible; render nothing rather than
@@ -73,7 +71,9 @@ func (c *conv) text(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 		w = minW
 	}
 	c.textCount++
-	g.Texts = append(g.Texts, &pptx.Shape{Name: shapeName(n, "Text", c.textCount), X: xemu, Y: yemu - round(fs*emuPerUnit), W: w, H: round(fs * emuPerUnit * 1.5), Paragraphs: []*pptx.Paragraph{{Align: align, Runs: runs}}})
+	sh := &pptx.Shape{Name: shapeName(n, "Text", c.textCount), X: xemu, Y: yemu - round(fs*emuPerUnit), W: w, H: round(fs * emuPerUnit * 1.5), NoInset: true, Paragraphs: []*pptx.Paragraph{{Align: align, Runs: runs}}}
+	g.Texts = append(g.Texts, sh)
+	g.Children = append(g.Children, pptx.GroupChild{Text: sh})
 	return true
 }
 func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]*pptx.Run, bool) {
@@ -109,11 +109,29 @@ func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]
 			}
 			cpt = f * 0.75
 		}
+		// Runs carry no alpha, so a translucent tspan can't be represented:
+		// fall back for the whole SVG.
+		cop, ok := parseUnit(child.get("opacity"), 1)
+		if !ok {
+			return nil, false
+		}
+		cfo, ok := parseUnit(child.get("fill-opacity"), 1)
+		if !ok {
+			return nil, false
+		}
+		if cop*cfo < 1 {
+			return nil, false
+		}
 		col := color
-		fill := child.get("fill")
-		if fill != "" && fill != "none" {
+		fillVal := resolvePaint(child, child.get("fill"))
+		if fillVal == "none" {
+			// A no-fill tspan is invisible; skip it rather than emitting it
+			// with the inherited color.
+			continue
+		}
+		if fillVal != "" {
 			var ok bool
-			col, ok = parseColor(fill)
+			col, ok = parseColor(fillVal)
 			if !ok {
 				return nil, false
 			}

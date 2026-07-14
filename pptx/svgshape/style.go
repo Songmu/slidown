@@ -92,7 +92,12 @@ func parseCSS(s string) ([]cssRule, bool) {
 			if strings.ContainsAny(sel, " >+~[:*") {
 				return nil, false
 			}
-			if strings.HasPrefix(sel, ".") || strings.HasPrefix(sel, "#") || isIdent(sel) {
+			if strings.HasPrefix(sel, ".") || strings.HasPrefix(sel, "#") {
+				// Class/ID selectors are case-sensitive in SVG/XML; preserve
+				// their spelling and compare exactly.
+				sels = append(sels, sel)
+			} else if isIdent(sel) {
+				// Element-name selectors compare against the lowercased node name.
 				sels = append(sels, strings.ToLower(sel))
 			} else {
 				return nil, false
@@ -191,11 +196,11 @@ func (c *conv) matchedCSS(n *node) []matchedRule {
 }
 func matchSelector(n *node, sel string) bool {
 	if strings.HasPrefix(sel, "#") {
-		return strings.ToLower(n.Attrs["id"]) == sel[1:]
+		return n.Attrs["id"] == sel[1:]
 	}
 	if strings.HasPrefix(sel, ".") {
 		for _, cl := range strings.Fields(n.Attrs["class"]) {
-			if strings.ToLower(cl) == sel[1:] {
+			if cl == sel[1:] {
 				return true
 			}
 		}
@@ -258,6 +263,12 @@ func (c *conv) paint(st style, m matrix, forceFillNone bool) (pptx.Fill, *pptx.S
 	var stroke *pptx.Stroke
 	strokeVal := resolvePaint(st, st.get("stroke"))
 	if strokeVal != "none" && strokeVal != "" {
+		// A non-similarity transform (non-uniform scale or skew) stretches the
+		// stroke outline anisotropically, which a single uniform stroke width
+		// can't reproduce, so fall back to the native SVG picture.
+		if !m.isSimilarity() {
+			return fill, nil, false
+		}
 		col, ok := parseColor(strokeVal)
 		if !ok {
 			return fill, nil, false

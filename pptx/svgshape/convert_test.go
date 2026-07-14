@@ -131,8 +131,8 @@ func TestGradientsUseCSSAndText(t *testing.T) {
 	if g.Geoms[0].Fill.Color != "00ff00" {
 		t.Fatalf("css fill=%s", g.Geoms[0].Fill.Color)
 	}
-	g = mustConvert(t, `<svg viewBox="0 0 100 100"><text x="10" y="20" fill="red" font-size="16" text-anchor="middle" font-family="Arial, sans-serif">Hi<tspan>!</tspan></text></svg>`)
-	if len(g.Texts) != 1 || g.Texts[0].Paragraphs[0].Align != pptx.AlignCenter || g.Texts[0].Paragraphs[0].Runs[0].FontSize != 12 || g.Texts[0].Paragraphs[0].Runs[0].Color != "ff0000" {
+	g = mustConvert(t, `<svg viewBox="0 0 100 100"><text x="10" y="20" fill="red" font-size="16" text-anchor="start" font-family="Arial, sans-serif">Hi<tspan>!</tspan></text></svg>`)
+	if len(g.Texts) != 1 || g.Texts[0].Paragraphs[0].Align != pptx.AlignLeft || g.Texts[0].Paragraphs[0].Runs[0].FontSize != 12 || g.Texts[0].Paragraphs[0].Runs[0].Color != "ff0000" {
 		t.Fatalf("bad text: %#v", g.Texts[0])
 	}
 }
@@ -147,10 +147,11 @@ func TestColorsFallbackAndFillRule(t *testing.T) {
 			t.Fatalf("expected fallback: %s", s)
 		}
 	}
-	// A single-subpath evenodd path is equivalent to nonzero and still converts.
-	g := mustConvert(t, `<svg viewBox="0 0 10 10"><path fill-rule="evenodd" d="M0 0L10 0L10 10L0 10z"/></svg>`)
-	if !g.Geoms[0].EvenOdd || len(g.Geoms[0].Paths) != 1 {
-		t.Fatal("single-subpath evenodd failed")
+	// Any filled evenodd path falls back: DrawingML custom geometry only fills
+	// with nonzero winding, which can differ even for a single self-intersecting
+	// subpath.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><path fill-rule="evenodd" d="M0 0L10 0L10 10L0 10z"/></svg>`)); ok {
+		t.Fatal("expected fallback for filled evenodd path")
 	}
 	// A filled evenodd path with holes (multiple subpaths) cannot be faithfully
 	// reproduced with DrawingML's nonzero winding, so it falls back.
@@ -312,5 +313,56 @@ func TestReviewBatchFallbacks(t *testing.T) {
 		if _, ok := Convert([]byte(svg)); ok {
 			t.Errorf("%s: expected fallback (ok=false)", name)
 		}
+	}
+}
+
+func TestReviewBatch2(t *testing.T) {
+	// Nested <svg> is rejected (own viewport unmodeled).
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><svg width="5" height="5"><rect width="1" height="1"/></svg></svg>`)); ok {
+		t.Error("nested svg should fall back")
+	}
+	// viewBox + mismatched width/height aspect ratio -> fallback (letterboxing).
+	if _, ok := Convert([]byte(`<svg width="200" height="100" viewBox="0 0 100 100"><rect width="1" height="1"/></svg>`)); ok {
+		t.Error("viewBox+aspect mismatch should fall back")
+	}
+	// Non-default preserveAspectRatio -> fallback.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10" preserveAspectRatio="none"><rect width="1" height="1"/></svg>`)); ok {
+		t.Error("preserveAspectRatio none should fall back")
+	}
+	// visibility:hidden container with a visible descendant keeps the child.
+	g := mustConvert(t, `<svg viewBox="0 0 10 10"><g visibility="hidden"><rect width="1" height="1" fill="red" visibility="visible"/></g></svg>`)
+	if len(g.Geoms) != 1 || g.Geoms[0].Fill.Color != "ff0000" {
+		t.Fatalf("visibility override lost: %#v", g.Geoms)
+	}
+	// visibility:hidden leaf with no override is skipped.
+	g = mustConvert(t, `<svg viewBox="0 0 10 10"><rect width="1" height="1" visibility="hidden"/><rect width="1" height="1" fill="green"/></svg>`)
+	if len(g.Geoms) != 1 || g.Geoms[0].Fill.Color != "008000" {
+		t.Fatalf("visibility hidden leaf not skipped: %#v", g.Geoms)
+	}
+	// Fractional linear-gradient vector -> fallback; full-box vector converts.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><defs><linearGradient id="g" x1="0.5" x2="1"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)); ok {
+		t.Error("partial linear gradient vector should fall back")
+	}
+	// Single-stop gradient is expanded to two stops (valid OOXML).
+	g = mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="g"><stop offset="0" stop-color="red"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)
+	if gr := g.Geoms[0].Fill.Gradient; gr == nil || len(gr.Stops) != 2 {
+		t.Fatalf("single stop should expand to two: %#v", g.Geoms[0].Fill.Gradient)
+	}
+	// Non-uniform scale on a stroked shape -> fallback.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect width="2" height="2" fill="none" stroke="black" stroke-width="1" transform="scale(4,1)"/></svg>`)); ok {
+		t.Error("non-uniform scaled stroke should fall back")
+	}
+	// CSS class selector is case-sensitive: .Hot must not match class="hot".
+	g = mustConvert(t, `<svg viewBox="0 0 10 10"><style>.Hot{fill:#00f}</style><rect class="hot" width="1" height="1" fill="green"/></svg>`)
+	if g.Geoms[0].Fill.Color != "008000" {
+		t.Fatalf(".Hot should not match class=hot, got %s", g.Geoms[0].Fill.Color)
+	}
+	// Converted SVG text carries zero insets and preserves document order.
+	g = mustConvert(t, `<svg viewBox="0 0 100 100"><rect width="1" height="1" fill="red"/><text x="1" y="20" fill="blue" font-size="10">Hi</text></svg>`)
+	if len(g.Children) != 2 || g.Children[0].Geom == nil || g.Children[1].Text == nil {
+		t.Fatalf("expected ordered geom then text children: %#v", g.Children)
+	}
+	if !g.Children[1].Text.NoInset {
+		t.Error("svg text should use zero insets")
 	}
 }

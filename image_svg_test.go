@@ -49,6 +49,21 @@ func TestIsSVG(t *testing.T) {
 			data: []byte("not an image"),
 			want: false,
 		},
+		{
+			name: "html with svg in comment",
+			data: []byte(`<html><body><!-- <svg> --></body></html>`),
+			want: false,
+		},
+		{
+			name: "html mentioning svg entity",
+			data: []byte(`<html><p>see &lt;svg&gt;</p></html>`),
+			want: false,
+		},
+		{
+			name: "svg not the root element",
+			data: []byte(`<wrapper><svg viewBox="0 0 1 1"></svg></wrapper>`),
+			want: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

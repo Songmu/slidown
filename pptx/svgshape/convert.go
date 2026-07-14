@@ -23,6 +23,9 @@ const (
 	// maxCommands bounds the total number of path commands across all shapes,
 	// so a single huge <path> can't drive unbounded allocations or slide XML.
 	maxCommands = 2000000
+	// maxInputBytes caps the raw SVG size so pathological inputs are rejected
+	// before any parsing/allocation work.
+	maxInputBytes = 20 << 20 // 20 MiB
 )
 
 // errTooComplex is returned when parsing exceeds the resource limits above.
@@ -60,6 +63,9 @@ type conv struct {
 // Convert parses svg and returns a native pptx group when the whole document is faithfully converted.
 // Unsupported SVG features return ok=false so callers can fall back to embedding the SVG as an image.
 func Convert(svg []byte) (g *pptx.GroupShape, ok bool) {
+	if len(svg) > maxInputBytes {
+		return nil, false
+	}
 	r, err := parseXML(svg)
 	if err != nil || r == nil || r.Name != "svg" {
 		return nil, false
@@ -138,6 +144,22 @@ func (c *conv) initViewport() bool {
 			return false
 		}
 		c.vbMinX, c.vbMinY, c.vbW, c.vbH = n[0], n[1], n[2], n[3]
+		// A viewBox combined with a root width/height of a different aspect
+		// ratio (or a non-default preserveAspectRatio) needs the SVG viewport
+		// transform / letterboxing, which isn't modeled; fall back so the
+		// native SVG picture renders it faithfully.
+		if pa := strings.TrimSpace(c.root.Attrs["preserveaspectratio"]); pa != "" &&
+			!strings.EqualFold(pa, "xMidYMid meet") && !strings.EqualFold(pa, "xMidYMid") {
+			return false
+		}
+		w, okw := parseLength(c.root.Attrs["width"], false)
+		h, okh := parseLength(c.root.Attrs["height"], false)
+		if okw && okh && w > 0 && h > 0 {
+			// Compare aspect ratios (w/h vs vbW/vbH) with cross-multiplication.
+			if math.Abs(w*c.vbH-h*c.vbW) > 1e-6*w*h {
+				return false
+			}
+		}
 	} else {
 		// No viewBox: fall back per-dimension to the SVG spec defaults
 		// (300x150) so a valid width/height isn't discarded when only the other
@@ -178,14 +200,16 @@ func (c *conv) collectDefsAndCSS(n *node) bool {
 	return true
 }
 
-// isHiddenStyle reports whether the resolved style hides the element via
-// display:none or visibility:hidden/collapse. Because it reads the resolved
-// style, it accounts for presentation attributes, inline style and matched CSS
-// alike. Hidden elements (and their subtrees) are not rendered.
-func isHiddenStyle(st style) bool {
-	if strings.EqualFold(strings.TrimSpace(st.get("display")), "none") {
-		return true
-	}
+// displayNone reports whether the resolved style sets display:none, which
+// removes the element and its whole subtree.
+func displayNone(st style) bool {
+	return strings.EqualFold(strings.TrimSpace(st.get("display")), "none")
+}
+
+// visibilityHidden reports whether the resolved style hides the element via
+// visibility:hidden/collapse. Unlike display:none, a descendant can override it
+// with visibility:visible, so this is only applied per painted leaf.
+func visibilityHidden(st style) bool {
 	v := strings.ToLower(strings.TrimSpace(st.get("visibility")))
 	return v == "hidden" || v == "collapse"
 }
@@ -199,16 +223,6 @@ func containerOpacity(st style) (float64, bool) {
 		return 0, false
 	}
 	return op, true
-}
-
-func countSubpaths(gp pptx.GeomPath) int {
-	n := 0
-	for _, cmd := range gp.Cmds {
-		if cmd.Verb == pptx.MoveTo {
-			n++
-		}
-	}
-	return n
 }
 
 func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root bool) bool {
@@ -237,8 +251,8 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 	if !ok {
 		return false
 	}
-	if !root && isHiddenStyle(st) {
-		// display:none / visibility:hidden elements are not rendered.
+	if !root && displayNone(st) {
+		// display:none removes the element and its whole subtree.
 		return true
 	}
 	if tr := n.Attrs["transform"]; tr != "" {
@@ -250,7 +264,14 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 	}
 
 	switch n.Name {
-	case "svg", "g", "symbol":
+	case "svg":
+		// A nested <svg> establishes its own viewport (x/y/width/height/viewBox/
+		// preserveAspectRatio) that isn't modeled; only the root is handled.
+		if !root {
+			return false
+		}
+		fallthrough
+	case "g", "symbol":
 		// A container with opacity < 1 requires group compositing (its content
 		// is flattened and blended as a whole), which flat custom-geometry
 		// shapes can't reproduce; fall back to the native SVG picture.
@@ -259,6 +280,8 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 		} else if op < 1 {
 			return false
 		}
+		// Keep walking visibility-hidden containers: a descendant may override
+		// with visibility:visible.
 		for _, ch := range n.Children {
 			if !c.walk(ch, st, m, g, false) {
 				return false
@@ -277,24 +300,31 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 		if c.cmdCount > maxCommands {
 			return false
 		}
+		if visibilityHidden(st) {
+			return true
+		}
 		fill, stroke, ok := c.paint(st, m, forceFillNone)
 		if !ok {
 			return false
 		}
+		// DrawingML custom geometry fills always use nonzero winding, so any
+		// filled evenodd path (holes, or a self-intersecting subpath such as a
+		// star) can mis-render; fall back to embedding the SVG as an image.
 		evenOdd := strings.EqualFold(st.get("fill-rule"), "evenodd")
-		// DrawingML custom geometry fills use nonzero winding. For a single
-		// subpath evenodd and nonzero are equivalent, but a filled evenodd path
-		// with multiple subpaths (holes) would mis-render as a solid fill, so
-		// fall back to embedding the SVG as an image instead.
-		if evenOdd && fill.Kind != pptx.FillNone && countSubpaths(gp) > 1 {
+		if evenOdd && fill.Kind != pptx.FillNone {
 			return false
 		}
 		c.geomCount++
-		g.Geoms = append(g.Geoms, &pptx.GeomShape{Name: shapeName(n, "Shape", c.geomCount), X: 0, Y: 0, W: c.chW, H: c.chH, PathW: c.chW, PathH: c.chH, Paths: []pptx.GeomPath{gp}, Fill: fill, Stroke: stroke, EvenOdd: evenOdd})
+		gs := &pptx.GeomShape{Name: shapeName(n, "Shape", c.geomCount), X: 0, Y: 0, W: c.chW, H: c.chH, PathW: c.chW, PathH: c.chH, Paths: []pptx.GeomPath{gp}, Fill: fill, Stroke: stroke, EvenOdd: evenOdd}
+		g.Geoms = append(g.Geoms, gs)
+		g.Children = append(g.Children, pptx.GroupChild{Geom: gs})
 		return true
 	case "use":
 		return c.expandUse(n, st, m, g)
 	case "text":
+		if visibilityHidden(st) {
+			return true
+		}
 		return c.text(n, st, m, g)
 	default:
 		if root {
@@ -307,7 +337,7 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 func (c *conv) geometry(n *node, m matrix) (pptx.GeomPath, bool, bool) {
 	switch n.Name {
 	case "path":
-		return parsePath(n.Attrs["d"], func(x, y float64) pptx.PathPoint { return c.point(m.apply(point{x, y})) })
+		return parsePath(n.Attrs["d"], maxCommands-c.cmdCount, func(x, y float64) pptx.PathPoint { return c.point(m.apply(point{x, y})) })
 	case "rect":
 		x, ok1 := attrLen(n, "x", 0)
 		y, ok2 := attrLen(n, "y", 0)
@@ -351,6 +381,9 @@ func (c *conv) geometry(n *node, m matrix) (pptx.GeomPath, bool, bool) {
 	case "polyline", "polygon":
 		pts, ok := parsePoints(n.Attrs["points"])
 		if !ok {
+			return pptx.GeomPath{}, false, false
+		}
+		if len(pts) > maxCommands-c.cmdCount {
 			return pptx.GeomPath{}, false, false
 		}
 		cmds := []pptx.PathCmd{}

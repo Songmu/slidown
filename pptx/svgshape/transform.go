@@ -24,6 +24,16 @@ func (m matrix) avgScale() float64 {
 	return math.Sqrt(det)
 }
 
+// isSimilarity reports whether the linear part is a similarity transform
+// (uniform scale plus rotation/reflection), i.e. it maps circles to circles.
+// Non-similarity transforms (non-uniform scale, skew) stretch a stroke outline
+// anisotropically, which a single uniform stroke width can't reproduce.
+func (m matrix) isSimilarity() bool {
+	orthogonal := math.Abs(m.a*m.c+m.b*m.d) < 1e-9
+	equalLen := math.Abs((m.a*m.a+m.b*m.b)-(m.c*m.c+m.d*m.d)) < 1e-9
+	return orthogonal && equalLen
+}
+
 // isTranslateOnly reports whether the matrix is a pure translation (no scale,
 // rotation or skew). Text conversion only translates the anchor point, so any
 // other component would misplace/mis-size glyphs.
