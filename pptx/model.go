@@ -150,9 +150,12 @@ type Gradient struct {
 
 // Fill describes the fill style for a custom-geometry shape.
 type Fill struct {
-	Kind     FillKind
-	Color    string    // RRGGBB for FillSolid
-	Alpha    float64   // 0..1 for FillSolid
+	Kind  FillKind
+	Color string // RRGGBB for FillSolid
+	// Alpha is 0..1. For FillSolid it is the fill's own opacity; for
+	// FillGradient it is an overall multiplier applied to every gradient stop's
+	// alpha (see renderFill/renderGradient).
+	Alpha    float64
 	Gradient *Gradient // for FillGradient
 }
 

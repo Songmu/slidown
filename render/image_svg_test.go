@@ -36,6 +36,9 @@ func renderSlidesToParts(t *testing.T, slides slidown.Slides) map[string][]byte 
 	return parts
 }
 
+// Note: the generic keys() helper used in failure messages below is defined in
+// image_test.go, which is part of this same `render` test package.
+
 func newSVGImage(t *testing.T, svg string) *slidown.Image {
 	t.Helper()
 	img, err := slidown.NewImageFromCodeBlock(bytes.NewReader([]byte(svg)))

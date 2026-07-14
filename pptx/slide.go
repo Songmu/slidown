@@ -36,6 +36,11 @@ func renderSlide(s *Slide, mediaIdx *int) (xml string, rels []slideRel, media []
 
 	relIdx := 1 // rId1 is reserved for the slide layout relationship
 	id := 2     // shape ids; 1 is the group
+	// Z-order is grouped by element type, not markdown insertion order: all
+	// shapes, then pictures, then SVG shape groups, then tables. slidown lays
+	// images out side by side (non-overlapping) and offers no way to stack them,
+	// so this type-ordered drawing is intentional and does not cause overlap
+	// issues. Revisit only if free-positioning/overlap support is added.
 	for _, sh := range s.Shapes {
 		b.WriteString(renderShape(sh, id, &relIdx, &rels))
 		id++
