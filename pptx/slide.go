@@ -563,7 +563,13 @@ func renderRun(r *Run, relIdx *int, rels *[]slideRel) string {
 		s := rPr.String()
 		rPrStr = s[:len(s)-1] + `/>`
 	}
-	return `<a:r>` + rPrStr + `<a:t>` + escapeXML(r.Text) + `</a:t></a:r>`
+	at := `<a:t>`
+	if r.PreserveSpace {
+		// Preserve leading/trailing whitespace (used as a separator between
+		// runs); PowerPoint otherwise strips it.
+		at = `<a:t xml:space="preserve">`
+	}
+	return `<a:r>` + rPrStr + at + escapeXML(r.Text) + `</a:t></a:r>`
 }
 
 // slideRelsXML builds the slide's .rels part from its relationships.

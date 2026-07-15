@@ -234,3 +234,19 @@ func TestRenderSVGExternalURLRasterOnly(t *testing.T) {
 		t.Errorf("did not expect a native SVG blip for an external-url SVG")
 	}
 }
+
+// SVG text whose runs are separated by whitespace must keep that separator in
+// the generated slide XML via xml:space="preserve".
+func TestRenderSVGTextPreservesSeparator(t *testing.T) {
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 40"><text x="1" y="20" fill="blue" font-size="10">Hello <tspan fill="red">world</tspan></text></svg>`
+	parts := renderSlidesToParts(t, slidown.Slides{
+		{Titles: []string{"txt"}, Images: []*slidown.Image{newSVGImage(t, svg)}},
+	})
+	slide := string(parts["ppt/slides/slide1.xml"])
+	if !strings.Contains(slide, "<a:custGeom>") && !strings.Contains(slide, `xml:space="preserve"`) {
+		t.Errorf("expected xml:space=preserve on the whitespace-carrying run, got: %s", slide)
+	}
+	if !strings.Contains(slide, `xml:space="preserve"`) {
+		t.Errorf("expected xml:space=preserve for the text separator, got: %s", slide)
+	}
+}

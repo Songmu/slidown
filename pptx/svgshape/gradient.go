@@ -26,6 +26,12 @@ func (c *conv) gradient(id string, seen map[string]bool) (*pptx.Gradient, bool) 
 	if seen[id] {
 		return nil, false
 	}
+	// seen accumulates every id in the current reference chain, so its size
+	// bounds an acyclic href chain that could otherwise recurse deeply enough to
+	// exhaust the Go stack.
+	if len(seen) > maxGradientDepth {
+		return nil, false
+	}
 	seen[id] = true
 	n := c.defs[id]
 	if n == nil || (n.Name != "lineargradient" && n.Name != "radialgradient") {
@@ -227,13 +233,18 @@ func parseOffset(s string) (float64, bool) {
 	return parseUnit(s, 0)
 }
 func hrefID(n *node) string {
-	if v := n.Attrs["href"]; v != "" && strings.HasPrefix(v, "#") {
-		return v[1:]
-	}
-	for k, v := range n.Attrs {
-		if strings.HasSuffix(k, ":href") && strings.HasPrefix(v, "#") {
+	// SVG2 href takes precedence over legacy xlink:href. When href is present
+	// but not a local #fragment, it references an external target we can't
+	// resolve, so return "" (the caller then falls back) rather than falling
+	// through to xlink:href.
+	if v := n.Attrs["href"]; v != "" {
+		if strings.HasPrefix(v, "#") {
 			return v[1:]
 		}
+		return ""
+	}
+	if v := n.Attrs["xlink:href"]; v != "" && strings.HasPrefix(v, "#") {
+		return v[1:]
 	}
 	return ""
 }

@@ -438,10 +438,15 @@ func TestReviewBatch4(t *testing.T) {
 	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10"><tspan>Hello</tspan> <tspan>world</tspan></text></svg>`)); ok {
 		t.Error("whitespace between tspans should fall back")
 	}
-	// tspan display:none is skipped; visible sibling renders.
-	g = mustConvert(t, `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10"><tspan display="none">x</tspan><tspan>ok</tspan></text></svg>`)
+	// A hidden tspan after the visible content is skipped; the sibling renders.
+	g = mustConvert(t, `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10"><tspan>ok</tspan><tspan display="none">x</tspan></text></svg>`)
 	if len(g.Texts) != 1 || len(g.Texts[0].Paragraphs[0].Runs) != 1 || g.Texts[0].Paragraphs[0].Runs[0].Text != "ok" {
-		t.Fatalf("tspan display:none not skipped: %#v", g.Texts)
+		t.Fatalf("trailing display:none tspan should be skipped: %#v", g.Texts)
+	}
+	// A hidden tspan with text *before* visible text shifts the visible run's
+	// position (the hidden glyphs still advance), so it falls back.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10"><tspan display="none">x</tspan><tspan>ok</tspan></text></svg>`)); ok {
+		t.Error("hidden text before visible text should fall back")
 	}
 	// Hidden text with a visibility:visible tspan still renders the child.
 	g = mustConvert(t, `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10" visibility="hidden"><tspan visibility="visible">seen</tspan></text></svg>`)
@@ -597,5 +602,44 @@ func TestReviewBatch9(t *testing.T) {
 	b.WriteString(`</defs><use href="#g40"/></svg>`)
 	if _, ok := Convert([]byte(b.String())); ok {
 		t.Error("exponential <use> graph should hit the visit limit and fall back")
+	}
+}
+
+func TestReviewBatch10(t *testing.T) {
+	// Compound class selector .foo.bar is rejected (mis-matched as one class).
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><style>.foo.bar{fill:red}</style><rect class="foo" width="1" height="1"/></svg>`)); ok {
+		t.Error("compound selector should fall back")
+	}
+	// xml-stylesheet PI forces fallback.
+	if _, ok := Convert([]byte(`<?xml version="1.0"?><?xml-stylesheet href="s.css" type="text/css"?><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="1" height="1"/></svg>`)); ok {
+		t.Error("xml-stylesheet PI should fall back")
+	}
+	// href takes precedence over xlink:href; an external href doesn't fall
+	// through to a local xlink:href.
+	if _, ok := Convert([]byte(`<svg xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 10 10"><defs><linearGradient id="base" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/><linearGradient id="g" href="ext.svg#x" xlink:href="#base"/></svg>`)); ok {
+		t.Error("external href should not fall through to xlink:href")
+	}
+	// A large stroke that would paint well outside the viewport falls back.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><line x1="1" y1="5" x2="9" y2="5" stroke="black" stroke-width="1000"/></svg>`)); ok {
+		t.Error("huge stroke crossing the viewport should fall back")
+	}
+	// A thin edge border still converts (minor stroke overhang accepted).
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect x="0" y="0" width="10" height="10" fill="none" stroke="black" stroke-width="1" stroke-linejoin="round"/></svg>`)); !ok {
+		t.Error("thin edge border should still convert")
+	}
+	// Invisible text before visible text shifts position -> fallback.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="1" y="10" fill="none" font-size="10">XX<tspan fill="red">Hi</tspan></text></svg>`)); ok {
+		t.Error("invisible text before visible run should fall back")
+	}
+	// Whitespace across a run boundary collapses to a single separator and is
+	// preserved on the run.
+	g := mustConvert(t, `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="blue" font-size="10">Hello <tspan> world</tspan></text></svg>`)
+	runs := g.Texts[0].Paragraphs[0].Runs
+	var joined string
+	for _, r := range runs {
+		joined += r.Text
+	}
+	if joined != "Hello world" {
+		t.Fatalf("cross-run whitespace should collapse to one space, got %q", joined)
 	}
 }

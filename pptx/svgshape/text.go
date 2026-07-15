@@ -126,13 +126,31 @@ func (c *conv) text(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 }
 func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]*pptx.Run, bool) {
 	var runs []*pptx.Run
-	add := func(txt, col string) {
-		// col == "" means no paintable fill; skip such runs.
-		if txt != "" && col != "" {
-			runs = append(runs, &pptx.Run{Text: txt, FontSize: pt, Color: col, FontFamily: family})
+	// A skipped invisible (fill:none / hidden) run still advances the text
+	// position in SVG. We can't reproduce that advance, so once a non-empty
+	// invisible run appears, fall back if any later run is visible.
+	pendingInvisible := false
+	emit := func(txt, col string, fpt float64, fam string) bool {
+		if strings.TrimSpace(txt) == "" && txt == "" {
+			return true
 		}
+		if col == "" {
+			if strings.TrimSpace(txt) != "" {
+				pendingInvisible = true
+			}
+			return true
+		}
+		if pendingInvisible {
+			return false
+		}
+		if txt != "" {
+			runs = append(runs, &pptx.Run{Text: txt, FontSize: fpt, Color: col, FontFamily: fam})
+		}
+		return true
 	}
-	add(collapseSpace(n.Text), color)
+	if !emit(collapseSpace(n.Text), color, pt, family) {
+		return nil, false
+	}
 	for _, ch := range n.Children {
 		if ch.Name == "textpath" {
 			return nil, false
@@ -169,8 +187,12 @@ func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]
 		if strings.EqualFold(child.get("xml:space"), "preserve") {
 			return nil, false
 		}
-		// A tspan hidden via display/visibility renders nothing.
+		// A tspan hidden via display/visibility renders nothing but still
+		// advances the text position.
 		if displayNone(child) || visibilityHidden(child) {
+			if strings.TrimSpace(collapseSpace(ch.Text)) != "" {
+				pendingInvisible = true
+			}
 			continue
 		}
 		// Glyph strokes on a tspan can't be represented; fall back.
@@ -202,10 +224,8 @@ func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]
 		col := color
 		fillVal := resolvePaint(child, child.get("fill"))
 		if fillVal == "none" {
-			// A no-fill tspan is invisible; skip it.
-			continue
-		}
-		if fillVal != "" {
+			col = ""
+		} else if fillVal != "" {
 			var ok bool
 			col, ok = parseColor(fillVal)
 			if !ok {
@@ -216,9 +236,15 @@ func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]
 		if ff := firstFamily(child.get("font-family")); ff != "" {
 			fam = ff
 		}
-		txt := collapseSpace(ch.Text)
-		if txt != "" && col != "" {
-			runs = append(runs, &pptx.Run{Text: txt, FontSize: cpt, Color: col, FontFamily: fam})
+		if !emit(collapseSpace(ch.Text), col, cpt, fam) {
+			return nil, false
+		}
+	}
+	// Collapse whitespace across run boundaries so a trailing space on one run
+	// plus a leading space on the next don't become a double space.
+	for i := 0; i+1 < len(runs); i++ {
+		if strings.HasSuffix(runs[i].Text, " ") {
+			runs[i+1].Text = strings.TrimLeft(runs[i+1].Text, " ")
 		}
 	}
 	// Trim the leading/trailing whitespace of the whole text stream while
@@ -228,12 +254,17 @@ func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]
 		last := runs[len(runs)-1]
 		last.Text = strings.TrimRight(last.Text, " ")
 	}
-	// Drop any runs emptied by trimming.
+	// Drop runs emptied by trimming and preserve boundary whitespace so
+	// PowerPoint keeps run separators.
 	kept := runs[:0]
 	for _, r := range runs {
-		if r.Text != "" {
-			kept = append(kept, r)
+		if r.Text == "" {
+			continue
 		}
+		if strings.HasPrefix(r.Text, " ") || strings.HasSuffix(r.Text, " ") {
+			r.PreserveSpace = true
+		}
+		kept = append(kept, r)
 	}
 	return kept, true
 }

@@ -27,6 +27,13 @@ const (
 	// with a diamond/exponential <use> graph (whose nodes emit no shapes) can't
 	// consume unbounded CPU.
 	maxVisits = 1000000
+	// maxGradientDepth bounds the gradient href reference chain so a long chain
+	// can't exhaust the Go stack during recursive resolution.
+	maxGradientDepth = 1000
+	// maxCSSRules / maxCSSSelectors bound stylesheet size so matchedCSS (scanned
+	// per element) can't cause CPU/memory exhaustion.
+	maxCSSRules     = 10000
+	maxCSSSelectors = 20000
 	// maxInputBytes caps the raw SVG size so pathological inputs are rejected
 	// before any parsing/allocation work.
 	maxInputBytes = 20 << 20 // 20 MiB
@@ -40,6 +47,9 @@ type node struct {
 	Attrs    map[string]string
 	Children []*node
 	Text     string
+	// textB accumulates character data during parsing to keep large/split text
+	// nodes linear; it is materialized into Text on the element's end tag.
+	textB *strings.Builder
 	// foreign marks an element in a non-SVG namespace, which is not rendered.
 	foreign bool
 	// textAfterChild is set when character data appears after a child element
@@ -146,6 +156,11 @@ func parseXML(data []byte) (*node, error) {
 			stack = append(stack, n)
 		case xml.EndElement:
 			if len(stack) > 0 {
+				n := stack[len(stack)-1]
+				if n.textB != nil {
+					n.Text = n.textB.String()
+					n.textB = nil
+				}
 				stack = stack[:len(stack)-1]
 			}
 		case xml.CharData:
@@ -158,7 +173,19 @@ func parseXML(data []byte) (*node, error) {
 				if len(top.Children) > 0 {
 					top.textAfterChild = true
 				}
-				top.Text += string([]byte(t))
+				// Accumulate in a builder so a text node split into many small
+				// CharData tokens (e.g. by comments/CDATA) stays linear rather
+				// than quadratic.
+				if top.textB == nil {
+					top.textB = &strings.Builder{}
+				}
+				top.textB.Write(t)
+			}
+		case xml.ProcInst:
+			// An xml-stylesheet PI can restyle the document; we can't evaluate
+			// it, so fall back rather than convert with different output.
+			if strings.EqualFold(t.Target, "xml-stylesheet") {
+				return nil, errTooComplex
 			}
 		}
 	}
@@ -515,14 +542,27 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 		// rotated/skewed; fall back for rotation/skew.
 		gs := &pptx.GeomShape{Name: shapeName(n, "Shape", c.geomCount+1), X: 0, Y: 0, W: c.chW, H: c.chH, PathW: c.chW, PathH: c.chH, Paths: []pptx.GeomPath{gp}, Fill: fill, Stroke: stroke, EvenOdd: evenOdd}
 		// SVG clips painting to the root viewport by default, but a PowerPoint
-		// group does not clip its children; fall back when a shape's geometry
-		// extends beyond the viewBox. A stroke may still overhang the edge by up
-		// to half its width, as is common for border shapes; that minor overflow
-		// is accepted (geometry-only check).
+		// group does not clip its children. Fall back when a shape's geometry
+		// extends beyond the viewBox, and separately when a stroke would paint
+		// substantially outside it. A thin stroke may overhang the edge by up to
+		// ~2 user units (common for border shapes); a large stroke that would
+		// paint far outside falls back so it isn't visible beyond the image.
 		if bx0, by0, bx1, by1, ok := geomPathBounds(gs); ok {
 			const tol = 16 // EMU, absorbs rounding of edge-aligned content
 			if bx0 < -tol || by0 < -tol || bx1 > c.chW+tol || by1 > c.chH+tol {
 				return false
+			}
+			if stroke != nil {
+				se := stroke.Width / 2
+				if stroke.Join == "miter" {
+					// A miter join can extend up to miterlimit*half-width.
+					se = stroke.Width * 2
+				}
+				maxOverhang := int64(2 * emuPerUnit)
+				if bx0-se < -maxOverhang || by0-se < -maxOverhang ||
+					bx1+se > c.chW+maxOverhang || by1+se > c.chH+maxOverhang {
+					return false
+				}
 			}
 		}
 		if fill.Kind == pptx.FillGradient {

@@ -100,6 +100,7 @@ type slideSignature struct {
 type imageSignature struct {
 	PHash    uint64 `json:"p,omitempty"`
 	Checksum uint32 `json:"x,omitempty"` // fallback when no perceptual hash is available
+	Digest   string `json:"d,omitempty"` // collision-resistant digest (used for SVGs)
 	Link     string `json:"l,omitempty"`
 }
 
@@ -111,10 +112,12 @@ func (s *Slide) signature() slideSignature {
 			is.Link = img.link
 			// SVG rasterization is best-effort (it omits text and other
 			// features), so a perceptual hash can collide for SVGs that differ
-			// only in such content. Use the exact raw checksum for SVGs so any
-			// source change is detected and stale slides aren't reused.
+			// only in such content. Use a collision-resistant digest of the raw
+			// SVG so any source change is detected and stale slides aren't
+			// reused (CRC-32 could alias distinct byte streams).
 			if img.IsSVG() {
-				is.Checksum = img.Checksum()
+				sum := sha256.Sum256(img.Bytes())
+				is.Digest = hex.EncodeToString(sum[:])
 			} else if ph, err := img.PHash(); err == nil {
 				is.PHash = ph.GetHash()
 			} else {
@@ -211,6 +214,10 @@ func imageSetsEquivalent(a, b []imageSignature) bool {
 func imageSignaturesEquivalent(a, b imageSignature) bool {
 	if a.Link != b.Link {
 		return false
+	}
+	// A collision-resistant digest (SVGs) requires exact equality.
+	if a.Digest != "" || b.Digest != "" {
+		return a.Digest == b.Digest
 	}
 	if a.PHash != 0 && b.PHash != 0 {
 		ha := goimagehash.NewImageHash(a.PHash, goimagehash.PHash)

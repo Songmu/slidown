@@ -340,6 +340,10 @@ type Run struct {
 	FontFamily string
 	// Baseline is "", "super", or "sub"; non-empty values render superscript/subscript.
 	Baseline string
+	// PreserveSpace, when true, emits xml:space="preserve" on the run's <a:t> so
+	// leading/trailing whitespace (e.g. a separator between SVG text runs) is
+	// not stripped by PowerPoint.
+	PreserveSpace bool
 }
 
 // Table is a simple grid table positioned on a slide.

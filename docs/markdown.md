@@ -249,6 +249,11 @@ editable inside PowerPoint:
 - **Picture placeholders.** When an SVG fills a layout **picture placeholder**,
   it is always embedded as a native SVG picture (with the PNG fallback) rather
   than converted to shapes, so it fills the placeholder correctly.
+- **External/relative resources.** If a fallback SVG references resources that
+  can't be packaged (for example `<image href="asset.png">` or a
+  `url(other.svg#id)` paint), the native SVG isn't embedded (its reference would
+  dangle); a **best-effort rasterized PNG only** is used instead. That PNG omits
+  the external resource, so such images may be incomplete.
 
 The fallback decision is made per SVG document (whole-image granularity), so a
 converted SVG never mixes editable shapes with a raster fallback.

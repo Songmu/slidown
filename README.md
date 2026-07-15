@@ -210,8 +210,9 @@ yet a stable contract; these are called out inline in that reference.
 
 SVG images are, where possible, converted into native editable PowerPoint
 shapes; SVGs using features that cannot be faithfully converted fall back to a
-native SVG picture with a rasterized PNG fallback. See
-[Images](docs/markdown.md#images) for details.
+native SVG picture with a rasterized PNG fallback. SVGs that reference external
+or relative resources (which can't be packaged) instead get a best-effort
+PNG-only rendering. See [Images](docs/markdown.md#images) for details.
 
 ## Configuration file
 

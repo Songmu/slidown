@@ -371,12 +371,14 @@ func roundDimension(v, fallback float64) int {
 	return n
 }
 
-// RasterPNG renders the image to PNG bytes at the given scale. For SVGs it is a
-// best-effort raster produced by the pure-Go oksvg rasterizer, which does not
-// support every SVG feature (notably filter, clipPath, mask, embedded <image>,
-// foreignObject and <text>); such parts may be omitted. It is intended only as
-// a compatibility fallback for viewers that can't render the embedded native
-// SVG (which PowerPoint 2016+ uses as the primary, fully-featured rendering).
+// RasterPNG renders the image to PNG bytes. The scale factor applies only to
+// SVGs (rendered at scale × their intrinsic size); for raster inputs (PNG/JPEG/
+// GIF) scale is ignored and the source is re-encoded as PNG at its native size.
+// For SVGs it is a best-effort raster produced by the pure-Go oksvg rasterizer,
+// which does not support every SVG feature (notably filter, clipPath, mask,
+// embedded <image>, foreignObject and <text>); such parts may be omitted. It is
+// intended only as a compatibility fallback for viewers that can't render the
+// embedded native SVG (which PowerPoint 2016+ uses as the primary rendering).
 func (i *Image) RasterPNG(scale float64) ([]byte, error) {
 	if i == nil {
 		return nil, fmt.Errorf("image is nil")

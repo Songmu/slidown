@@ -66,6 +66,7 @@ func parseStyleDecl(s string) (style, bool) {
 func parseCSS(s string) ([]cssRule, bool) {
 	s = stripCSSComments(s)
 	var rules []cssRule
+	totalSels := 0
 	for {
 		i := strings.IndexByte(s, '{')
 		if i < 0 {
@@ -99,6 +100,12 @@ func parseCSS(s string) ([]cssRule, bool) {
 				return nil, false
 			}
 			if strings.HasPrefix(sel, ".") || strings.HasPrefix(sel, "#") {
+				// Only a single simple class/ID selector is supported; a
+				// compound like ".foo.bar" would be mis-matched as one name, so
+				// reject anything but a bare identifier after the prefix.
+				if !isIdent(sel[1:]) {
+					return nil, false
+				}
 				// Class/ID selectors are case-sensitive in SVG/XML; preserve
 				// their spelling and compare exactly.
 				sels = append(sels, sel)
@@ -108,8 +115,15 @@ func parseCSS(s string) ([]cssRule, bool) {
 			} else {
 				return nil, false
 			}
+			totalSels++
+			if totalSels > maxCSSSelectors {
+				return nil, false
+			}
 		}
 		rules = append(rules, cssRule{sels: sels, decl: decl})
+		if len(rules) > maxCSSRules {
+			return nil, false
+		}
 	}
 	if strings.TrimSpace(s) != "" {
 		return nil, false
@@ -117,17 +131,25 @@ func parseCSS(s string) ([]cssRule, bool) {
 	return rules, true
 }
 func stripCSSComments(s string) string {
+	if !strings.Contains(s, "/*") {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
 	for {
 		i := strings.Index(s, "/*")
 		if i < 0 {
-			return s
+			b.WriteString(s)
+			break
 		}
+		b.WriteString(s[:i])
 		j := strings.Index(s[i+2:], "*/")
 		if j < 0 {
-			return s[:i]
+			break // unterminated comment: drop the rest
 		}
-		s = s[:i] + s[i+2+j+2:]
+		s = s[i+2+j+2:]
 	}
+	return b.String()
 }
 func isIdent(s string) bool {
 	if s == "" {
