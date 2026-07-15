@@ -716,6 +716,15 @@ func TestReviewBatch12(t *testing.T) {
 	}
 }
 
+func TestReviewBatch23(t *testing.T) {
+	// An empty CSS declaration is invalid and must not override the presentation
+	// attribute: fill stays red rather than becoming empty.
+	g := mustConvert(t, `<svg viewBox="0 0 10 10"><rect fill="red" style="fill:" width="10" height="10"/></svg>`)
+	if g.Geoms[0].Fill.Color != "ff0000" {
+		t.Fatalf("empty fill declaration should keep the red attribute, got %#v", g.Geoms[0].Fill)
+	}
+}
+
 func TestReviewBatch22(t *testing.T) {
 	// The exported Convert must not emit geometry for an SVG whose root width or
 	// height is an explicit zero (its viewport renders nothing), independent of

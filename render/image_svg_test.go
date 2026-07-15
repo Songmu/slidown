@@ -254,6 +254,26 @@ func TestRenderSVGExternalGradientHrefRasterOnly(t *testing.T) {
 	}
 }
 
+// A fallback SVG whose <foreignObject> embeds HTML referencing an external
+// resource via a non-href attribute (<img src>, <object data>) must be embedded
+// raster-only, not as a native SVG with a dangling dependency.
+func TestSVGReferencesForeignObjectResource(t *testing.T) {
+	cases := []struct {
+		svg  string
+		want bool
+	}{
+		{`<svg xmlns="http://www.w3.org/2000/svg"><foreignObject><img src="asset.png"/></foreignObject></svg>`, true},
+		{`<svg xmlns="http://www.w3.org/2000/svg"><foreignObject><object data="asset.bin"/></foreignObject></svg>`, true},
+		{`<svg xmlns="http://www.w3.org/2000/svg"><foreignObject><img src="data:image/png;base64,AAAA"/></foreignObject></svg>`, false},
+		{`<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"/></svg>`, false},
+	}
+	for _, c := range cases {
+		if got := svgReferencesExternalResource([]byte(c.svg)); got != c.want {
+			t.Errorf("svgReferencesExternalResource(%q) = %v, want %v", c.svg, got, c.want)
+		}
+	}
+}
+
 // hasExternalStyleRef classifies the decoded CSS, so an escaped local fragment
 // (url(\#grad) / url(\23 grad)) is internal while an escaped-obfuscated external
 // url is still detected.

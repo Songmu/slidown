@@ -44,6 +44,12 @@ func parseStyleDecl(s string) (style, bool) {
 		}
 		k := strings.ToLower(strings.TrimSpace(kv[0]))
 		v := strings.TrimSpace(kv[1])
+		// An empty declaration value is invalid CSS and is dropped, so it must
+		// not override a lower-priority presentation attribute (e.g.
+		// `fill="red" style="fill:"` keeps red). Skip it.
+		if v == "" {
+			continue
+		}
 		// The !important cascade isn't modeled; reject rather than treat the
 		// flagged value as a plain declaration (which would mis-handle e.g.
 		// display:none !important).

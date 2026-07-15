@@ -331,6 +331,14 @@ func svgReferencesExternalResource(b []byte) bool {
 						return true
 					}
 				}
+				// A <foreignObject> can embed HTML that references resources via
+				// non-href attributes (e.g. <img src>, <object data>); a
+				// non-fragment target there is an external dependency too.
+				if a.Name.Space == "" &&
+					(strings.EqualFold(a.Name.Local, "src") || strings.EqualFold(a.Name.Local, "data")) &&
+					isExternalRef(a.Value) {
+					return true
+				}
 				// xml:base rebases every relative/fragment reference; a
 				// non-fragment base pulls in an external document, so the SVG
 				// can't be embedded self-contained.

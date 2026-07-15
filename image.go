@@ -276,6 +276,16 @@ func capDimensions(w, h float64) (int, int) {
 		w *= s
 		h *= s
 	}
+	// A small fractional dimension would still distort the aspect ratio under
+	// independent rounding (e.g. 1.4×1 -> 1×1); scale both axes by a shared
+	// factor so the smaller is large enough that rounding preserves the ratio.
+	if w != math.Trunc(w) || h != math.Trunc(h) {
+		if mn := math.Min(w, h); mn > 0 && mn < 1000 {
+			s := 1000 / mn
+			w *= s
+			h *= s
+		}
+	}
 	if mx := math.Max(w, h); mx > maxDimension {
 		f := maxDimension / mx
 		w *= f
@@ -475,7 +485,8 @@ func parseViewBoxWH(s string) (w, h float64, ok bool) {
 	}
 	wv, err1 := strconv.ParseFloat(f[2], 64)
 	hv, err2 := strconv.ParseFloat(f[3], 64)
-	if err1 != nil || err2 != nil || wv <= 0 || hv <= 0 {
+	if err1 != nil || err2 != nil || wv <= 0 || hv <= 0 ||
+		math.IsNaN(wv) || math.IsInf(wv, 0) || math.IsNaN(hv) || math.IsInf(hv, 0) {
 		return 0, 0, false
 	}
 	return wv, hv, true

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"image/png"
+	"math"
 	"os"
 	"testing"
 )
@@ -344,6 +345,30 @@ func TestSVGRootSizeLenient(t *testing.T) {
 	w, h, vb := svgRootSize(svg)
 	if w != "10" || h != "20" || vb != "0 0 10 20" {
 		t.Fatalf("svgRootSize = (%q,%q,%q), want (10,20,0 0 10 20)", w, h, vb)
+	}
+}
+
+func TestCapDimensionsPreservesAspect(t *testing.T) {
+	// Independent rounding must not distort the aspect ratio of a fractional
+	// viewBox: 1.4:1 stays 1.4:1 (not 1:1).
+	iw, ih := capDimensions(1.4, 1)
+	if r := float64(iw) / float64(ih); math.Abs(r-1.4) > 0.01 {
+		t.Fatalf("cap(1.4,1) = %dx%d (ratio %.3f), want ~1.4", iw, ih, r)
+	}
+	// Integer dimensions are unchanged.
+	if iw, ih := capDimensions(800, 600); iw != 800 || ih != 600 {
+		t.Fatalf("cap(800,600) = %dx%d, want 800x600", iw, ih)
+	}
+}
+
+func TestParseViewBoxWHRejectsNonFinite(t *testing.T) {
+	for _, vb := range []string{"0 0 NaN 50", "0 0 Inf 50", "0 0 10 NaN"} {
+		if _, _, ok := parseViewBoxWH(vb); ok {
+			t.Errorf("parseViewBoxWH(%q) should reject non-finite values", vb)
+		}
+	}
+	if _, _, ok := parseViewBoxWH("0 0 10 50"); !ok {
+		t.Error("parseViewBoxWH of a valid viewBox should succeed")
 	}
 }
 
