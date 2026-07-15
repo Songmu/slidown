@@ -261,3 +261,29 @@ func TestSVGExplicitZeroSizeSkipped(t *testing.T) {
 		t.Fatalf("explicit zero size should report 0x0, got %dx%d", w, h)
 	}
 }
+
+func TestSVGZeroPercentSizeSkipped(t *testing.T) {
+	img, err := newImageFromBuffer(bytes.NewReader([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="0%" height="100%" viewBox="0 0 100 100"></svg>`)))
+	if err != nil {
+		t.Fatalf("newImageFromBuffer: %v", err)
+	}
+	w, h, err := img.Dimensions()
+	if err != nil {
+		t.Fatalf("Dimensions: %v", err)
+	}
+	if w != 0 || h != 0 {
+		t.Fatalf("width=0%% should report 0x0, got %dx%d", w, h)
+	}
+}
+
+func TestNormalizeSVGRootSizeIgnoresComment(t *testing.T) {
+	// "<svg>" text inside a prolog comment must not be treated as the root tag.
+	b := []byte(`<!-- <svg> --><svg xmlns="http://www.w3.org/2000/svg" width="1in" height="1in"><rect width="10" height="10"/></svg>`)
+	out, ok := normalizeSVGRootSize(b)
+	if !ok {
+		t.Fatal("expected normalization to find the real root")
+	}
+	if !bytes.Contains(out, []byte(`width="96"`)) {
+		t.Fatalf("expected the real root width to be normalized to px, got: %s", out)
+	}
+}

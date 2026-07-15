@@ -175,16 +175,17 @@ func TestSVGPlaceholderBinding(t *testing.T) {
 }
 
 // An SVG that falls back but references an external raster image is embedded as
-// a raster-only picture (no native svgBlip), since the embedded SVG couldn't
-// resolve the external resource.
+// a best-effort raster-only picture (no native svgBlip): the image is still
+// shown rather than dropped, but the native SVG isn't embedded because its
+// external reference can't be resolved.
 func TestRenderSVGExternalResourceRasterOnly(t *testing.T) {
-	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><image href="asset.png" width="100" height="100"/></svg>`
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="red"/><image href="asset.png" width="100" height="100"/></svg>`
 	parts := renderSlidesToParts(t, slidown.Slides{
 		{Titles: []string{"ext"}, Images: []*slidown.Image{newSVGImage(t, svg)}},
 	})
 	slide := string(parts["ppt/slides/slide1.xml"])
 	if !strings.Contains(slide, "<p:pic>") {
-		t.Errorf("expected a picture for the external-resource SVG")
+		t.Errorf("expected a best-effort raster picture for the external-resource SVG")
 	}
 	if strings.Contains(slide, "asvg:svgBlip") {
 		t.Errorf("did not expect a native SVG blip for an external-resource SVG")
@@ -219,8 +220,7 @@ func TestRenderSVGHyperlinkNotExternal(t *testing.T) {
 }
 
 // An unsupported SVG that references an external paint via url(file#id) is
-// embedded raster-only (no native svgBlip), since the embedded SVG can't
-// resolve the external file.
+// embedded as a best-effort raster-only picture (no native svgBlip).
 func TestRenderSVGExternalURLRasterOnly(t *testing.T) {
 	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="url(paints.svg#g)" clip-path="url(#c)"/></svg>`
 	parts := renderSlidesToParts(t, slidown.Slides{
@@ -228,7 +228,7 @@ func TestRenderSVGExternalURLRasterOnly(t *testing.T) {
 	})
 	slide := string(parts["ppt/slides/slide1.xml"])
 	if !strings.Contains(slide, "<p:pic>") {
-		t.Errorf("expected a picture for the external-url SVG")
+		t.Errorf("expected a best-effort raster picture for the external-url SVG")
 	}
 	if strings.Contains(slide, "asvg:svgBlip") {
 		t.Errorf("did not expect a native SVG blip for an external-url SVG")

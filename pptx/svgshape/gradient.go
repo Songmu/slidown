@@ -44,7 +44,14 @@ func (c *conv) gradient(id string, seen map[string]bool) (*pptx.Gradient, bool) 
 		return nil, false
 	}
 	var parent *pptx.Gradient
-	if href := hrefID(n); href != "" {
+	if n.Attrs["href"] != "" || n.Attrs["xlink:href"] != "" {
+		// A present href that doesn't resolve to a local #id references an
+		// external gradient we can't inherit from; fall back rather than
+		// silently using default coordinates.
+		href := hrefID(n)
+		if href == "" {
+			return nil, false
+		}
 		pg, ok := c.gradient(href, seen)
 		if !ok {
 			return nil, false

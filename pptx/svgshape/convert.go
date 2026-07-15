@@ -23,6 +23,10 @@ const (
 	// maxCommands bounds the total number of path commands across all shapes,
 	// so a single huge <path> can't drive unbounded allocations or slide XML.
 	maxCommands = 2000000
+	// maxVisits bounds the total number of walk/use expansions so a small SVG
+	// with a diamond/exponential <use> graph (whose nodes emit no shapes) can't
+	// consume unbounded CPU.
+	maxVisits = 1000000
 	// maxInputBytes caps the raw SVG size so pathological inputs are rejected
 	// before any parsing/allocation work.
 	maxInputBytes = 20 << 20 // 20 MiB
@@ -65,6 +69,7 @@ type conv struct {
 	textCount    int
 	cmdCount     int
 	depth        int
+	visits       int
 	resolvingUse map[string]bool
 }
 
@@ -410,7 +415,8 @@ func appendRoot(out []float64, t float64) []float64 {
 func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root bool) bool {
 	c.depth++
 	defer func() { c.depth-- }()
-	if c.depth > maxDepth || c.geomCount+c.textCount > maxShapes {
+	c.visits++
+	if c.depth > maxDepth || c.geomCount+c.textCount > maxShapes || c.visits > maxVisits {
 		return false
 	}
 	if !root && isFallbackElement(n.Name) {

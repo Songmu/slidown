@@ -1,6 +1,7 @@
 package svgshape
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -570,5 +571,31 @@ func TestEmptyPolygonSkipped(t *testing.T) {
 		if len(g.Geoms) != 0 {
 			t.Fatalf("expected no geometry for %s, got %d", svg, len(g.Geoms))
 		}
+	}
+}
+
+func TestReviewBatch9(t *testing.T) {
+	for name, svg := range map[string]string{
+		"operandless command":    `<svg viewBox="0 0 100 100"><path d="M0 0 L Z L20 0" fill="red"/></svg>`,
+		"gradient external href": `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg" href="ext.svg#g"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`,
+	} {
+		if _, ok := Convert([]byte(svg)); ok {
+			t.Errorf("%s: expected fallback", name)
+		}
+	}
+	// An arc with identical endpoints emits no cubic (no visible dot).
+	if cubs := arcToCubics(5, 5, 3, 3, 0, false, false, 5, 5); cubs != nil {
+		t.Fatalf("identical-endpoint arc should emit no cubic, got %v", cubs)
+	}
+	// A crafted diamond <use> graph (exponential expansion, no shapes) is bounded.
+	var b strings.Builder
+	b.WriteString(`<svg viewBox="0 0 10 10"><defs>`)
+	b.WriteString(`<g id="g0"><rect width="1" height="1"/></g>`)
+	for i := 1; i <= 40; i++ {
+		fmt.Fprintf(&b, `<g id="g%d"><use href="#g%d"/><use href="#g%d"/></g>`, i, i-1, i-1)
+	}
+	b.WriteString(`</defs><use href="#g40"/></svg>`)
+	if _, ok := Convert([]byte(b.String())); ok {
+		t.Error("exponential <use> graph should hit the visit limit and fall back")
 	}
 }

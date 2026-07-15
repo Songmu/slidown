@@ -243,16 +243,18 @@ func (i *Image) Dimensions() (w, h int, err error) {
 }
 
 // svgHasExplicitZeroSize reports whether the root <svg> sets width or height to
-// an explicit zero, which per SVG disables rendering of the element.
+// an explicit zero (including "0%"), which per SVG disables rendering.
 func svgHasExplicitZeroSize(b []byte) bool {
 	ws, hs, _ := svgRootSize(b)
-	if v, ok := parseCSSLength(ws); ok && v == 0 {
-		return true
+	isZero := func(s string) bool {
+		s = strings.TrimSpace(s)
+		if strings.HasSuffix(s, "%") {
+			s = strings.TrimSpace(strings.TrimSuffix(s, "%"))
+		}
+		v, ok := parseCSSLength(s)
+		return ok && v == 0
 	}
-	if v, ok := parseCSSLength(hs); ok && v == 0 {
-		return true
-	}
-	return false
+	return isZero(ws) || isZero(hs)
 }
 
 // svgExplicitSize returns the SVG's intrinsic width and height in px-equivalent
@@ -477,7 +479,22 @@ var svgRootSizeAttr = regexp.MustCompile(`(?i)(\s)(width|height)\s*=\s*(?:"([^"]
 // ok=false when there is no root <svg> tag to adjust.
 func normalizeSVGRootSize(b []byte) ([]byte, bool) {
 	lower := bytes.ToLower(b)
-	start := bytes.Index(lower, []byte("<svg"))
+	// Find the first "<svg" that is a real start element, i.e. not inside an XML
+	// comment (a prolog comment may contain the literal text "<svg>").
+	start := -1
+	for off := 0; ; {
+		idx := bytes.Index(lower[off:], []byte("<svg"))
+		if idx < 0 {
+			break
+		}
+		abs := off + idx
+		// Inside a comment when there are more "<!--" than "-->" before abs.
+		if bytes.Count(lower[:abs], []byte("<!--")) == bytes.Count(lower[:abs], []byte("-->")) {
+			start = abs
+			break
+		}
+		off = abs + len("<svg")
+	}
 	if start < 0 {
 		return nil, false
 	}

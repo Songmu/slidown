@@ -100,20 +100,26 @@ func (c *conv) text(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 	boxY := yemu - round(fs*emuPerUnit)
 	boxH := round(fs * emuPerUnit * 1.5)
 	const tol = 16
-	var chars int
+	// Estimate the single-line width per run using its own font size (a tspan
+	// may be larger than the parent) with a generous ~0.75em upper bound per
+	// character so wide glyphs are unlikely to overflow the non-clipping group.
+	var estW float64
 	for _, r := range runs {
-		chars += len([]rune(r.Text))
+		runUnits := fs
+		if r.FontSize > 0 {
+			runUnits = r.FontSize / 0.75 // pt back to user units
+		}
+		estW += float64(len([]rune(r.Text))) * runUnits * 0.75 * emuPerUnit
 	}
-	// Approximate advance width per character (~0.6em) to bound single-line text.
-	estW := round(float64(chars) * fs * 0.6 * emuPerUnit)
-	if estW <= 0 {
-		estW = round(fs * emuPerUnit)
+	est := round(estW)
+	if est <= 0 {
+		est = round(fs * emuPerUnit)
 	}
-	if xemu < -tol || boxY < -tol || boxY+boxH > c.chH+tol || xemu+estW > c.chW+tol {
+	if xemu < -tol || boxY < -tol || boxY+boxH > c.chH+tol || xemu+est > c.chW+tol {
 		return false
 	}
 	c.textCount++
-	sh := &pptx.Shape{Name: shapeName(n, "Text", c.textCount), X: xemu, Y: boxY, W: estW, H: boxH, NoInset: true, NoWrap: true, Paragraphs: []*pptx.Paragraph{{Align: align, Runs: runs}}}
+	sh := &pptx.Shape{Name: shapeName(n, "Text", c.textCount), X: xemu, Y: boxY, W: est, H: boxH, NoInset: true, NoWrap: true, Paragraphs: []*pptx.Paragraph{{Align: align, Runs: runs}}}
 	g.Texts = append(g.Texts, sh)
 	g.Children = append(g.Children, pptx.GroupChild{Text: sh})
 	return true

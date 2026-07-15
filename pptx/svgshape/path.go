@@ -33,6 +33,11 @@ func parsePath(d string, budget int, mapPt pathMapper) (pptx.GeomPath, bool, boo
 				return pptx.GeomPath{}, false, false
 			}
 			started = true
+			// Every command except close must be followed by operands; an
+			// explicit command with no number is a malformed path.
+			if cmd != 'Z' && cmd != 'z' && !p.hasNumber() {
+				return pptx.GeomPath{}, false, false
+			}
 		} else if cmd == 0 {
 			return pptx.GeomPath{}, false, false
 		}
@@ -368,7 +373,12 @@ func ellipsePath(cx, cy, rx, ry float64, mapPt pathMapper) pptx.GeomPath {
 }
 
 func arcToCubics(x1, y1, rx, ry, phi float64, large, sweep bool, x2, y2 float64) [][3]point {
-	if rx == 0 || ry == 0 || (x1 == x2 && y1 == y2) {
+	if x1 == x2 && y1 == y2 {
+		// Identical endpoints: SVG omits the arc segment entirely (emitting a
+		// zero-length cubic would show a dot under round/square caps).
+		return nil
+	}
+	if rx == 0 || ry == 0 {
 		return [][3]point{{{x1, y1}, {x2, y2}, {x2, y2}}}
 	}
 	rx = math.Abs(rx)

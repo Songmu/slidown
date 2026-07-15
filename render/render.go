@@ -245,30 +245,32 @@ func buildSVGPicture(img *slidown.Image, x, y, w, h int64) *pptx.Picture {
 	if ratio > 0 {
 		scale = 2 * ratio
 	}
-	// The embedded native SVG can't resolve external/relative resources (e.g.
-	// <image href="asset.png">) once relocated into the package, and the raster
-	// fallback also omits them; embed only the raster in that case rather than a
-	// broken native SVG.
-	svgData := img.Bytes()
-	if svgReferencesExternalResource(svgData) {
-		svgData = nil
-	}
+	// An SVG that references external/relative resources (e.g.
+	// <image href="asset.png">) can't be reproduced fully: the pure-Go raster
+	// omits <image> content and the embedded native SVG can't resolve a
+	// relocated relative path. Prefer showing the best-effort raster (which
+	// still renders the SVG's own vector content) over dropping the image, but
+	// don't embed the native SVG whose external reference would dangle.
+	embedSVG := !svgReferencesExternalResource(img.Bytes())
 	png, err := img.RasterPNG(scale)
 	if err != nil || len(png) == 0 {
-		if svgData == nil {
-			// No native SVG and no usable raster: nothing to embed.
+		if !embedSVG {
+			// No native SVG and no usable raster: nothing meaningful to embed.
 			return nil
 		}
 		// Keep the native SVG (modern PowerPoint renders it) with a 1x1
 		// transparent PNG so older viewers get a valid, if blank, fallback.
 		png = transparentPNG()
 	}
-	return &pptx.Picture{
-		Data:    png,
-		Ext:     "png",
-		SVGData: svgData,
-		X:       x, Y: y, W: w, H: h,
+	pic := &pptx.Picture{
+		Data: png,
+		Ext:  "png",
+		X:    x, Y: y, W: w, H: h,
 	}
+	if embedSVG {
+		pic.SVGData = img.Bytes()
+	}
+	return pic
 }
 
 // svgReferencesExternalResource reports whether the SVG references a resource
