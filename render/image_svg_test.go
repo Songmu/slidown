@@ -254,6 +254,26 @@ func TestRenderSVGExternalGradientHrefRasterOnly(t *testing.T) {
 	}
 }
 
+// directiveReferencesExternal must flag real external DTDs but not a stray
+// SYSTEM/PUBLIC substring inside a comment or name.
+func TestDirectiveReferencesExternal(t *testing.T) {
+	cases := []struct {
+		d    string
+		want bool
+	}{
+		{`DOCTYPE svg SYSTEM "x.dtd"`, true},
+		{`DOCTYPE svg PUBLIC "-//x//EN" "x.dtd"`, true},
+		{`doctype svg system "x.dtd"`, true},
+		{`DOCTYPE svg [<!-- public --> <!ENTITY a "b">]`, false},
+		{`DOCTYPE svg [<!ENTITY mysystemname "b">]`, false},
+	}
+	for _, c := range cases {
+		if got := directiveReferencesExternal(c.d); got != c.want {
+			t.Errorf("directiveReferencesExternal(%q) = %v, want %v", c.d, got, c.want)
+		}
+	}
+}
+
 // An SVG with an external xml:base rebases its references, so it can't be
 // embedded self-contained and must be raster-only.
 func TestRenderSVGXMLBaseRasterOnly(t *testing.T) {

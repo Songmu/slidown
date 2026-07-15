@@ -333,6 +333,20 @@ func TestSVGExplicitZeroSizeSkipped(t *testing.T) {
 	}
 }
 
+func TestSVGRootSizeLenient(t *testing.T) {
+	// A non-strict SVG (unquoted attribute value) is detected as SVG by the
+	// lenient isSVG decoder; svgRootSize must use the same lenient settings so
+	// the intrinsic size is still read instead of being dropped.
+	svg := []byte(`<svg width="10" height="20" viewBox="0 0 10 20" data-x=bar></svg>`)
+	if !isSVG(svg) {
+		t.Fatal("expected the document to be detected as SVG")
+	}
+	w, h, vb := svgRootSize(svg)
+	if w != "10" || h != "20" || vb != "0 0 10 20" {
+		t.Fatalf("svgRootSize = (%q,%q,%q), want (10,20,0 0 10 20)", w, h, vb)
+	}
+}
+
 func TestSVGRelativeUnitDimensions(t *testing.T) {
 	// A relative height (1em = 16px at the default font) must be resolved, so a
 	// 32px x 1em SVG reports 32x16 rather than substituting the viewBox axis.

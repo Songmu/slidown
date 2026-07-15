@@ -363,7 +363,7 @@ func svgReferencesExternalResource(b []byte) bool {
 // piHref extracts the href pseudo-attribute value from an xml-stylesheet PI's
 // instruction text (e.g. `type="text/css" href="theme.css"`).
 func piHref(inst string) string {
-	m := regexp.MustCompile(`(?i)href\s*=\s*(?:"([^"]*)"|'([^']*)')`).FindStringSubmatch(inst)
+	m := piHrefRE.FindStringSubmatch(inst)
 	if m == nil {
 		return ""
 	}
@@ -373,14 +373,26 @@ func piHref(inst string) string {
 	return m[2]
 }
 
+// piHrefRE matches the href pseudo-attribute of an xml-stylesheet PI.
+var piHrefRE = regexp.MustCompile(`(?i)href\s*=\s*(?:"([^"]*)"|'([^']*)')`)
+
+// directiveExternalRE matches the SYSTEM/PUBLIC external-identifier keywords as
+// whole words so a substring inside a name (e.g. an entity "mysystem") doesn't
+// falsely force the raster-only path.
+var directiveExternalRE = regexp.MustCompile(`(?i)\b(?:SYSTEM|PUBLIC)\b`)
+
+// directiveCommentRE matches an XML comment that may appear in a DOCTYPE's
+// internal subset.
+var directiveCommentRE = regexp.MustCompile(`(?s)<!--.*?-->`)
+
 // directiveReferencesExternal reports whether an XML directive (e.g. a DOCTYPE)
-// declares an external DTD or entity via a SYSTEM or PUBLIC identifier. The
-// keywords are uppercase per the XML grammar, but a non-strict parser may accept
-// other casings, so the match is case-insensitive; any match is treated
-// conservatively as an external dependency.
+// declares an external DTD or entity via a SYSTEM or PUBLIC identifier. Comments
+// are stripped and the keywords are matched as whole words (case-insensitively,
+// since a non-strict parser may accept other casings) so a stray "public"/
+// "system" substring or comment doesn't force a false positive.
 func directiveReferencesExternal(d string) bool {
-	u := strings.ToUpper(d)
-	return strings.Contains(u, "SYSTEM") || strings.Contains(u, "PUBLIC")
+	d = directiveCommentRE.ReplaceAllString(d, " ")
+	return directiveExternalRE.MatchString(d)
 }
 
 // isExternalRef reports whether a reference target is external (not a #fragment

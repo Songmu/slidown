@@ -161,16 +161,25 @@ func newImageFromBuffer(r io.Reader) (_ *Image, err error) {
 	}, nil
 }
 
+// lenientXMLDecoder returns an XML decoder configured to tolerate the
+// slightly-noncompliant markup common in real-world SVGs (non-strict parsing,
+// HTML auto-close and HTML entities). All root scans use the same settings so a
+// document detected as SVG can also have its root attributes read.
+func lenientXMLDecoder(b []byte) *xml.Decoder {
+	dec := xml.NewDecoder(bytes.NewReader(b))
+	dec.Strict = false
+	dec.AutoClose = xml.HTMLAutoClose
+	dec.Entity = xml.HTMLEntity
+	return dec
+}
+
 // isSVG reports whether b is an SVG document by decoding XML tokens and
 // requiring the first start element to be <svg> (in the SVG namespace when a
 // namespace is declared). This avoids false positives from a stray "<svg"
 // substring in a comment or an unrelated (e.g. HTML) document.
 func isSVG(b []byte) bool {
 	b = bytes.TrimPrefix(b, []byte{0xef, 0xbb, 0xbf})
-	dec := xml.NewDecoder(bytes.NewReader(b))
-	dec.Strict = false
-	dec.AutoClose = xml.HTMLAutoClose
-	dec.Entity = xml.HTMLEntity
+	dec := lenientXMLDecoder(b)
 	for {
 		tok, err := dec.Token()
 		if err != nil {
@@ -286,7 +295,7 @@ func capDimensions(w, h float64) (int, int) {
 // the root <svg> element (empty when absent or when the root isn't an <svg>).
 func svgRootAttr(b []byte, name string) string {
 	b = bytes.TrimPrefix(b, []byte{0xef, 0xbb, 0xbf})
-	dec := xml.NewDecoder(bytes.NewReader(b))
+	dec := lenientXMLDecoder(b)
 	for {
 		tok, err := dec.Token()
 		if err != nil {
@@ -388,7 +397,7 @@ func svgExplicitSize(b []byte) (w, h float64, ok bool) {
 // root <svg> element (empty when absent or when the root isn't an <svg>).
 func svgRootSize(b []byte) (width, height, viewBox string) {
 	b = bytes.TrimPrefix(b, []byte{0xef, 0xbb, 0xbf})
-	dec := xml.NewDecoder(bytes.NewReader(b))
+	dec := lenientXMLDecoder(b)
 	for {
 		tok, err := dec.Token()
 		if err != nil {
