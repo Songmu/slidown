@@ -287,3 +287,18 @@ func TestNormalizeSVGRootSizeIgnoresComment(t *testing.T) {
 		t.Fatalf("expected the real root width to be normalized to px, got: %s", out)
 	}
 }
+
+func TestSVGSingleDimensionNoViewBox(t *testing.T) {
+	// width only, no viewBox: keep width, default height to 150.
+	img, err := newImageFromBuffer(bytes.NewReader([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="200"></svg>`)))
+	if err != nil {
+		t.Fatalf("newImageFromBuffer: %v", err)
+	}
+	w, h, err := img.Dimensions()
+	if err != nil {
+		t.Fatalf("Dimensions: %v", err)
+	}
+	if w != 200 || h != 150 {
+		t.Fatalf("expected 200x150, got %dx%d", w, h)
+	}
+}

@@ -250,3 +250,22 @@ func TestRenderSVGTextPreservesSeparator(t *testing.T) {
 		t.Errorf("expected xml:space=preserve for the text separator, got: %s", slide)
 	}
 }
+
+// A malformed SVG (unparseable past a point) that also uses an unsupported
+// feature must be treated conservatively as externally dependent: raster-only,
+// no native svgBlip.
+func TestRenderSVGMalformedTreatedAsExternal(t *testing.T) {
+	// Unclosed tag makes tokenization fail partway; clip-path forces fallback.
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" clip-path="url(#c)"/><g><rect`
+	img, err := slidown.NewImageFromCodeBlock(bytes.NewReader([]byte(svg)))
+	if err != nil {
+		t.Skip("input not recognized as SVG")
+	}
+	parts := renderSlidesToParts(t, slidown.Slides{
+		{Titles: []string{"m"}, Images: []*slidown.Image{img}},
+	})
+	slide := string(parts["ppt/slides/slide1.xml"])
+	if strings.Contains(slide, "asvg:svgBlip") {
+		t.Errorf("malformed SVG should not embed a native svgBlip: %s", slide)
+	}
+}

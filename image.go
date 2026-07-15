@@ -281,6 +281,14 @@ func svgExplicitSize(b []byte) (w, h float64, ok bool) {
 	if okvb {
 		return vw, vh, true
 	}
+	// No viewBox but one dimension is declared: keep it and default the missing
+	// one to the SVG spec default (300x150) rather than discarding the size.
+	if okw && wv > 0 {
+		return wv, 150, true
+	}
+	if okh && hv > 0 {
+		return 300, hv, true
+	}
 	return 0, 0, false
 }
 

@@ -11,8 +11,10 @@ package render
 import (
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"image"
 	"image/png"
+	"io"
 	"strings"
 
 	"github.com/Songmu/slidown"
@@ -291,7 +293,15 @@ func svgReferencesExternalResource(b []byte) bool {
 	for {
 		tok, err := dec.Token()
 		if err != nil {
-			return false
+			// Clean end of input: the whole document was scanned and no
+			// external reference was found.
+			if errors.Is(err, io.EOF) {
+				return false
+			}
+			// A malformed/partially-parseable document may hide an external
+			// reference past the parse error; treat it conservatively as unsafe
+			// to embed as a native SVG.
+			return true
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
