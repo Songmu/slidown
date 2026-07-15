@@ -225,6 +225,57 @@ func containerOpacity(st style) (float64, bool) {
 	return op, true
 }
 
+// tightenGradientBounds rebases a gradient-filled shape onto its own bounding
+// box so a DrawingML gradient (which spans the shape's transform rectangle)
+// matches SVG's objectBoundingBox extent. It shifts every path point so the
+// bbox origin is 0,0 and sets the shape/path extent to the bbox size. Returns
+// false when the bbox is degenerate.
+func tightenGradientBounds(gs *pptx.GeomShape) bool {
+	first := true
+	var minX, minY, maxX, maxY int64
+	for _, p := range gs.Paths {
+		for _, cmd := range p.Cmds {
+			for _, pt := range cmd.Pts {
+				if first {
+					minX, minY, maxX, maxY = pt.X, pt.Y, pt.X, pt.Y
+					first = false
+					continue
+				}
+				if pt.X < minX {
+					minX = pt.X
+				}
+				if pt.Y < minY {
+					minY = pt.Y
+				}
+				if pt.X > maxX {
+					maxX = pt.X
+				}
+				if pt.Y > maxY {
+					maxY = pt.Y
+				}
+			}
+		}
+	}
+	if first {
+		return false
+	}
+	w, h := maxX-minX, maxY-minY
+	if w <= 0 || h <= 0 {
+		return false
+	}
+	for _, p := range gs.Paths {
+		for _, cmd := range p.Cmds {
+			for i := range cmd.Pts {
+				cmd.Pts[i].X -= minX
+				cmd.Pts[i].Y -= minY
+			}
+		}
+	}
+	gs.X, gs.Y, gs.W, gs.H = minX, minY, w, h
+	gs.PathW, gs.PathH = w, h
+	return true
+}
+
 func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root bool) bool {
 	c.depth++
 	defer func() { c.depth-- }()
@@ -251,8 +302,9 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 	if !ok {
 		return false
 	}
-	if !root && displayNone(st) {
-		// display:none removes the element and its whole subtree.
+	if displayNone(st) {
+		// display:none removes the element and its whole subtree (including the
+		// root <svg>, which then renders nothing).
 		return true
 	}
 	if tr := n.Attrs["transform"]; tr != "" {
@@ -264,14 +316,12 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 	}
 
 	switch n.Name {
-	case "svg":
+	case "svg", "g":
 		// A nested <svg> establishes its own viewport (x/y/width/height/viewBox/
 		// preserveAspectRatio) that isn't modeled; only the root is handled.
-		if !root {
+		if n.Name == "svg" && !root {
 			return false
 		}
-		fallthrough
-	case "g", "symbol":
 		// A container with opacity < 1 requires group compositing (its content
 		// is flattened and blended as a whole), which flat custom-geometry
 		// shapes can't reproduce; fall back to the native SVG picture.
@@ -287,6 +337,10 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 				return false
 			}
 		}
+		return true
+	case "symbol":
+		// A <symbol> renders only when instantiated by <use>; encountered
+		// directly in the tree it draws nothing.
 		return true
 	case "path", "rect", "circle", "ellipse", "line", "polyline", "polygon":
 		gp, forceFillNone, ok := c.geometry(n, m)
@@ -314,8 +368,20 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 		if evenOdd && fill.Kind != pptx.FillNone {
 			return false
 		}
+		// A DrawingML gradient spans the shape's own transform rectangle, so a
+		// gradient-filled shape must use tight element bounds (not the whole
+		// viewBox) to match SVG objectBoundingBox, and its direction can't be
+		// rotated/skewed; fall back for rotation/skew.
+		gs := &pptx.GeomShape{Name: shapeName(n, "Shape", c.geomCount+1), X: 0, Y: 0, W: c.chW, H: c.chH, PathW: c.chW, PathH: c.chH, Paths: []pptx.GeomPath{gp}, Fill: fill, Stroke: stroke, EvenOdd: evenOdd}
+		if fill.Kind == pptx.FillGradient {
+			if m.b != 0 || m.c != 0 {
+				return false
+			}
+			if !tightenGradientBounds(gs) {
+				return false
+			}
+		}
 		c.geomCount++
-		gs := &pptx.GeomShape{Name: shapeName(n, "Shape", c.geomCount), X: 0, Y: 0, W: c.chW, H: c.chH, PathW: c.chW, PathH: c.chH, Paths: []pptx.GeomPath{gp}, Fill: fill, Stroke: stroke, EvenOdd: evenOdd}
 		g.Geoms = append(g.Geoms, gs)
 		g.Children = append(g.Children, pptx.GroupChild{Geom: gs})
 		return true

@@ -46,7 +46,7 @@ func parsePath(d string, budget int, mapPt pathMapper) (pptx.GeomPath, bool, boo
 			cmd = toggle(cmd, 'L', 'l')
 			lastWasC, lastWasQ = false, false
 		case 'L', 'l':
-			for p.hasNumber() {
+			for p.hasNumber() && len(cmds) <= budget {
 				x, y, ok := p.two()
 				if !ok {
 					return pptx.GeomPath{}, false, false
@@ -60,7 +60,7 @@ func parsePath(d string, budget int, mapPt pathMapper) (pptx.GeomPath, bool, boo
 			}
 			lastWasC, lastWasQ = false, false
 		case 'H', 'h':
-			for p.hasNumber() {
+			for p.hasNumber() && len(cmds) <= budget {
 				x, ok := p.num()
 				if !ok {
 					return pptx.GeomPath{}, false, false
@@ -73,7 +73,7 @@ func parsePath(d string, budget int, mapPt pathMapper) (pptx.GeomPath, bool, boo
 			}
 			lastWasC, lastWasQ = false, false
 		case 'V', 'v':
-			for p.hasNumber() {
+			for p.hasNumber() && len(cmds) <= budget {
 				y, ok := p.num()
 				if !ok {
 					return pptx.GeomPath{}, false, false
@@ -86,7 +86,7 @@ func parsePath(d string, budget int, mapPt pathMapper) (pptx.GeomPath, bool, boo
 			}
 			lastWasC, lastWasQ = false, false
 		case 'C', 'c':
-			for p.hasNumber() {
+			for p.hasNumber() && len(cmds) <= budget {
 				x1, y1, ok := p.two()
 				if !ok {
 					return pptx.GeomPath{}, false, false
@@ -114,7 +114,7 @@ func parsePath(d string, budget int, mapPt pathMapper) (pptx.GeomPath, bool, boo
 				lastWasQ = false
 			}
 		case 'S', 's':
-			for p.hasNumber() {
+			for p.hasNumber() && len(cmds) <= budget {
 				c1 := cur
 				if lastWasC {
 					c1 = point{2*cur.x - lastC.x, 2*cur.y - lastC.y}
@@ -140,7 +140,7 @@ func parsePath(d string, budget int, mapPt pathMapper) (pptx.GeomPath, bool, boo
 				lastWasQ = false
 			}
 		case 'Q', 'q':
-			for p.hasNumber() {
+			for p.hasNumber() && len(cmds) <= budget {
 				x1, y1, ok := p.two()
 				if !ok {
 					return pptx.GeomPath{}, false, false
@@ -162,7 +162,7 @@ func parsePath(d string, budget int, mapPt pathMapper) (pptx.GeomPath, bool, boo
 				lastWasC = false
 			}
 		case 'T', 't':
-			for p.hasNumber() {
+			for p.hasNumber() && len(cmds) <= budget {
 				c := cur
 				if lastWasQ {
 					c = point{2*cur.x - lastQ.x, 2*cur.y - lastQ.y}
@@ -182,7 +182,7 @@ func parsePath(d string, budget int, mapPt pathMapper) (pptx.GeomPath, bool, boo
 				lastWasC = false
 			}
 		case 'A', 'a':
-			for p.hasNumber() {
+			for p.hasNumber() && len(cmds) <= budget {
 				rx, ok := p.num()
 				if !ok {
 					return pptx.GeomPath{}, false, false
@@ -231,6 +231,9 @@ func parsePath(d string, budget int, mapPt pathMapper) (pptx.GeomPath, bool, boo
 		if !consumedCmd && p.i == startIdx {
 			return pptx.GeomPath{}, false, false
 		}
+	}
+	if len(cmds) > budget {
+		return pptx.GeomPath{}, false, false
 	}
 	return pptx.GeomPath{Cmds: cmds}, false, true
 }
@@ -413,9 +416,11 @@ func arcSeg(cx, cy, rx, ry, phi, a1, a2 float64) [3]point {
 	p1 := point{math.Cos(a1) - t*math.Sin(a1), math.Sin(a1) + t*math.Cos(a1)}
 	p2 := point{math.Cos(a2) + t*math.Sin(a2), math.Sin(a2) - t*math.Cos(a2)}
 	p3 := point{math.Cos(a2), math.Sin(a2)}
+	cos, sin := math.Cos(phi), math.Sin(phi)
 	tr := func(p point) point {
-		cos, sin := math.Cos(phi), math.Sin(phi)
-		return point{cx + rx*(cos*p.x-sin*p.y), cy + ry*(sin*p.x+cos*p.y)}
+		// Scale the unit-circle point by the radii first, then rotate by phi.
+		sx, sy := rx*p.x, ry*p.y
+		return point{cx + cos*sx - sin*sy, cy + sin*sx + cos*sy}
 	}
 	return [3]point{tr(p1), tr(p2), tr(p3)}
 }

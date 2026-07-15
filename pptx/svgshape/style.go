@@ -16,8 +16,8 @@ type cssRule struct {
 	decl style
 }
 
-var inheritedProps = map[string]bool{"fill": true, "stroke": true, "opacity": true, "fill-opacity": true, "stroke-opacity": true, "stroke-width": true, "stroke-linecap": true, "stroke-linejoin": true, "stroke-dasharray": true, "fill-rule": true, "font-size": true, "font-family": true, "text-anchor": true, "color": true, "display": true, "visibility": true}
-var paintProps = []string{"fill", "stroke", "opacity", "fill-opacity", "stroke-opacity", "stroke-width", "stroke-linecap", "stroke-linejoin", "stroke-dasharray", "fill-rule", "font-size", "font-family", "text-anchor", "color", "display", "visibility"}
+var inheritedProps = map[string]bool{"fill": true, "stroke": true, "opacity": true, "fill-opacity": true, "stroke-opacity": true, "stroke-width": true, "stroke-linecap": true, "stroke-linejoin": true, "stroke-dasharray": true, "stroke-miterlimit": true, "fill-rule": true, "font-size": true, "font-family": true, "text-anchor": true, "color": true, "display": true, "visibility": true}
+var paintProps = []string{"fill", "stroke", "opacity", "fill-opacity", "stroke-opacity", "stroke-width", "stroke-linecap", "stroke-linejoin", "stroke-dasharray", "stroke-miterlimit", "fill-rule", "font-size", "font-family", "text-anchor", "color", "display", "visibility"}
 
 func defaultStyle() style {
 	return style{"fill": "black", "stroke": "none", "opacity": "1", "fill-opacity": "1", "stroke-opacity": "1", "stroke-width": "1", "stroke-linecap": "butt", "stroke-linejoin": "miter", "fill-rule": "nonzero", "font-size": "16", "text-anchor": "start", "color": "black"}
@@ -44,6 +44,12 @@ func parseStyleDecl(s string) (style, bool) {
 		}
 		k := strings.ToLower(strings.TrimSpace(kv[0]))
 		v := strings.TrimSpace(kv[1])
+		// The !important cascade isn't modeled; reject rather than treat the
+		// flagged value as a plain declaration (which would mis-handle e.g.
+		// display:none !important).
+		if strings.Contains(strings.ToLower(v), "!important") {
+			return nil, false
+		}
 		if inheritedProps[k] || k == "stop-color" || k == "stop-opacity" {
 			out[k] = v
 			continue
@@ -291,6 +297,16 @@ func (c *conv) paint(st style, m matrix, forceFillNone bool) (pptx.Fill, *pptx.S
 		}
 		if join != "round" && join != "bevel" && join != "miter" {
 			return fill, nil, false
+		}
+		// The writer emits SVG's default miter limit (4); an explicit different
+		// limit isn't modeled, so fall back for miter joins that set one.
+		if join == "miter" {
+			if ml := strings.TrimSpace(st.get("stroke-miterlimit")); ml != "" {
+				v, ok := parseLength(ml, false)
+				if !ok || math.Abs(v-4) > 1e-9 {
+					return fill, nil, false
+				}
+			}
 		}
 		stroke = &pptx.Stroke{Color: col, Alpha: op * so, Width: round(w * emuPerUnit * m.avgScale()), Cap: cap, Join: join}
 		// Arbitrary dash patterns can't be mapped to a single OOXML preset

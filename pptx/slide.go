@@ -383,7 +383,7 @@ func renderStroke(st *Stroke) string {
 	case "bevel":
 		b.WriteString(`<a:bevel/>`)
 	case "miter":
-		b.WriteString(`<a:miter lim="800000"/>`)
+		b.WriteString(`<a:miter lim="400000"/>`)
 	default:
 		b.WriteString(`<a:round/>`)
 	}

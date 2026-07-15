@@ -63,6 +63,12 @@ func (c *conv) gradient(id string, seen map[string]bool) (*pptx.Gradient, bool) 
 		// edges) is representable. Recompute the angle only when this gradient
 		// declares its own vector; otherwise keep the inherited (parent) angle.
 		hasCoord := n.Attrs["x1"] != "" || n.Attrs["y1"] != "" || n.Attrs["x2"] != "" || n.Attrs["y2"] != ""
+		if hasCoord && parent != nil {
+			// A partial coordinate override must inherit the unspecified
+			// endpoints from the referenced gradient; that merge isn't modeled,
+			// so fall back conservatively.
+			return nil, false
+		}
 		if hasCoord || parent == nil {
 			coords := map[string]float64{"x1": 0, "y1": 0, "x2": 1, "y2": 0}
 			for k := range coords {
@@ -129,6 +135,7 @@ func parseGradCoord(s string) (float64, bool) {
 }
 func (c *conv) gradientStops(n *node) ([]pptx.GradientStop, bool) {
 	var out []pptx.GradientStop
+	prevOff := 0.0
 	for _, ch := range n.Children {
 		if ch.Name != "stop" {
 			continue
@@ -141,6 +148,11 @@ func (c *conv) gradientStops(n *node) ([]pptx.GradientStop, bool) {
 		if !ok {
 			return nil, false
 		}
+		// SVG clamps each offset to be >= the previous stop's offset.
+		if off < prevOff {
+			off = prevOff
+		}
+		prevOff = off
 		color := ch.Attrs["stop-color"]
 		if color == "" {
 			color = st.get("stop-color")
@@ -219,5 +231,22 @@ func (c *conv) expandUse(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 	m = m.mul(matrix{a: 1, d: 1, e: x, f: y})
 	c.resolvingUse[id] = true
 	defer delete(c.resolvingUse, id)
+	if ref.Name == "symbol" {
+		// A symbol renders only through <use>; walk its children directly since
+		// the symbol element itself is skipped during a normal tree walk.
+		cst, ok := c.resolveStyle(ref, st)
+		if !ok {
+			return false
+		}
+		if op, ok := containerOpacity(cst); !ok || op < 1 {
+			return false
+		}
+		for _, ch := range ref.Children {
+			if !c.walk(ch, cst, m, g, false) {
+				return false
+			}
+		}
+		return true
+	}
 	return c.walk(ref, st, m, g, false)
 }

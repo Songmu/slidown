@@ -34,9 +34,15 @@ func (c *conv) text(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 	}
 	align := pptx.AlignLeft
 	fillVal := resolvePaint(st, st.get("fill"))
-	if fillVal == "none" || fillVal == "" {
-		// Text with no visible fill is invisible; render nothing rather than
-		// emitting opaque text.
+	hasTspan := false
+	for _, ch := range n.Children {
+		if ch.Name == "tspan" {
+			hasTspan = true
+		}
+	}
+	if (fillVal == "none" || fillVal == "") && !hasTspan {
+		// Text with no visible fill and no children is invisible; render
+		// nothing rather than emitting opaque text.
 		return true
 	}
 	// pptx runs carry no alpha, so any translucent text cannot be represented
@@ -52,9 +58,14 @@ func (c *conv) text(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 	if op*fo < 1 {
 		return false
 	}
-	color, ok := parseColor(fillVal)
-	if !ok {
-		return false
+	// color is empty when the element itself has no paintable fill; child runs
+	// with their own fill may still render.
+	var color string
+	if fillVal != "none" && fillVal != "" {
+		color, ok = parseColor(fillVal)
+		if !ok {
+			return false
+		}
 	}
 	family := firstFamily(st.get("font-family"))
 	runs, ok := c.textRuns(n, st, fs*0.75, color, family)
@@ -78,12 +89,13 @@ func (c *conv) text(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 }
 func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]*pptx.Run, bool) {
 	var runs []*pptx.Run
-	add := func(txt string) {
-		if txt != "" {
-			runs = append(runs, &pptx.Run{Text: txt, FontSize: pt, Color: color, FontFamily: family})
+	add := func(txt, col string) {
+		// col == "" means no paintable fill; skip such runs.
+		if txt != "" && col != "" {
+			runs = append(runs, &pptx.Run{Text: txt, FontSize: pt, Color: col, FontFamily: family})
 		}
 	}
-	add(strings.TrimSpace(n.Text))
+	add(collapseSpace(n.Text), color)
 	for _, ch := range n.Children {
 		if ch.Name == "textpath" {
 			return nil, false
@@ -95,6 +107,16 @@ func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]
 		// document order once flattened (e.g. <text>A<tspan>B</tspan>C</text>
 		// would emit A,C,B); reject it rather than reorder.
 		if ch.textAfterChild || n.textAfterChild {
+			return nil, false
+		}
+		// Positioned or nested tspans (x/y/dx/dy/rotate, or child elements)
+		// change layout in ways not modeled here; fall back.
+		for _, a := range []string{"x", "y", "dx", "dy", "rotate"} {
+			if ch.Attrs[a] != "" {
+				return nil, false
+			}
+		}
+		if len(ch.Children) > 0 {
 			return nil, false
 		}
 		child, ok := c.resolveStyle(ch, st)
@@ -125,8 +147,7 @@ func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]
 		col := color
 		fillVal := resolvePaint(child, child.get("fill"))
 		if fillVal == "none" {
-			// A no-fill tspan is invisible; skip it rather than emitting it
-			// with the inherited color.
+			// A no-fill tspan is invisible; skip it.
 			continue
 		}
 		if fillVal != "" {
@@ -140,12 +161,52 @@ func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]
 		if ff := firstFamily(child.get("font-family")); ff != "" {
 			fam = ff
 		}
-		txt := strings.TrimSpace(ch.Text)
-		if txt != "" {
+		txt := collapseSpace(ch.Text)
+		if txt != "" && col != "" {
 			runs = append(runs, &pptx.Run{Text: txt, FontSize: cpt, Color: col, FontFamily: fam})
 		}
 	}
-	return runs, true
+	// Trim the leading/trailing whitespace of the whole text stream while
+	// preserving separators between runs.
+	if len(runs) > 0 {
+		runs[0].Text = strings.TrimLeft(runs[0].Text, " ")
+		last := runs[len(runs)-1]
+		last.Text = strings.TrimRight(last.Text, " ")
+	}
+	// Drop any runs emptied by trimming.
+	kept := runs[:0]
+	for _, r := range runs {
+		if r.Text != "" {
+			kept = append(kept, r)
+		}
+	}
+	return kept, true
+}
+
+// collapseSpace collapses runs of XML whitespace to a single space without
+// trimming the ends, so separators between adjacent runs (e.g. "Hello " before
+// a <tspan>) are preserved.
+func collapseSpace(s string) string {
+	var b strings.Builder
+	space := false
+	for _, r := range s {
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\f' {
+			space = true
+			continue
+		}
+		if space && b.Len() > 0 {
+			b.WriteByte(' ')
+		}
+		if space && b.Len() == 0 {
+			b.WriteByte(' ')
+		}
+		space = false
+		b.WriteRune(r)
+	}
+	if space && b.Len() > 0 {
+		b.WriteByte(' ')
+	}
+	return b.String()
 }
 func firstFamily(s string) string {
 	s = strings.TrimSpace(s)

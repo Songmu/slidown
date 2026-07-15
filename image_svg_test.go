@@ -118,6 +118,18 @@ func TestSVGDimensions(t *testing.T) {
 			wantW: 24,
 			wantH: 24,
 		},
+		{
+			name:  "declared size overrides viewBox aspect",
+			svg:   `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 100 100"></svg>`,
+			wantW: 200,
+			wantH: 100,
+		},
+		{
+			name:  "px units on declared size",
+			svg:   `<svg xmlns="http://www.w3.org/2000/svg" width="48px" height="24px" viewBox="0 0 10 10"></svg>`,
+			wantW: 48,
+			wantH: 24,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

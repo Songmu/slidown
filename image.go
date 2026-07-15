@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -209,12 +210,20 @@ func (i *Image) Dimensions() (w, h int, err error) {
 		return i.width, i.height, nil
 	}
 	if i.IsSVG() {
-		icon, err := i.parseSVG()
-		if err != nil {
-			return 0, 0, fmt.Errorf("failed to parse SVG: %w", err)
+		// Prefer the SVG's declared width/height (its intrinsic size); the
+		// viewBox is only the coordinate window and may have a different aspect
+		// ratio, which would mis-size the native fallback picture.
+		if ew, eh, ok := svgExplicitSize(i.b); ok {
+			w = roundDimension(ew, 300)
+			h = roundDimension(eh, 150)
+		} else {
+			icon, err := i.parseSVG()
+			if err != nil {
+				return 0, 0, fmt.Errorf("failed to parse SVG: %w", err)
+			}
+			w = roundDimension(icon.ViewBox.W, 300)
+			h = roundDimension(icon.ViewBox.H, 150)
 		}
-		w = roundDimension(icon.ViewBox.W, 300)
-		h = roundDimension(icon.ViewBox.H, 150)
 	} else {
 		cfg, _, err := image.DecodeConfig(bytes.NewReader(i.b))
 		if err != nil {
@@ -224,6 +233,58 @@ func (i *Image) Dimensions() (w, h int, err error) {
 	}
 	i.width, i.height, i.dimensionsOK = w, h, true
 	return w, h, nil
+}
+
+// svgExplicitSize returns the SVG's declared width and height (in px-equivalent
+// user units) when the root <svg> element sets both as plain lengths. It
+// returns ok=false when either is missing or uses a unit/percentage that isn't
+// a simple pixel length.
+func svgExplicitSize(b []byte) (w, h float64, ok bool) {
+	b = bytes.TrimPrefix(b, []byte{0xef, 0xbb, 0xbf})
+	dec := xml.NewDecoder(bytes.NewReader(b))
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return 0, 0, false
+		}
+		se, isStart := tok.(xml.StartElement)
+		if !isStart {
+			continue
+		}
+		if !strings.EqualFold(se.Name.Local, "svg") {
+			return 0, 0, false
+		}
+		var ws, hs string
+		for _, a := range se.Attr {
+			switch strings.ToLower(a.Name.Local) {
+			case "width":
+				ws = a.Value
+			case "height":
+				hs = a.Value
+			}
+		}
+		wv, okw := parsePixelLength(ws)
+		hv, okh := parsePixelLength(hs)
+		if !okw || !okh || wv <= 0 || hv <= 0 {
+			return 0, 0, false
+		}
+		return wv, hv, true
+	}
+}
+
+// parsePixelLength parses a plain SVG length (optionally suffixed with "px")
+// into a float. Percentages and other units are rejected.
+func parsePixelLength(s string) (float64, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.HasSuffix(s, "%") {
+		return 0, false
+	}
+	s = strings.TrimSuffix(s, "px")
+	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil {
+		return 0, false
+	}
+	return v, true
 }
 
 func roundDimension(v, fallback float64) int {
@@ -244,6 +305,12 @@ func roundDimension(v, fallback float64) int {
 	return n
 }
 
+// RasterPNG renders the image to PNG bytes at the given scale. For SVGs it is a
+// best-effort raster produced by the pure-Go oksvg rasterizer, which does not
+// support every SVG feature (notably filter, clipPath, mask, embedded <image>,
+// foreignObject and <text>); such parts may be omitted. It is intended only as
+// a compatibility fallback for viewers that can't render the embedded native
+// SVG (which PowerPoint 2016+ uses as the primary, fully-featured rendering).
 func (i *Image) RasterPNG(scale float64) ([]byte, error) {
 	if i == nil {
 		return nil, fmt.Errorf("image is nil")

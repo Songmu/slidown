@@ -366,3 +366,63 @@ func TestReviewBatch2(t *testing.T) {
 		t.Error("svg text should use zero insets")
 	}
 }
+
+func TestReviewBatch3(t *testing.T) {
+	// Standalone <symbol> renders nothing; via <use> it renders.
+	g := mustConvert(t, `<svg viewBox="0 0 10 10"><symbol id="s"><rect width="1" height="1" fill="red"/></symbol></svg>`)
+	if len(g.Geoms) != 0 {
+		t.Fatalf("standalone symbol should render nothing, got %d", len(g.Geoms))
+	}
+	g = mustConvert(t, `<svg viewBox="0 0 10 10"><defs><symbol id="s"><rect width="1" height="1" fill="red"/></symbol></defs><use href="#s"/></svg>`)
+	if len(g.Geoms) != 1 {
+		t.Fatalf("symbol via use should render, got %d", len(g.Geoms))
+	}
+	// display:none on the root renders nothing.
+	g = mustConvert(t, `<svg viewBox="0 0 10 10" display="none"><rect width="1" height="1" fill="red"/></svg>`)
+	if len(g.Geoms) != 0 {
+		t.Fatalf("root display:none should render nothing, got %d", len(g.Geoms))
+	}
+	// A gradient-filled rect not covering the canvas gets tight bounds.
+	g = mustConvert(t, `<svg viewBox="0 0 100 100"><defs><linearGradient id="lg"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect x="40" y="40" width="20" height="20" fill="url(#lg)"/></svg>`)
+	gs := g.Geoms[0]
+	if gs.X <= 0 || gs.W >= gs.PathW+1 && gs.W == round(100*emuPerUnit) {
+		t.Fatalf("gradient shape should use tight bounds, got X=%d W=%d", gs.X, gs.W)
+	}
+	if gs.W != round(20*emuPerUnit) {
+		t.Fatalf("gradient shape width should equal element width, got %d want %d", gs.W, round(20*emuPerUnit))
+	}
+	// Monotonic gradient offsets: a descending offset is clamped.
+	g = mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg"><stop offset="1" stop-color="red"/><stop offset="0" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`)
+	st := g.Geoms[0].Fill.Gradient.Stops
+	if st[1].Pos < st[0].Pos {
+		t.Fatalf("stop offsets must be non-decreasing, got %v then %v", st[0].Pos, st[1].Pos)
+	}
+	// Text fill:none with a colored tspan still renders the tspan.
+	g = mustConvert(t, `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="none" font-size="10"><tspan fill="red">Hi</tspan></text></svg>`)
+	if len(g.Texts) != 1 || len(g.Texts[0].Paragraphs[0].Runs) != 1 || g.Texts[0].Paragraphs[0].Runs[0].Color != "ff0000" {
+		t.Fatalf("fill:none text with colored tspan should render tspan: %#v", g.Texts)
+	}
+	// Whitespace between a text node and a tspan is preserved as a separator.
+	g = mustConvert(t, `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="blue" font-size="10">Hello <tspan>world</tspan></text></svg>`)
+	runs := g.Texts[0].Paragraphs[0].Runs
+	var joined string
+	for _, r := range runs {
+		joined += r.Text
+	}
+	if joined != "Hello world" {
+		t.Fatalf("whitespace separator lost: %q", joined)
+	}
+
+	for name, svg := range map[string]string{
+		"gradient under rotation":   `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)" transform="rotate(90)"/></svg>`,
+		"partial gradient override": `<svg viewBox="0 0 10 10"><defs><linearGradient id="p" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient><linearGradient id="c" href="#p" x2="1"/></defs><rect width="10" height="10" fill="url(#c)"/></svg>`,
+		"important":                 `<svg viewBox="0 0 10 10"><rect width="1" height="1" style="display:none !important"/></svg>`,
+		"tspan positioned":          `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="red" font-size="10"><tspan x="5">Hi</tspan></text></svg>`,
+		"tspan nested":              `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="red" font-size="10"><tspan><tspan>Hi</tspan></tspan></text></svg>`,
+		"explicit miterlimit":       `<svg viewBox="0 0 10 10"><rect width="2" height="2" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter" stroke-miterlimit="10"/></svg>`,
+	} {
+		if _, ok := Convert([]byte(svg)); ok {
+			t.Errorf("%s: expected fallback", name)
+		}
+	}
+}
