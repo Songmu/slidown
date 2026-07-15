@@ -725,6 +725,28 @@ func TestReviewBatch23(t *testing.T) {
 	}
 }
 
+func TestReviewBatch24(t *testing.T) {
+	// A <path> with more than maxCommands segments must fall back. The budget is
+	// enforced within parsePath's inner loop so the parser aborts without
+	// building a slice of maxCommands elements first.
+	pathSVG := `<svg viewBox="0 0 10 10"><path d="M0 0` +
+		strings.Repeat(" H1", maxCommands+1) +
+		`" fill="none" stroke="black"/></svg>`
+	if _, ok := Convert([]byte(pathSVG)); ok {
+		t.Fatal("path with more than maxCommands commands should fall back")
+	}
+
+	// A <polygon> with more than maxCommands points must also fall back. The
+	// budget is forwarded into parsePoints/scanNumbers so the full point list is
+	// never allocated before rejection.
+	polySVG := `<svg viewBox="0 0 10 10"><polygon points="` +
+		strings.Repeat("1 1 ", maxCommands+1) +
+		`" fill="red"/></svg>`
+	if _, ok := Convert([]byte(polySVG)); ok {
+		t.Fatal("polygon with more than maxCommands points should fall back")
+	}
+}
+
 func TestReviewBatch22(t *testing.T) {
 	// The exported Convert must not emit geometry for an SVG whose root width or
 	// height is an explicit zero (its viewport renders nothing), independent of

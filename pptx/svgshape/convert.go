@@ -904,7 +904,9 @@ func (c *conv) geometry(n *node, m matrix) (pptx.GeomPath, bool, bool) {
 		}
 		return pptx.GeomPath{Cmds: []pptx.PathCmd{{Verb: pptx.MoveTo, Pts: []pptx.PathPoint{c.point(m.apply(point{x1, y1}))}}, {Verb: pptx.LineTo, Pts: []pptx.PathPoint{c.point(m.apply(point{x2, y2}))}}}}, true, true
 	case "polyline", "polygon":
-		pts, ok := parsePoints(n.Attrs["points"])
+		// Pass the remaining command budget so parsePoints rejects an
+		// over-size attribute before allocating the full point slice.
+		pts, ok := parsePoints(n.Attrs["points"], maxCommands-c.cmdCount)
 		if !ok {
 			return pptx.GeomPath{}, false, false
 		}
@@ -913,9 +915,6 @@ func (c *conv) geometry(n *node, m matrix) (pptx.GeomPath, bool, bool) {
 			// geometry (rather than a MoveTo-less ClosePath) so the shape is
 			// skipped as empty.
 			return pptx.GeomPath{}, false, true
-		}
-		if len(pts) > maxCommands-c.cmdCount {
-			return pptx.GeomPath{}, false, false
 		}
 		cmds := []pptx.PathCmd{}
 		for i, p := range pts {
@@ -1145,9 +1144,20 @@ func hasUnsupportedAttrs(n *node) bool {
 	return false
 }
 
-func parseNumberList(s string) ([]float64, bool) { return scanNumbers(s) }
-func parsePoints(s string) ([]point, bool) {
-	nums, ok := scanNumbers(s)
+func parseNumberList(s string) ([]float64, bool) { return scanNumbers(s, 0) }
+
+// parsePoints parses a polygon/polyline point list and returns at most budget
+// points. When budget <= 0 no limit is applied; callers should pass the
+// remaining command budget so an over-size attribute is rejected before a large
+// slice is built.
+func parsePoints(s string, budget int) ([]point, bool) {
+	// Each point requires two numbers, so translate the point budget into a
+	// number budget for the scanner.
+	numBudget := 0
+	if budget > 0 {
+		numBudget = budget * 2
+	}
+	nums, ok := scanNumbers(s, numBudget)
 	if !ok || len(nums)%2 != 0 {
 		return nil, false
 	}
@@ -1158,7 +1168,10 @@ func parsePoints(s string) ([]point, bool) {
 	return pts, true
 }
 
-func scanNumbers(s string) ([]float64, bool) {
+// scanNumbers parses a whitespace/comma-separated number list. When maxCount > 0
+// it returns false as soon as more than maxCount numbers have been accumulated,
+// so a pathological attribute is rejected before a huge slice is built.
+func scanNumbers(s string, maxCount int) ([]float64, bool) {
 	var out []float64
 	i := 0
 	for i < len(s) {
@@ -1203,6 +1216,9 @@ func scanNumbers(s string) ([]float64, bool) {
 			return nil, false
 		}
 		out = append(out, v)
+		if maxCount > 0 && len(out) > maxCount {
+			return nil, false
+		}
 	}
 	return out, true
 }

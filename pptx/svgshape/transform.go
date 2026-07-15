@@ -62,7 +62,7 @@ func parseTransform(s string) (matrix, bool) {
 		if j < 0 {
 			return matrix{}, false
 		}
-		nums, ok := scanNumbers(s[i+1 : j])
+		nums, ok := scanNumbers(s[i+1:j], 0)
 		if !ok {
 			return matrix{}, false
 		}
