@@ -347,6 +347,24 @@ func TestSVGRootSizeLenient(t *testing.T) {
 	}
 }
 
+func TestSVGCSSSizeCascade(t *testing.T) {
+	// The CSS cascade wins: the last equal-priority declaration and any
+	// !important declaration outrank earlier ones. width:0;width:100px must
+	// resolve to 100px (not 0), so the SVG isn't dropped.
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" height="50" style="width:0;width:100px" viewBox="0 0 100 50"></svg>`
+	img, err := newImageFromBuffer(bytes.NewReader([]byte(svg)))
+	if err != nil {
+		t.Fatalf("newImageFromBuffer: %v", err)
+	}
+	w, h, err := img.Dimensions()
+	if err != nil {
+		t.Fatalf("Dimensions: %v", err)
+	}
+	if w != 100 || h != 50 {
+		t.Fatalf("CSS cascade width: Dimensions = %dx%d, want 100x50", w, h)
+	}
+}
+
 func TestSVGCSSSizeOverridesAttr(t *testing.T) {
 	// SVG 2 CSS width/height override the presentation attributes, so a
 	// width="0" with style="width:100px" is sized 100x50, not dropped as zero.

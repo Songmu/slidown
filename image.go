@@ -441,25 +441,30 @@ func svgRootSize(b []byte) (width, height, viewBox string) {
 	}
 }
 
-// cssDeclValue returns the value of a CSS declaration (e.g. "width") from an
-// inline style string, with any !important flag stripped. Returns "" when the
-// property is absent.
+// cssDeclValue returns the winning value of a CSS declaration (e.g. "width")
+// from an inline style string, following the cascade: the last declaration wins
+// at equal priority, and an !important declaration outranks normal ones.
+// Returns "" when the property is absent.
 func cssDeclValue(style, prop string) string {
+	var normal, important string
+	haveImportant := false
 	for _, decl := range strings.Split(style, ";") {
 		k, v, ok := strings.Cut(decl, ":")
-		if !ok {
-			continue
-		}
-		if !strings.EqualFold(strings.TrimSpace(k), prop) {
+		if !ok || !strings.EqualFold(strings.TrimSpace(k), prop) {
 			continue
 		}
 		v = strings.TrimSpace(v)
 		if idx := strings.Index(strings.ToLower(v), "!important"); idx >= 0 {
-			v = strings.TrimSpace(v[:idx])
+			important = strings.TrimSpace(v[:idx])
+			haveImportant = true
+		} else {
+			normal = v
 		}
-		return v
 	}
-	return ""
+	if haveImportant {
+		return important
+	}
+	return normal
 }
 
 // parseViewBoxWH extracts the width and height from a viewBox="minX minY w h".

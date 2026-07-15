@@ -248,6 +248,12 @@ func parseXML(data []byte) (*node, error) {
 }
 
 func (c *conv) initViewport() bool {
+	// An explicit zero root width/height means the SVG viewport renders nothing;
+	// don't emit geometry for it (the exported Convert API must not treat it as
+	// usable, independent of the render pipeline's Dimensions prefilter).
+	if explicitZeroDim(c.root.Attrs["width"]) || explicitZeroDim(c.root.Attrs["height"]) {
+		return false
+	}
 	if vb := c.root.Attrs["viewbox"]; vb != "" {
 		n, ok := parseNumberList(vb)
 		if !ok || len(n) != 4 || n[2] <= 0 || n[3] <= 0 {
@@ -988,6 +994,38 @@ func parseLength(s string, allowPercent bool) (float64, bool) {
 	return v, true
 }
 func round(v float64) int64 { return int64(math.Round(v)) }
+
+// svgLengthUnits is the set of recognized length-unit suffixes (plus "" and
+// "%"); any other suffix is an invalid, not-zero dimension.
+var svgLengthUnits = map[string]bool{
+	"": true, "%": true, "px": true, "pt": true, "pc": true, "mm": true,
+	"cm": true, "in": true, "em": true, "rem": true, "ex": true, "ch": true,
+	"q": true, "vw": true, "vh": true, "vmin": true, "vmax": true,
+}
+
+// explicitZeroDim reports whether s is an explicit zero length (a unitless zero,
+// zero percent, or zero in a recognized unit). An unknown/malformed unit is an
+// invalid dimension, not a zero.
+func explicitZeroDim(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	n := len(s)
+	for n > 0 {
+		ch := s[n-1]
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '%' {
+			n--
+			continue
+		}
+		break
+	}
+	if !svgLengthUnits[strings.ToLower(strings.TrimSpace(s[n:]))] {
+		return false
+	}
+	v, err := strconv.ParseFloat(strings.TrimSpace(s[:n]), 64)
+	return err == nil && v == 0
+}
 
 // parseRootLength parses a root width/height, additionally resolving the
 // default-font relative units (em/rem/ex/ch at 16px) so a valid relative size

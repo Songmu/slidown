@@ -716,6 +716,26 @@ func TestReviewBatch12(t *testing.T) {
 	}
 }
 
+func TestReviewBatch22(t *testing.T) {
+	// The exported Convert must not emit geometry for an SVG whose root width or
+	// height is an explicit zero (its viewport renders nothing), independent of
+	// the render pipeline's Dimensions prefilter.
+	for _, svg := range []string{
+		`<svg width="0" height="10" viewBox="0 0 10 10"><rect width="1" height="1" fill="red"/></svg>`,
+		`<svg width="0%" height="10" viewBox="0 0 10 10"><rect width="1" height="1" fill="red"/></svg>`,
+		`<svg width="0em" height="10" viewBox="0 0 10 10"><rect width="1" height="1" fill="red"/></svg>`,
+		`<svg width="10" height="0" viewBox="0 0 10 10"><rect width="1" height="1" fill="red"/></svg>`,
+	} {
+		if _, ok := Convert([]byte(svg)); ok {
+			t.Errorf("explicit zero root size should not convert: %s", svg)
+		}
+	}
+	// An invalid (non-zero) dimension unit isn't a zero, so it still converts.
+	if _, ok := Convert([]byte(`<svg width="0foo" height="10" viewBox="0 0 10 10"><rect width="1" height="1" fill="red"/></svg>`)); !ok {
+		t.Error("invalid (non-zero) dimension should still convert")
+	}
+}
+
 func TestReviewBatch21(t *testing.T) {
 	// A wrong-case <STOP> (lowercased to "stop" during parsing) is not a real
 	// gradient stop and must be ignored, leaving only the two valid stops.
