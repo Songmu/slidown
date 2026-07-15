@@ -88,6 +88,7 @@ type conv struct {
 	depth        int
 	visits       int
 	cssWork      int
+	cssSelectors int
 	resolvingUse map[string]bool
 }
 
@@ -263,6 +264,17 @@ func (c *conv) collectDefsAndCSS(n *node) bool {
 		if !ok {
 			return false
 		}
+		// Bound the cumulative rule/selector counts across all <style> elements
+		// (parseCSS's caps are per-stylesheet) so many small stylesheets can't
+		// grow c.css without bound.
+		sels := 0
+		for _, r := range rules {
+			sels += len(r.sels)
+		}
+		if len(c.css)+len(rules) > maxCSSRules || c.cssSelectors+sels > maxCSSSelectors {
+			return false
+		}
+		c.cssSelectors += sels
 		c.css = append(c.css, rules...)
 	}
 	if id := n.Attrs["id"]; id != "" {

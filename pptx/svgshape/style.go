@@ -208,13 +208,17 @@ func (c *conv) resolveStyle(n *node, inherited style) (style, bool) {
 	}
 	// Resolve the CSS-wide keywords. "inherit", "unset" and "revert" all take the
 	// parent's value for these (all inherited) properties; "initial" restores the
-	// default by removing the key so downstream get() falls back.
+	// property's default value.
 	for k, v := range st {
 		switch strings.ToLower(v) {
 		case "inherit", "unset", "revert":
 			st[k] = inherited.get(k)
 		case "initial":
-			delete(st, k)
+			if dv := defaultStyle().get(k); dv != "" {
+				st[k] = dv
+			} else {
+				delete(st, k)
+			}
 		}
 	}
 	for k, v := range st {

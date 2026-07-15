@@ -95,25 +95,31 @@ func (c *conv) text(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 	}
 	// A PowerPoint group doesn't clip its children, so a text box positioned or
 	// sized outside the viewport would render outside the placed image. SVG text
-	// is single-line (no wrap); estimate its width so it can't wrap or overflow
+	// is single-line (no wrap); estimate its extent so it can't wrap or overflow
 	// the viewport, and fall back otherwise.
-	boxY := yemu - round(fs*emuPerUnit)
-	boxH := round(fs * emuPerUnit * 1.5)
-	const tol = 16
-	// Estimate the single-line width per run using its own font size (a tspan
-	// may be larger than the parent) with a generous ~0.75em upper bound per
-	// character so wide glyphs are unlikely to overflow the non-clipping group.
+	//
+	// Vertical bounds use the largest run size (a tspan may be larger than the
+	// parent), so a big child can't overflow the box.
+	maxUnits := fs
 	var estW float64
 	for _, r := range runs {
 		runUnits := fs
 		if r.FontSize > 0 {
 			runUnits = r.FontSize / 0.75 // pt back to user units
 		}
+		if runUnits > maxUnits {
+			maxUnits = runUnits
+		}
+		// Estimate width per run using its own size with a generous ~0.75em
+		// upper bound per character so wide glyphs are unlikely to overflow.
 		estW += float64(len([]rune(r.Text))) * runUnits * 0.75 * emuPerUnit
 	}
+	boxY := yemu - round(maxUnits*emuPerUnit)
+	boxH := round(maxUnits * emuPerUnit * 1.5)
+	const tol = 16
 	est := round(estW)
 	if est <= 0 {
-		est = round(fs * emuPerUnit)
+		est = round(maxUnits * emuPerUnit)
 	}
 	if xemu < -tol || boxY < -tol || boxY+boxH > c.chH+tol || xemu+est > c.chW+tol {
 		return false
@@ -273,6 +279,9 @@ func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]
 // trimming the ends, so separators between adjacent runs (e.g. "Hello " before
 // a <tspan>) are preserved.
 func collapseSpace(s string) string {
+	if s == "" {
+		return ""
+	}
 	var b strings.Builder
 	space := false
 	for _, r := range s {
@@ -280,16 +289,15 @@ func collapseSpace(s string) string {
 			space = true
 			continue
 		}
-		if space && b.Len() > 0 {
-			b.WriteByte(' ')
-		}
-		if space && b.Len() == 0 {
+		if space {
 			b.WriteByte(' ')
 		}
 		space = false
 		b.WriteRune(r)
 	}
-	if space && b.Len() > 0 {
+	if space {
+		// A trailing space, or an all-whitespace node (which is a word
+		// separator between runs), collapses to a single space.
 		b.WriteByte(' ')
 	}
 	return b.String()

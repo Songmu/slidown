@@ -302,3 +302,18 @@ func TestSVGSingleDimensionNoViewBox(t *testing.T) {
 		t.Fatalf("expected 200x150, got %dx%d", w, h)
 	}
 }
+
+func TestSVGFractionalDimensionRatio(t *testing.T) {
+	// A 0.1x100 viewBox must keep its 1:1000 ratio (not become 1x100).
+	img, err := newImageFromBuffer(bytes.NewReader([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 0.1 100"></svg>`)))
+	if err != nil {
+		t.Fatalf("newImageFromBuffer: %v", err)
+	}
+	w, h, err := img.Dimensions()
+	if err != nil {
+		t.Fatalf("Dimensions: %v", err)
+	}
+	if w != 1 || h != 1000 {
+		t.Fatalf("expected 1x1000 (ratio preserved), got %dx%d", w, h)
+	}
+}

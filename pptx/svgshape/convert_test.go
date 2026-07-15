@@ -670,3 +670,35 @@ func TestReviewBatch11(t *testing.T) {
 		t.Fatalf("lowercase type selector should match, got %s", g.Geoms[0].Fill.Color)
 	}
 }
+
+func TestReviewBatch12(t *testing.T) {
+	// fill:initial restores the default (black), not "no fill".
+	g := mustConvert(t, `<svg viewBox="0 0 10 10"><rect width="1" height="1" fill="initial"/></svg>`)
+	if g.Geoms[0].Fill.Kind != pptx.FillSolid || g.Geoms[0].Fill.Color != "000000" {
+		t.Fatalf("fill:initial should be solid black, got %#v", g.Geoms[0].Fill)
+	}
+	// A symbol with display:none instantiated by <use> renders nothing.
+	g = mustConvert(t, `<svg viewBox="0 0 10 10"><defs><symbol id="s" display="none"><rect width="1" height="1" fill="red"/></symbol></defs><use href="#s"/></svg>`)
+	if len(g.Geoms) != 0 {
+		t.Fatalf("display:none symbol should render nothing, got %d", len(g.Geoms))
+	}
+	// A symbol with a clip-path (unsupported) instantiated by <use> falls back.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><defs><symbol id="s" clip-path="url(#c)"><rect width="1" height="1"/></symbol></defs><use href="#s"/></svg>`)); ok {
+		t.Error("symbol with clip-path should fall back")
+	}
+	// A whitespace-only tspan between visible runs is a word separator, not
+	// dropped.
+	g = mustConvert(t, `<svg viewBox="0 0 200 40"><text x="1" y="20" fill="blue" font-size="10"><tspan>Hello</tspan><tspan> </tspan><tspan>world</tspan></text></svg>`)
+	var joined string
+	for _, r := range g.Texts[0].Paragraphs[0].Runs {
+		joined += r.Text
+	}
+	if joined != "Hello world" {
+		t.Fatalf("whitespace-only tspan separator lost: %q", joined)
+	}
+	// A large tspan inside small parent text that would overflow the viewport
+	// falls back (vertical bounds use the max run size).
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 20"><text x="1" y="18" fill="red" font-size="5"><tspan font-size="200">Big</tspan></text></svg>`)); ok {
+		t.Error("oversized tspan overflowing the viewport should fall back")
+	}
+}

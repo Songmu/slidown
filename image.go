@@ -259,6 +259,14 @@ func capDimensions(w, h float64) (int, int) {
 	if math.IsNaN(h) || math.IsInf(h, 0) || h <= 0 {
 		h = 150
 	}
+	// Scale both axes up together so the smaller sub-pixel dimension rounds to
+	// at least 1px while preserving the aspect ratio (e.g. 0.1×100 -> 1×1000
+	// rather than 1×100).
+	if mn := math.Min(w, h); mn > 0 && mn < 1 {
+		s := 1 / mn
+		w *= s
+		h *= s
+	}
 	if mx := math.Max(w, h); mx > maxDimension {
 		f := maxDimension / mx
 		w *= f
