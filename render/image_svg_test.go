@@ -272,6 +272,19 @@ func TestRenderSVGExternalDTDRasterOnly(t *testing.T) {
 	if strings.Contains(slide, "asvg:svgBlip") {
 		t.Errorf("external-DTD SVG should not embed a native svgBlip: %s", slide)
 	}
+	// A lower/mixed-case system keyword (non-strict parsers accept it) must be
+	// detected too.
+	lc := `<!doctype svg system "theme.dtd"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="red" clip-path="url(#c)"/></svg>`
+	lcImg, err := slidown.NewImageFromCodeBlock(bytes.NewReader([]byte(lc)))
+	if err != nil {
+		t.Fatalf("NewImageFromCodeBlock: %v", err)
+	}
+	lcParts := renderSlidesToParts(t, slidown.Slides{
+		{Titles: []string{"dtd2"}, Images: []*slidown.Image{lcImg}},
+	})
+	if strings.Contains(string(lcParts["ppt/slides/slide1.xml"]), "asvg:svgBlip") {
+		t.Errorf("lowercase external-DTD SVG should not embed a native svgBlip")
+	}
 }
 
 // SVG text whose runs are separated by whitespace must keep that separator in

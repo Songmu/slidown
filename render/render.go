@@ -365,11 +365,13 @@ func piHref(inst string) string {
 }
 
 // directiveReferencesExternal reports whether an XML directive (e.g. a DOCTYPE)
-// declares an external DTD or entity via a SYSTEM or PUBLIC identifier. These
-// keywords are uppercase per the XML grammar; a match is treated conservatively
-// as an external dependency.
+// declares an external DTD or entity via a SYSTEM or PUBLIC identifier. The
+// keywords are uppercase per the XML grammar, but a non-strict parser may accept
+// other casings, so the match is case-insensitive; any match is treated
+// conservatively as an external dependency.
 func directiveReferencesExternal(d string) bool {
-	return strings.Contains(d, "SYSTEM") || strings.Contains(d, "PUBLIC")
+	u := strings.ToUpper(d)
+	return strings.Contains(u, "SYSTEM") || strings.Contains(u, "PUBLIC")
 }
 
 // isExternalRef reports whether a reference target is external (not a #fragment
