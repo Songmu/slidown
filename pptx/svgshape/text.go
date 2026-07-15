@@ -12,9 +12,9 @@ func (c *conv) text(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 	if !m.isTranslateOnly() {
 		return false
 	}
-	// xml:space="preserve" keeps runs of whitespace verbatim; the converter
-	// collapses whitespace, so fall back to preserve fidelity.
-	if strings.EqualFold(n.Attrs["xml:space"], "preserve") {
+	// xml:space="preserve" (inherited) keeps runs of whitespace verbatim; the
+	// converter collapses whitespace, so fall back to preserve fidelity.
+	if strings.EqualFold(st.get("xml:space"), "preserve") {
 		return false
 	}
 	// PowerPoint text runs can't render a glyph stroke, so any visible stroke on
@@ -139,12 +139,17 @@ func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]
 		if len(ch.Children) > 0 {
 			return nil, false
 		}
-		// xml:space="preserve" on a tspan changes whitespace handling.
-		if strings.EqualFold(ch.Attrs["xml:space"], "preserve") {
+		// Validate the tspan's attributes the same way as any element so an
+		// unsupported presentation attribute (e.g. font-weight) forces fallback.
+		if hasUnsupportedAttrs(ch) {
 			return nil, false
 		}
 		child, ok := c.resolveStyle(ch, st)
 		if !ok {
+			return nil, false
+		}
+		// xml:space="preserve" (inherited) changes whitespace handling.
+		if strings.EqualFold(child.get("xml:space"), "preserve") {
 			return nil, false
 		}
 		// A tspan hidden via display/visibility renders nothing.

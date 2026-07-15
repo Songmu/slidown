@@ -10,8 +10,10 @@ package render
 
 import (
 	"bytes"
+	"encoding/xml"
 	"image"
 	"image/png"
+	"strings"
 
 	"github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/pptx"
@@ -270,30 +272,36 @@ func buildSVGPicture(img *slidown.Image, x, y, w, h int64) *pptx.Picture {
 }
 
 // svgReferencesExternalResource reports whether the SVG references a resource
-// the package can't resolve after embedding: an <image>/<use>/<feImage> with a
-// non-data, non-fragment href.
+// the package can't resolve after embedding: a resource-bearing element
+// (<image>, <use>, <feImage>) whose href is not a fragment (#id) or data: URI.
+// It tokenizes the XML so that hrefs on unrelated elements (e.g. <a>) or plain
+// text don't cause false positives.
 func svgReferencesExternalResource(b []byte) bool {
-	lower := bytes.ToLower(b)
-	for _, attr := range [][]byte{[]byte("href"), []byte("xlink:href")} {
-		i := 0
-		for {
-			idx := bytes.Index(lower[i:], attr)
-			if idx < 0 {
-				break
+	dec := xml.NewDecoder(bytes.NewReader(b))
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return false
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		switch strings.ToLower(se.Name.Local) {
+		case "image", "use", "feimage":
+		default:
+			continue
+		}
+		for _, a := range se.Attr {
+			if !strings.EqualFold(a.Name.Local, "href") {
+				continue
 			}
-			i += idx + len(attr)
-			rest := bytes.TrimLeft(lower[i:], " =\"'")
-			if len(rest) == 0 {
-				break
-			}
-			// A fragment (#id) or data: URI is self-contained; anything else is
-			// an external/relative reference.
-			if rest[0] != '#' && !bytes.HasPrefix(rest, []byte("data:")) {
+			v := strings.TrimSpace(a.Value)
+			if v != "" && !strings.HasPrefix(v, "#") && !strings.HasPrefix(strings.ToLower(v), "data:") {
 				return true
 			}
 		}
 	}
-	return false
 }
 
 // transparentPNG returns a 1x1 fully transparent PNG used as a raster fallback

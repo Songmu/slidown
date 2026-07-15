@@ -513,3 +513,20 @@ func TestReviewBatch6(t *testing.T) {
 		}
 	}
 }
+
+func TestReviewBatch7(t *testing.T) {
+	// color:currentColor inherits the parent color; a descendant fill:currentColor
+	// then resolves to that color rather than black.
+	g := mustConvert(t, `<svg viewBox="0 0 10 10"><g color="#ff0000"><g color="currentColor"><rect width="1" height="1" fill="currentColor"/></g></g></svg>`)
+	if g.Geoms[0].Fill.Color != "ff0000" {
+		t.Fatalf("nested currentColor should resolve to inherited color, got %s", g.Geoms[0].Fill.Color)
+	}
+	// xml:space=preserve on an ancestor forces fallback for descendant text.
+	if _, ok := Convert([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" xml:space="preserve"><g><text x="1" y="10" fill="red" font-size="10">a   b</text></g></svg>`)); ok {
+		t.Error("inherited xml:space=preserve should fall back")
+	}
+	// An unsupported presentation attribute on a tspan forces fallback.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10"><tspan font-weight="bold">Hi</tspan></text></svg>`)); ok {
+		t.Error("tspan font-weight should fall back")
+	}
+}

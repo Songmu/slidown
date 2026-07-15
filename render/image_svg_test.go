@@ -173,3 +173,47 @@ func TestSVGPlaceholderBinding(t *testing.T) {
 		t.Errorf("expected both PNG and SVG media parts; png=%v svg=%v", hasPNG, hasSVG)
 	}
 }
+
+// An SVG that falls back but references an external raster image is embedded as
+// a raster-only picture (no native svgBlip), since the embedded SVG couldn't
+// resolve the external resource.
+func TestRenderSVGExternalResourceRasterOnly(t *testing.T) {
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><image href="asset.png" width="100" height="100"/></svg>`
+	parts := renderSlidesToParts(t, slidown.Slides{
+		{Titles: []string{"ext"}, Images: []*slidown.Image{newSVGImage(t, svg)}},
+	})
+	slide := string(parts["ppt/slides/slide1.xml"])
+	if !strings.Contains(slide, "<p:pic>") {
+		t.Errorf("expected a picture for the external-resource SVG")
+	}
+	if strings.Contains(slide, "asvg:svgBlip") {
+		t.Errorf("did not expect a native SVG blip for an external-resource SVG")
+	}
+	for name := range parts {
+		if strings.HasPrefix(name, "ppt/media/") && strings.HasSuffix(name, ".svg") {
+			t.Errorf("did not expect an embedded .svg media part: %s", name)
+		}
+	}
+}
+
+// A hyperlink or <desc> containing "href" text must not be misclassified as an
+// external resource: the native SVG (svgBlip + .svg part) is preserved.
+func TestRenderSVGHyperlinkNotExternal(t *testing.T) {
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><desc>see href</desc><a href="https://example.com"><rect width="10" height="10" fill="red"/></a></svg>`
+	parts := renderSlidesToParts(t, slidown.Slides{
+		{Titles: []string{"link"}, Images: []*slidown.Image{newSVGImage(t, svg)}},
+	})
+	slide := string(parts["ppt/slides/slide1.xml"])
+	if !strings.Contains(slide, "asvg:svgBlip") {
+		t.Errorf("hyperlink/desc href must not be treated as external; native SVG should be kept: %s", slide)
+	}
+	var hasSVG bool
+	for name := range parts {
+		if strings.HasPrefix(name, "ppt/media/") && strings.HasSuffix(name, ".svg") {
+			hasSVG = true
+		}
+	}
+	if !hasSVG {
+		t.Errorf("expected an embedded .svg media part for the native SVG")
+	}
+}

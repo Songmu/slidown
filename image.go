@@ -447,9 +447,10 @@ func (i *Image) parseSVG() (*oksvg.SvgIcon, error) {
 	return icon, nil
 }
 
-// svgRootSizeAttr matches a width= or height= attribute on the root svg tag,
-// with either single- or double-quoted values.
-var svgRootSizeAttr = regexp.MustCompile(`(?i)\b(width|height)\s*=\s*(?:"([^"]*)"|'([^']*)')`)
+// svgRootSizeAttr matches a width= or height= attribute on the root svg tag.
+// The leading whitespace (group 1) keeps it from matching hyphenated names like
+// stroke-width; values may be single- or double-quoted.
+var svgRootSizeAttr = regexp.MustCompile(`(?i)(\s)(width|height)\s*=\s*(?:"([^"]*)"|'([^']*)')`)
 
 // normalizeSVGRootSize rewrites the root <svg> element's width/height values to
 // plain pixel numbers (resolving absolute units) or drops them (for
@@ -469,15 +470,16 @@ func normalizeSVGRootSize(b []byte) ([]byte, bool) {
 	tag := b[start : end+1]
 	newTag := svgRootSizeAttr.ReplaceAllFunc(tag, func(m []byte) []byte {
 		sub := svgRootSizeAttr.FindSubmatch(m)
-		name := string(sub[1])
-		val := string(sub[2])
+		ws := string(sub[1])
+		name := string(sub[2])
+		val := string(sub[3])
 		if val == "" {
-			val = string(sub[3])
+			val = string(sub[4])
 		}
 		if px, ok := parseCSSLength(val); ok {
-			return []byte(fmt.Sprintf(`%s="%g"`, name, px))
+			return []byte(fmt.Sprintf(`%s%s="%g"`, ws, name, px))
 		}
-		return nil // drop percentage/unknown-unit sizes
+		return []byte(ws) // drop percentage/unknown-unit sizes, keep the space
 	})
 	out := make([]byte, 0, len(b))
 	out = append(out, b[:start]...)

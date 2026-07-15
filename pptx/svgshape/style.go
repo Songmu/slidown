@@ -16,8 +16,8 @@ type cssRule struct {
 	decl style
 }
 
-var inheritedProps = map[string]bool{"fill": true, "stroke": true, "opacity": true, "fill-opacity": true, "stroke-opacity": true, "stroke-width": true, "stroke-linecap": true, "stroke-linejoin": true, "stroke-dasharray": true, "stroke-miterlimit": true, "fill-rule": true, "font-size": true, "font-family": true, "text-anchor": true, "color": true, "display": true, "visibility": true}
-var paintProps = []string{"fill", "stroke", "opacity", "fill-opacity", "stroke-opacity", "stroke-width", "stroke-linecap", "stroke-linejoin", "stroke-dasharray", "stroke-miterlimit", "fill-rule", "font-size", "font-family", "text-anchor", "color", "display", "visibility"}
+var inheritedProps = map[string]bool{"fill": true, "stroke": true, "opacity": true, "fill-opacity": true, "stroke-opacity": true, "stroke-width": true, "stroke-linecap": true, "stroke-linejoin": true, "stroke-dasharray": true, "stroke-miterlimit": true, "fill-rule": true, "font-size": true, "font-family": true, "text-anchor": true, "color": true, "display": true, "visibility": true, "xml:space": true}
+var paintProps = []string{"fill", "stroke", "opacity", "fill-opacity", "stroke-opacity", "stroke-width", "stroke-linecap", "stroke-linejoin", "stroke-dasharray", "stroke-miterlimit", "fill-rule", "font-size", "font-family", "text-anchor", "color", "display", "visibility", "xml:space"}
 
 func defaultStyle() style {
 	return style{"fill": "black", "stroke": "none", "opacity": "1", "fill-opacity": "1", "stroke-opacity": "1", "stroke-width": "1", "stroke-linecap": "butt", "stroke-linejoin": "miter", "fill-rule": "nonzero", "font-size": "16", "text-anchor": "start", "color": "black"}
@@ -147,6 +147,7 @@ func (c *conv) resolveStyle(n *node, inherited style) (style, bool) {
 	// element/group, and display applies only to the element it is set on.
 	st["opacity"] = "1"
 	delete(st, "display")
+	parentColor := inherited.get("color")
 	for _, p := range paintProps {
 		if v := n.Attrs[p]; v != "" {
 			st[p] = v
@@ -168,8 +169,13 @@ func (c *conv) resolveStyle(n *node, inherited style) (style, bool) {
 			st[k] = v
 		}
 	}
+	// color:currentColor means "inherit the parent's color"; resolve it first so
+	// other paint properties referencing currentColor pick up the right value.
+	if strings.EqualFold(st["color"], "currentColor") {
+		st["color"] = parentColor
+	}
 	for k, v := range st {
-		if strings.EqualFold(v, "currentColor") {
+		if k != "color" && strings.EqualFold(v, "currentColor") {
 			st[k] = st["color"]
 		}
 	}
