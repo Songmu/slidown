@@ -285,7 +285,10 @@ type Shape struct {
 	// NoInset, when true, emits a zero-inset text body (lIns/rIns/tIns/bIns=0)
 	// so text placed at explicit coordinates (e.g. converted SVG text) is not
 	// shifted by DrawingML's default insets.
-	NoInset    bool
+	NoInset bool
+	// NoWrap, when true, sets the text body to wrap="none" so single-line text
+	// (e.g. converted SVG text) is not wrapped across multiple lines.
+	NoWrap     bool
 	Paragraphs []*Paragraph
 }
 

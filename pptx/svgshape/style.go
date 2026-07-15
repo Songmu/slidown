@@ -174,6 +174,12 @@ func (c *conv) resolveStyle(n *node, inherited style) (style, bool) {
 	if strings.EqualFold(st["color"], "currentColor") {
 		st["color"] = parentColor
 	}
+	// Resolve the CSS-wide "inherit" keyword to the parent's value.
+	for k, v := range st {
+		if strings.EqualFold(v, "inherit") {
+			st[k] = inherited.get(k)
+		}
+	}
 	for k, v := range st {
 		if k != "color" && strings.EqualFold(v, "currentColor") {
 			st[k] = st["color"]

@@ -2,6 +2,7 @@ package svgshape
 
 import (
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/Songmu/slidown/pptx"
@@ -28,6 +29,12 @@ func (c *conv) gradient(id string, seen map[string]bool) (*pptx.Gradient, bool) 
 	seen[id] = true
 	n := c.defs[id]
 	if n == nil || (n.Name != "lineargradient" && n.Name != "radialgradient") {
+		return nil, false
+	}
+	// Gradient definitions live under <defs> and never reach walk's attribute
+	// validation, so check here that they carry no rendering-affecting
+	// attributes the converter can't honor (e.g. color-interpolation).
+	if hasUnsupportedAttrs(n) {
 		return nil, false
 	}
 	if gt := n.Attrs["gradienttransform"]; gt != "" {
@@ -133,8 +140,13 @@ func (c *conv) gradient(id string, seen map[string]bool) (*pptx.Gradient, bool) 
 func parseGradCoord(s string) (float64, bool) {
 	s = strings.TrimSpace(s)
 	if strings.HasSuffix(s, "%") {
-		v, ok := parseUnit(s, 0)
-		return v, ok
+		// Parse the raw percentage without clamping so the representability
+		// check can reject out-of-range coordinates like -100% or 200%.
+		v, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(s, "%")), 64)
+		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+			return 0, false
+		}
+		return v / 100, true
 	}
 	return parseLength(s, false)
 }
@@ -150,6 +162,9 @@ func (c *conv) gradientStops(n *node) ([]pptx.GradientStop, bool) {
 	for _, ch := range n.Children {
 		if ch.Name != "stop" {
 			continue
+		}
+		if hasUnsupportedAttrs(ch) {
+			return nil, false
 		}
 		st, ok := c.resolveStyle(ch, base)
 		if !ok {

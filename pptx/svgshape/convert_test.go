@@ -530,3 +530,28 @@ func TestReviewBatch7(t *testing.T) {
 		t.Error("tspan font-weight should fall back")
 	}
 }
+
+func TestReviewBatch8(t *testing.T) {
+	// visibility:inherit under a hidden parent stays hidden.
+	g := mustConvert(t, `<svg viewBox="0 0 10 10"><g visibility="hidden"><rect width="1" height="1" fill="red" visibility="inherit"/></g><rect width="1" height="1" fill="green"/></svg>`)
+	if len(g.Geoms) != 1 || g.Geoms[0].Fill.Color != "008000" {
+		t.Fatalf("visibility:inherit under hidden parent should stay hidden: %#v", g.Geoms)
+	}
+	// SVG text is emitted with no-wrap.
+	g = mustConvert(t, `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="red" font-size="10">Hi</text></svg>`)
+	if !g.Texts[0].NoWrap {
+		t.Fatal("SVG text should be no-wrap")
+	}
+
+	for name, svg := range map[string]string{
+		"gradient color-interpolation": `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg" color-interpolation="linearRGB"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`,
+		"gradient coord out of range":  `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg" x1="-100%" x2="200%"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`,
+		"stop unsupported attr":        `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg"><stop offset="0" stop-color="red" color-interpolation="linearRGB"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`,
+		"negative font-size":           `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="red" font-size="-10">Hi</text></svg>`,
+		"negative tspan font-size":     `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="red" font-size="10"><tspan font-size="-5">Hi</tspan></text></svg>`,
+	} {
+		if _, ok := Convert([]byte(svg)); ok {
+			t.Errorf("%s: expected fallback", name)
+		}
+	}
+}

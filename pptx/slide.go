@@ -451,10 +451,14 @@ func renderShape(sh *Shape, id int, relIdx *int, rels *[]slideRel) string {
 	}
 	b.WriteString(`</p:spPr>`)
 
-	bodyPr := `<a:bodyPr/>`
-	if sh.NoInset {
-		bodyPr = `<a:bodyPr lIns="0" tIns="0" rIns="0" bIns="0"/>`
+	var bodyAttrs string
+	if sh.NoWrap {
+		bodyAttrs += ` wrap="none"`
 	}
+	if sh.NoInset {
+		bodyAttrs += ` lIns="0" tIns="0" rIns="0" bIns="0"`
+	}
+	bodyPr := `<a:bodyPr` + bodyAttrs + `/>`
 	b.WriteString(`<p:txBody>` + bodyPr + `<a:lstStyle/>`)
 	if len(sh.Paragraphs) == 0 {
 		b.WriteString(`<a:p><a:endParaRPr/></a:p>`)

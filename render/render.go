@@ -273,34 +273,72 @@ func buildSVGPicture(img *slidown.Image, x, y, w, h int64) *pptx.Picture {
 
 // svgReferencesExternalResource reports whether the SVG references a resource
 // the package can't resolve after embedding: a resource-bearing element
-// (<image>, <use>, <feImage>) whose href is not a fragment (#id) or data: URI.
-// It tokenizes the XML so that hrefs on unrelated elements (e.g. <a>) or plain
-// text don't cause false positives.
+// (<image>, <use>, <feImage>) with an external href, or an external url(...)
+// reference in any attribute value or <style> text. Fragment (#id) and data:
+// URIs are self-contained and ignored. It tokenizes the XML so unrelated text
+// or hrefs on other elements don't cause false positives.
 func svgReferencesExternalResource(b []byte) bool {
 	dec := xml.NewDecoder(bytes.NewReader(b))
+	inStyle := false
 	for {
 		tok, err := dec.Token()
 		if err != nil {
 			return false
 		}
-		se, ok := tok.(xml.StartElement)
-		if !ok {
-			continue
-		}
-		switch strings.ToLower(se.Name.Local) {
-		case "image", "use", "feimage":
-		default:
-			continue
-		}
-		for _, a := range se.Attr {
-			if !strings.EqualFold(a.Name.Local, "href") {
-				continue
+		switch t := tok.(type) {
+		case xml.StartElement:
+			name := strings.ToLower(t.Name.Local)
+			inStyle = name == "style"
+			resource := name == "image" || name == "use" || name == "feimage"
+			for _, a := range t.Attr {
+				if resource && strings.EqualFold(a.Name.Local, "href") {
+					if isExternalRef(a.Value) {
+						return true
+					}
+				}
+				if hasExternalURLRef(a.Value) {
+					return true
+				}
 			}
-			v := strings.TrimSpace(a.Value)
-			if v != "" && !strings.HasPrefix(v, "#") && !strings.HasPrefix(strings.ToLower(v), "data:") {
+		case xml.CharData:
+			if inStyle && hasExternalURLRef(string(t)) {
 				return true
 			}
+		case xml.EndElement:
+			inStyle = false
 		}
+	}
+}
+
+// isExternalRef reports whether a reference target is external (not a #fragment
+// or data: URI).
+func isExternalRef(v string) bool {
+	v = strings.TrimSpace(v)
+	return v != "" && !strings.HasPrefix(v, "#") && !strings.HasPrefix(strings.ToLower(v), "data:")
+}
+
+// hasExternalURLRef reports whether s contains a url(...) reference whose target
+// is external (not a #fragment or data: URI).
+func hasExternalURLRef(s string) bool {
+	lower := strings.ToLower(s)
+	for {
+		i := strings.Index(lower, "url(")
+		if i < 0 {
+			return false
+		}
+		rest := lower[i+4:]
+		s = s[i+4:]
+		lower = rest
+		j := strings.IndexByte(rest, ')')
+		if j < 0 {
+			return false
+		}
+		target := strings.Trim(strings.TrimSpace(rest[:j]), "'\"")
+		if target != "" && !strings.HasPrefix(target, "#") && !strings.HasPrefix(target, "data:") {
+			return true
+		}
+		lower = lower[j+1:]
+		s = s[j+1:]
 	}
 }
 

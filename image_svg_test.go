@@ -247,3 +247,17 @@ func TestSVGDimensionsUnits(t *testing.T) {
 		})
 	}
 }
+
+func TestSVGExplicitZeroSizeSkipped(t *testing.T) {
+	img, err := newImageFromBuffer(bytes.NewReader([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="0" height="100" viewBox="0 0 100 100"></svg>`)))
+	if err != nil {
+		t.Fatalf("newImageFromBuffer: %v", err)
+	}
+	w, h, err := img.Dimensions()
+	if err != nil {
+		t.Fatalf("Dimensions: %v", err)
+	}
+	if w != 0 || h != 0 {
+		t.Fatalf("explicit zero size should report 0x0, got %dx%d", w, h)
+	}
+}

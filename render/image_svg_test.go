@@ -217,3 +217,20 @@ func TestRenderSVGHyperlinkNotExternal(t *testing.T) {
 		t.Errorf("expected an embedded .svg media part for the native SVG")
 	}
 }
+
+// An unsupported SVG that references an external paint via url(file#id) is
+// embedded raster-only (no native svgBlip), since the embedded SVG can't
+// resolve the external file.
+func TestRenderSVGExternalURLRasterOnly(t *testing.T) {
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="url(paints.svg#g)" clip-path="url(#c)"/></svg>`
+	parts := renderSlidesToParts(t, slidown.Slides{
+		{Titles: []string{"ext"}, Images: []*slidown.Image{newSVGImage(t, svg)}},
+	})
+	slide := string(parts["ppt/slides/slide1.xml"])
+	if !strings.Contains(slide, "<p:pic>") {
+		t.Errorf("expected a picture for the external-url SVG")
+	}
+	if strings.Contains(slide, "asvg:svgBlip") {
+		t.Errorf("did not expect a native SVG blip for an external-url SVG")
+	}
+}

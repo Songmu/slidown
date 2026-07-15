@@ -211,6 +211,12 @@ func (i *Image) Dimensions() (w, h int, err error) {
 		return i.width, i.height, nil
 	}
 	if i.IsSVG() {
+		// An explicit zero width/height disables rendering; report a zero size
+		// so the render pipeline skips the image entirely.
+		if svgHasExplicitZeroSize(i.b) {
+			i.width, i.height, i.dimensionsOK = 0, 0, true
+			return 0, 0, nil
+		}
 		// Prefer the SVG's declared width/height (its intrinsic size); the
 		// viewBox is only the coordinate window and may have a different aspect
 		// ratio, which would mis-size the native fallback picture.
@@ -234,6 +240,19 @@ func (i *Image) Dimensions() (w, h int, err error) {
 	}
 	i.width, i.height, i.dimensionsOK = w, h, true
 	return w, h, nil
+}
+
+// svgHasExplicitZeroSize reports whether the root <svg> sets width or height to
+// an explicit zero, which per SVG disables rendering of the element.
+func svgHasExplicitZeroSize(b []byte) bool {
+	ws, hs, _ := svgRootSize(b)
+	if v, ok := parseCSSLength(ws); ok && v == 0 {
+		return true
+	}
+	if v, ok := parseCSSLength(hs); ok && v == 0 {
+		return true
+	}
+	return false
 }
 
 // svgExplicitSize returns the SVG's intrinsic width and height in px-equivalent

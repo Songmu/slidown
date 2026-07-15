@@ -31,7 +31,9 @@ func (c *conv) text(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 	xemu := round((p.x - c.vbMinX) * emuPerUnit)
 	yemu := round((p.y - c.vbMinY) * emuPerUnit)
 	fs, ok := parseLength(st.get("font-size"), false)
-	if !ok {
+	if !ok || fs <= 0 {
+		// A non-positive font size is invalid and would emit a negative OOXML
+		// extent; fall back.
 		return false
 	}
 	// The text box starts at x and extends rightward, which only matches
@@ -91,18 +93,27 @@ func (c *conv) text(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 	if len(runs) == 0 {
 		return true
 	}
-	// A PowerPoint group doesn't clip its children, so a text box positioned
-	// outside the viewport would render outside the placed image. Fall back
-	// rather than clamp when the box origin/extent leaves the viewBox.
+	// A PowerPoint group doesn't clip its children, so a text box positioned or
+	// sized outside the viewport would render outside the placed image. SVG text
+	// is single-line (no wrap); estimate its width so it can't wrap or overflow
+	// the viewport, and fall back otherwise.
 	boxY := yemu - round(fs*emuPerUnit)
 	boxH := round(fs * emuPerUnit * 1.5)
-	w := c.chW - xemu
 	const tol = 16
-	if xemu < -tol || xemu > c.chW+tol || boxY < -tol || boxY+boxH > c.chH+tol || w <= 0 {
+	var chars int
+	for _, r := range runs {
+		chars += len([]rune(r.Text))
+	}
+	// Approximate advance width per character (~0.6em) to bound single-line text.
+	estW := round(float64(chars) * fs * 0.6 * emuPerUnit)
+	if estW <= 0 {
+		estW = round(fs * emuPerUnit)
+	}
+	if xemu < -tol || boxY < -tol || boxY+boxH > c.chH+tol || xemu+estW > c.chW+tol {
 		return false
 	}
 	c.textCount++
-	sh := &pptx.Shape{Name: shapeName(n, "Text", c.textCount), X: xemu, Y: boxY, W: w, H: boxH, NoInset: true, Paragraphs: []*pptx.Paragraph{{Align: align, Runs: runs}}}
+	sh := &pptx.Shape{Name: shapeName(n, "Text", c.textCount), X: xemu, Y: boxY, W: estW, H: boxH, NoInset: true, NoWrap: true, Paragraphs: []*pptx.Paragraph{{Align: align, Runs: runs}}}
 	g.Texts = append(g.Texts, sh)
 	g.Children = append(g.Children, pptx.GroupChild{Text: sh})
 	return true
@@ -163,7 +174,8 @@ func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]
 		cpt := pt
 		if fs := child.get("font-size"); fs != "" {
 			f, ok := parseLength(fs, false)
-			if !ok {
+			if !ok || f <= 0 {
+				// Non-positive font size is invalid; fall back.
 				return nil, false
 			}
 			cpt = f * 0.75
