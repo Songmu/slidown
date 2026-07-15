@@ -716,6 +716,42 @@ func TestReviewBatch12(t *testing.T) {
 	}
 }
 
+func TestReviewBatch18(t *testing.T) {
+	// A sharp miter corner whose apex points past the viewport edge leaks
+	// outside the non-clipping group; fall back.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><polyline points="15,2 1,50 15,98" fill="none" stroke="black" stroke-width="2"/></svg>`)); ok {
+		t.Error("sharp miter spike near the edge should fall back")
+	}
+	// The same corner comfortably inside the viewport still converts (the actual
+	// miter apex, not a worst-case, is used).
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><polyline points="30,2 16,50 30,98" fill="none" stroke="black" stroke-width="2"/></svg>`)); !ok {
+		t.Error("inset miter corner should convert")
+	}
+	// Under an SVG-namespaced root, an element that resets to no namespace
+	// (xmlns="") is not SVG content and renders nothing.
+	g := mustConvert(t, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect xmlns="" width="10" height="10" fill="red"/></svg>`)
+	if len(g.Geoms) != 0 {
+		t.Fatalf("xmlns=\"\" rect should not render, got %d geoms", len(g.Geoms))
+	}
+	// A prefixed svg:fill is not the unqualified presentation attribute, so it's
+	// ignored and the default (black) fill applies.
+	g = mustConvert(t, `<svg xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="1" height="1" svg:fill="red"/></svg>`)
+	if g.Geoms[0].Fill.Color != "000000" {
+		t.Fatalf("prefixed svg:fill must be ignored (default black), got %#v", g.Geoms[0].Fill)
+	}
+	// stop-color:initial restores the initial value (black), not the red
+	// presentation attribute; the gradient's first stop is black.
+	g = mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="red" style="stop-color:initial"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)
+	if g.Geoms[0].Fill.Kind != pptx.FillGradient || g.Geoms[0].Fill.Gradient.Stops[0].Color != "000000" {
+		t.Fatalf("stop-color:initial should be black, got %#v", g.Geoms[0].Fill.Gradient)
+	}
+	// An invalid rgb() component (NaN) is not a valid color; the declaration is
+	// rejected and the element falls back.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect width="1" height="1" fill="rgb(NaN%,0%,0%)"/></svg>`)); ok {
+		t.Error("rgb() with a NaN component should fall back")
+	}
+}
+
 func TestReviewBatch17(t *testing.T) {
 	// A DOCTYPE may carry ATTLIST defaults or an external DTD the parser doesn't
 	// apply; converting could differ from a faithful render, so fall back.

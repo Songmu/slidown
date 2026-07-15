@@ -312,24 +312,41 @@ func svgRootAttr(b []byte, name string) string {
 // an explicit zero (including "0%"), which per SVG disables rendering.
 func svgHasExplicitZeroSize(b []byte) bool {
 	ws, hs, _ := svgRootSize(b)
-	isZero := func(s string) bool {
-		s = strings.TrimSpace(s)
-		// Zero is unit-independent, so strip any trailing unit (%, em, rem, ex,
-		// px, ...) before checking the numeric value: parseCSSLength rejects
-		// relative units and would otherwise miss "0em"/"0rem".
-		n := len(s)
-		for n > 0 {
-			c := s[n-1]
-			if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '%' {
-				n--
-				continue
-			}
-			break
-		}
-		v, err := strconv.ParseFloat(strings.TrimSpace(s[:n]), 64)
-		return err == nil && v == 0
+	return isExplicitZeroLength(ws) || isExplicitZeroLength(hs)
+}
+
+// cssLengthUnits is the set of unit suffixes recognized on a length. A value
+// with any other (unknown) suffix is an invalid declaration, not a zero.
+var cssLengthUnits = map[string]bool{
+	"": true, "%": true,
+	"px": true, "pt": true, "pc": true, "mm": true, "cm": true, "in": true,
+	"em": true, "rem": true, "ex": true, "ch": true, "q": true,
+	"vw": true, "vh": true, "vmin": true, "vmax": true,
+}
+
+// isExplicitZeroLength reports whether s is an explicit zero length: a unitless
+// zero, zero percent, or zero in a recognized CSS length unit. An unknown or
+// malformed unit (e.g. "0foo", "0e") is an invalid declaration and returns
+// false so the viewBox/default size is used instead of dropping the SVG.
+func isExplicitZeroLength(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
 	}
-	return isZero(ws) || isZero(hs)
+	n := len(s)
+	for n > 0 {
+		c := s[n-1]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '%' {
+			n--
+			continue
+		}
+		break
+	}
+	if !cssLengthUnits[strings.ToLower(strings.TrimSpace(s[n:]))] {
+		return false
+	}
+	v, err := strconv.ParseFloat(strings.TrimSpace(s[:n]), 64)
+	return err == nil && v == 0
 }
 
 // svgExplicitSize returns the SVG's intrinsic width and height in px-equivalent
@@ -649,11 +666,10 @@ func normalizeSVGRootSize(b []byte) ([]byte, bool) {
 	if start < 0 {
 		return nil, false
 	}
-	end := bytes.IndexByte(b[start:], '>')
+	end := tagEnd(b, start)
 	if end < 0 {
 		return nil, false
 	}
-	end += start
 	tag := b[start : end+1]
 	newTag := svgRootSizeAttr.ReplaceAllFunc(tag, func(m []byte) []byte {
 		sub := svgRootSizeAttr.FindSubmatch(m)
@@ -673,6 +689,29 @@ func normalizeSVGRootSize(b []byte) ([]byte, bool) {
 	out = append(out, newTag...)
 	out = append(out, b[end+1:]...)
 	return out, true
+}
+
+// tagEnd returns the index of the '>' that closes the start tag beginning at
+// start, ignoring any '>' inside a single- or double-quoted attribute value
+// (which is valid XML). Returns -1 if no unquoted '>' is found.
+func tagEnd(b []byte, start int) int {
+	var quote byte
+	for i := start; i < len(b); i++ {
+		c := b[i]
+		if quote != 0 {
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch c {
+		case '"', '\'':
+			quote = c
+		case '>':
+			return i
+		}
+	}
+	return -1
 }
 
 func (i *Image) Image() (image.Image, error) {

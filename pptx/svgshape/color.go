@@ -2,6 +2,7 @@ package svgshape
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -39,7 +40,7 @@ func parseColor(s string) (string, bool) {
 			p = strings.TrimSpace(p)
 			if strings.HasSuffix(p, "%") {
 				v, err := strconv.ParseFloat(strings.TrimSuffix(p, "%"), 64)
-				if err != nil {
+				if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
 					return "", false
 				}
 				vals[i] = int(v*255/100 + 0.5)

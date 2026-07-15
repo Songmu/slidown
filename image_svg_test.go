@@ -333,6 +333,49 @@ func TestSVGExplicitZeroSizeSkipped(t *testing.T) {
 	}
 }
 
+func TestSVGInvalidUnitNotZeroSize(t *testing.T) {
+	// An unknown/malformed unit is an invalid dimension, not an explicit zero,
+	// so the SVG uses its viewBox size rather than being dropped.
+	for _, svg := range []string{
+		`<svg xmlns="http://www.w3.org/2000/svg" width="0foo" height="100" viewBox="0 0 100 50"></svg>`,
+		`<svg xmlns="http://www.w3.org/2000/svg" width="0e" height="100" viewBox="0 0 100 50"></svg>`,
+	} {
+		img, err := newImageFromBuffer(bytes.NewReader([]byte(svg)))
+		if err != nil {
+			t.Fatalf("newImageFromBuffer: %v", err)
+		}
+		w, h, err := img.Dimensions()
+		if err != nil {
+			t.Fatalf("Dimensions: %v", err)
+		}
+		if w == 0 || h == 0 {
+			t.Fatalf("invalid width should fall back to viewBox, got %dx%d for %q", w, h, svg)
+		}
+	}
+}
+
+func TestSVGRasterQuotedGtInAttr(t *testing.T) {
+	// A '>' inside a quoted attribute must not be treated as the tag end, so the
+	// non-pixel root size is still normalized and the SVG rasterizes.
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" data-note=">" width="1in" height="1in" viewBox="0 0 96 96"><rect width="96" height="96" fill="red"/></svg>`
+	img, err := newImageFromBuffer(bytes.NewReader([]byte(svg)))
+	if err != nil {
+		t.Fatalf("newImageFromBuffer: %v", err)
+	}
+	pngBytes, err := img.RasterPNG(1)
+	if err != nil {
+		t.Fatalf("RasterPNG: %v", err)
+	}
+	decoded, err := png.Decode(bytes.NewReader(pngBytes))
+	if err != nil {
+		t.Fatalf("png.Decode: %v", err)
+	}
+	// The red fill must be present (not a transparent placeholder).
+	if _, _, _, a := decoded.At(48, 48).RGBA(); a == 0 {
+		t.Errorf("expected a rendered fill, got a transparent placeholder")
+	}
+}
+
 func TestSVGNamespacedSizeAttrIgnored(t *testing.T) {
 	// A namespaced foo:width shares Name.Local "width" but must not affect the
 	// intrinsic size; the real dimensions come from viewBox.

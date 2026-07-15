@@ -122,6 +122,7 @@ func parseXML(data []byte) (*node, error) {
 	dec := xml.NewDecoder(bytes.NewReader(data))
 	var stack []*node
 	var root *node
+	var rootNS string
 	nodeCount := 0
 	for {
 		tok, err := dec.Token()
@@ -150,17 +151,28 @@ func parseXML(data []byte) (*node, error) {
 			if canon, known := canonicalSVGElement[n.Name]; known && t.Name.Local != canon {
 				n.badCase = true
 			}
-			// Elements in a foreign namespace are not SVG content and are not
-			// rendered; mark them so the walk skips their subtree.
-			n.foreign = t.Name.Space != "" && t.Name.Space != svgNS
+			if len(stack) == 0 {
+				// The root establishes the document's namespace mode: either the
+				// SVG namespace or (leniently) no namespace. A root in any other
+				// namespace isn't SVG content.
+				rootNS = t.Name.Space
+				n.foreign = t.Name.Space != "" && t.Name.Space != svgNS
+			} else {
+				// Descendants must stay in the root's namespace mode. An element
+				// that switches namespace (e.g. <rect xmlns=""> under an
+				// SVG-namespaced root) is not SVG content and is not rendered.
+				n.foreign = t.Name.Space != rootNS
+			}
 			for _, a := range t.Attr {
 				key := strings.ToLower(a.Name.Local)
 				switch {
-				case a.Name.Space == "" || a.Name.Space == svgNS:
-					// Attribute names are case-sensitive too. A known SVG
-					// attribute in the wrong case (e.g. FILL, WIDTH, VIEWBOX) is
-					// unknown; keep it under its raw name so hasUnsupportedAttrs
-					// forces the fallback instead of silently activating it.
+				case a.Name.Space == "":
+					// SVG presentation attributes are unqualified (no namespace);
+					// a prefixed attribute such as svg:fill is not one. Attribute
+					// names are also case-sensitive: a known SVG attribute in the
+					// wrong case (e.g. FILL, WIDTH, VIEWBOX) is unknown, so keep
+					// it under its raw name to force the fallback via
+					// hasUnsupportedAttrs rather than silently activating it.
 					if canon, known := canonicalSVGAttr[key]; known && a.Name.Local != canon {
 						n.Attrs[a.Name.Local] = strings.TrimSpace(a.Value)
 					} else {
@@ -441,6 +453,134 @@ func cubicAt(p0, p1, p2, p3, t float64) float64 {
 	return u*u*u*p0 + 3*u*u*t*p1 + 3*u*t*t*p2 + t*t*t*p3
 }
 
+// fpoint is a floating-point 2D point/vector used for stroke-join geometry.
+type fpoint struct{ x, y float64 }
+
+func fp(p pptx.PathPoint) fpoint { return fpoint{float64(p.X), float64(p.Y)} }
+func fsub(a, b fpoint) fpoint    { return fpoint{a.x - b.x, a.y - b.y} }
+func funit(v fpoint) (fpoint, bool) {
+	m := math.Hypot(v.x, v.y)
+	if m < 1e-9 {
+		return fpoint{}, false
+	}
+	return fpoint{v.x / m, v.y / m}, true
+}
+
+// segTangents returns the (non-unit) direction leaving the start point and the
+// direction arriving at the end point for a segment. kind: 0=line, 1=quad
+// (c1 is the control), 2=cubic (c1, c2 are the controls).
+func segTangents(p0, c1, c2, p3 fpoint, kind int) (startT, endT fpoint) {
+	nz := func(cands ...fpoint) fpoint {
+		for _, c := range cands {
+			if _, ok := funit(c); ok {
+				return c
+			}
+		}
+		return fsub(p3, p0)
+	}
+	switch kind {
+	case 2:
+		startT = nz(fsub(c1, p0), fsub(c2, p0), fsub(p3, p0))
+		endT = nz(fsub(p3, c2), fsub(p3, c1), fsub(p3, p0))
+	case 1:
+		startT = nz(fsub(c1, p0), fsub(p3, p0))
+		endT = nz(fsub(p3, c1), fsub(p3, p0))
+	default:
+		startT = fsub(p3, p0)
+		endT = startT
+	}
+	return startT, endT
+}
+
+// miterJoinExceedsViewport reports whether any miter join on the stroked path
+// paints outside the viewport by more than tol. The miter apex extends
+// halfWidth/sin(theta/2) along the join, where theta is the angle between the
+// two segments; beyond the miter limit (4) SVG bevels the join, bounding it by
+// halfWidth. Endpoints of an open subpath are caps (not joins) and are skipped.
+func (c *conv) miterJoinExceedsViewport(gs *pptx.GeomShape, halfWidth float64, tol int64) bool {
+	const miterLimit = 4.0
+	outside := func(v fpoint, r float64) bool {
+		ft := float64(tol)
+		return v.x-r < -ft || v.y-r < -ft ||
+			v.x+r > float64(c.chW)+ft || v.y+r > float64(c.chH)+ft
+	}
+	// A join between an incoming tangent (pointing into the vertex) and an
+	// outgoing tangent (pointing out of it): dot = cos(delta) where delta is the
+	// turn, and sin(theta/2) = sqrt((1+dot)/2).
+	check := func(v, inT, outT fpoint) bool {
+		a, ok1 := funit(inT)
+		b, ok2 := funit(outT)
+		if !ok1 || !ok2 {
+			return false
+		}
+		dot := a.x*b.x + a.y*b.y
+		sinHalf := math.Sqrt((1 + dot) / 2)
+		r := halfWidth
+		if sinHalf > 1e-6 {
+			if m := halfWidth / sinHalf; m <= miterLimit*halfWidth {
+				r = m
+			}
+		}
+		return outside(v, r)
+	}
+	for _, p := range gs.Paths {
+		type seg struct{ startT, endT, start, end fpoint }
+		var segs []seg
+		var cur, startPt fpoint
+		closed := false
+		for _, cmd := range p.Cmds {
+			switch cmd.Verb {
+			case pptx.MoveTo:
+				if len(cmd.Pts) >= 1 {
+					cur = fp(cmd.Pts[0])
+					startPt = cur
+				}
+			case pptx.LineTo:
+				if len(cmd.Pts) >= 1 {
+					e := fp(cmd.Pts[0])
+					st, et := segTangents(cur, fpoint{}, fpoint{}, e, 0)
+					segs = append(segs, seg{st, et, cur, e})
+					cur = e
+				}
+			case pptx.QuadTo:
+				if len(cmd.Pts) >= 2 {
+					c1, e := fp(cmd.Pts[0]), fp(cmd.Pts[1])
+					st, et := segTangents(cur, c1, fpoint{}, e, 1)
+					segs = append(segs, seg{st, et, cur, e})
+					cur = e
+				}
+			case pptx.CubicTo:
+				if len(cmd.Pts) >= 3 {
+					c1, c2, e := fp(cmd.Pts[0]), fp(cmd.Pts[1]), fp(cmd.Pts[2])
+					st, et := segTangents(cur, c1, c2, e, 2)
+					segs = append(segs, seg{st, et, cur, e})
+					cur = e
+				}
+			case pptx.ClosePath:
+				if len(segs) > 0 && (cur.x != startPt.x || cur.y != startPt.y) {
+					st, et := segTangents(cur, fpoint{}, fpoint{}, startPt, 0)
+					segs = append(segs, seg{st, et, cur, startPt})
+					cur = startPt
+				}
+				closed = true
+			}
+		}
+		// Interior joins: between consecutive segments.
+		for i := 0; i+1 < len(segs); i++ {
+			if check(segs[i].end, segs[i].endT, segs[i+1].startT) {
+				return true
+			}
+		}
+		// A closed subpath also joins the last segment back to the first.
+		if closed && len(segs) >= 2 {
+			if check(segs[0].start, segs[len(segs)-1].endT, segs[0].startT) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func cubicExtrema(p0, p1, p2, p3 float64) []float64 {
 	// B'(t) = 3[(p1-p0)(1-t)^2 + 2(p2-p1)(1-t)t + (p3-p2)t^2]; solve a t^2+b t+c=0.
 	a := -p0 + 3*p1 - 3*p2 + p3
@@ -601,12 +741,18 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 			}
 			if stroke != nil {
 				// A stroke paints half its width perpendicular to the path, so
-				// that half-width is the actual overhang past the geometry
+				// that half-width is the baseline overhang past the geometry
 				// bounds. Any overhang beyond rounding slack leaks outside the
 				// image rectangle (SVG-as-image clips to the viewport).
 				se := stroke.Width / 2
 				if bx0-se < -tol || by0-se < -tol ||
 					bx1+se > c.chW+tol || by1+se > c.chH+tol {
+					return false
+				}
+				// A miter join adds a spike beyond the half-width, up to
+				// miterlimit*half-width at the sharpest joins; check the actual
+				// per-join apex so a corner near the edge can't leak.
+				if stroke.Join == "miter" && c.miterJoinExceedsViewport(gs, float64(se), tol) {
 					return false
 				}
 			}

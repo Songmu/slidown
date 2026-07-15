@@ -242,19 +242,31 @@ func (c *conv) resolveStyle(n *node, inherited style) (style, bool) {
 	if strings.EqualFold(st["color"], "currentColor") {
 		st["color"] = parentColor
 	}
-	// Resolve the CSS-wide keywords. "inherit", "unset" and "revert" all take the
-	// parent's value for these (all inherited) properties; "initial" restores the
-	// property's default value.
+	// Resolve the CSS-wide keywords. "inherit" always takes the parent value.
+	// "unset"/"revert" take the parent value for inherited properties but the
+	// initial value for non-inherited ones (opacity/display/stop-color/
+	// stop-opacity). "initial" always restores the property's initial value.
+	setInitial := func(k string) {
+		if v, ok := initialStyleValue[k]; ok {
+			st[k] = v
+		} else if dv := defaultStyle().get(k); dv != "" {
+			st[k] = dv
+		} else {
+			delete(st, k)
+		}
+	}
 	for k, v := range st {
 		switch strings.ToLower(v) {
-		case "inherit", "unset", "revert":
+		case "inherit":
 			st[k] = inherited.get(k)
-		case "initial":
-			if dv := defaultStyle().get(k); dv != "" {
-				st[k] = dv
+		case "unset", "revert":
+			if nonInheritedProps[k] {
+				setInitial(k)
 			} else {
-				delete(st, k)
+				st[k] = inherited.get(k)
 			}
+		case "initial":
+			setInitial(k)
 		}
 	}
 	for k, v := range st {
@@ -273,6 +285,19 @@ func (c *conv) resolveStyle(n *node, inherited style) (style, bool) {
 		}
 	}
 	return st, true
+}
+
+// nonInheritedProps are the properties reset per element rather than inherited,
+// so "unset"/"revert" resolve them to their initial value (not the parent's).
+var nonInheritedProps = map[string]bool{
+	"opacity": true, "display": true, "stop-color": true, "stop-opacity": true,
+}
+
+// initialStyleValue defines CSS initial values for properties whose initial
+// value isn't captured by defaultStyle (the gradient stop properties).
+var initialStyleValue = map[string]string{
+	"stop-color":   "black",
+	"stop-opacity": "1",
 }
 
 // enumStyleValues lists the valid keyword values for the enumerated properties
