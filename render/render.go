@@ -404,16 +404,11 @@ func isExternalRef(v string) bool {
 
 // hasExternalStyleRef reports whether a style/attribute value references an
 // external resource: a url(...) target or a string-form @import (which carries
-// no url()). CSS escapes (e.g. \75 rl(...) for url(...)) are decoded first so an
-// obfuscated reference can't bypass the scan.
+// no url()). CSS escapes are decoded first so an obfuscated external reference
+// (e.g. \75 rl(...) for url(...)) is revealed, and an escaped local fragment
+// (e.g. url(\#grad) or url(\23 grad)) is correctly seen as internal.
 func hasExternalStyleRef(s string) bool {
-	if hasExternalStyleRefRaw(s) {
-		return true
-	}
-	if dec := cssUnescape(s); dec != s {
-		return hasExternalStyleRefRaw(dec)
-	}
-	return false
+	return hasExternalStyleRefRaw(cssUnescape(s))
 }
 
 func hasExternalStyleRefRaw(s string) bool {

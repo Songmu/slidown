@@ -716,6 +716,34 @@ func TestReviewBatch12(t *testing.T) {
 	}
 }
 
+func TestReviewBatch20(t *testing.T) {
+	// No-viewBox: a relative height (1em) is resolved for the child viewport, so
+	// a 32px x 1em SVG has a 32x16 child space (not 32x150), matching Dimensions.
+	g := mustConvert(t, `<svg width="32px" height="1em"><rect width="1" height="1" fill="red"/></svg>`)
+	if g.ChW != round(32*emuPerUnit) || g.ChH != round(16*emuPerUnit) {
+		t.Fatalf("no-viewBox em child space = %dx%d, want %dx%d", g.ChW, g.ChH, round(32*emuPerUnit), round(16*emuPerUnit))
+	}
+	// A square line cap on a diagonal extends up to sqrt(2)*half-width past the
+	// endpoint; a cap reaching the viewport corner falls back.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><line x1="50" y1="50" x2="2" y2="2" stroke="black" stroke-width="4" stroke-linecap="square"/></svg>`)); ok {
+		t.Error("square cap reaching the viewport corner should fall back")
+	}
+	// The same diagonal square-capped line comfortably inside still converts.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><line x1="50" y1="50" x2="20" y2="20" stroke="black" stroke-width="4" stroke-linecap="square"/></svg>`)); !ok {
+		t.Error("inset diagonal square-capped line should convert")
+	}
+	// A path's second subpath is evaluated independently: a miter corner near
+	// the edge there must still trigger the fallback.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><path d="M20 20 L40 20 L40 40 M10 50 L1 50 L1 60" fill="none" stroke="black" stroke-width="2"/></svg>`)); ok {
+		t.Error("miter corner in a later subpath near the edge should fall back")
+	}
+	// Two separate, safe subpaths must not be joined across the MoveTo (no false
+	// cross-subpath join), so they still convert.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><path d="M20 20 L40 20 L40 40 M50 50 L70 50 L70 70" fill="none" stroke="black" stroke-width="2"/></svg>`)); !ok {
+		t.Error("two independent safe subpaths should convert")
+	}
+}
+
 func TestReviewBatch19(t *testing.T) {
 	// A gradient stop's currentColor inherits the color computed at the
 	// gradient's own ancestors, not defaultStyle: here ancestor color="red".

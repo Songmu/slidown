@@ -273,9 +273,10 @@ func (c *conv) initViewport() bool {
 	} else {
 		// No viewBox: fall back per-dimension to the SVG spec defaults
 		// (300x150) so a valid width/height isn't discarded when only the other
-		// is missing/invalid. This matches Image.Dimensions()'s handling.
-		w, okw := parseLength(c.root.Attrs["width"], false)
-		h, okh := parseLength(c.root.Attrs["height"], false)
+		// is missing/invalid. This matches Image.Dimensions()'s handling,
+		// including default-font relative units (em/rem/ex/ch).
+		w, okw := parseRootLength(c.root.Attrs["width"])
+		h, okh := parseRootLength(c.root.Attrs["height"])
 		if !okw || w <= 0 {
 			w = 300
 		}
@@ -511,12 +512,13 @@ func segTangents(p0, c1, c2, p3 fpoint, kind int) (startT, endT fpoint) {
 	return startT, endT
 }
 
-// miterJoinExceedsViewport reports whether any miter join on the stroked path
-// paints outside the viewport by more than tol. The miter apex extends
-// halfWidth/sin(theta/2) along the join, where theta is the angle between the
-// two segments; beyond the miter limit (4) SVG bevels the join, bounding it by
-// halfWidth. Endpoints of an open subpath are caps (not joins) and are skipped.
-func (c *conv) miterJoinExceedsViewport(gs *pptx.GeomShape, halfWidth float64, tol int64) bool {
+// strokeExtremesExceedViewport reports whether a stroked path paints outside the
+// viewport by more than tol at a miter join or a square line cap. A miter apex
+// extends halfWidth/sin(theta/2) along the join (bevelled beyond the miter limit
+// of 4); a square cap extends halfWidth past an open endpoint along the tangent,
+// so its far corners reach up to sqrt(2)*halfWidth on a diagonal. Each subpath is
+// evaluated independently.
+func (c *conv) strokeExtremesExceedViewport(gs *pptx.GeomShape, halfWidth float64, join, capStyle string, tol int64) bool {
 	const miterLimit = 4.0
 	outside := func(v fpoint, r float64) bool {
 		ft := float64(tol)
@@ -526,7 +528,7 @@ func (c *conv) miterJoinExceedsViewport(gs *pptx.GeomShape, halfWidth float64, t
 	// A join between an incoming tangent (pointing into the vertex) and an
 	// outgoing tangent (pointing out of it): dot = cos(delta) where delta is the
 	// turn, and sin(theta/2) = sqrt((1+dot)/2).
-	check := func(v, inT, outT fpoint) bool {
+	checkJoin := func(v, inT, outT fpoint) bool {
 		a, ok1 := funit(inT)
 		b, ok2 := funit(outT)
 		if !ok1 || !ok2 {
@@ -542,14 +544,63 @@ func (c *conv) miterJoinExceedsViewport(gs *pptx.GeomShape, halfWidth float64, t
 		}
 		return outside(v, r)
 	}
+	// A square cap extends the endpoint by halfWidth along the outward tangent,
+	// with two corners at +/- halfWidth perpendicular.
+	checkCap := func(v, outward fpoint) bool {
+		t, ok := funit(outward)
+		if !ok {
+			return false
+		}
+		n := fpoint{-t.y, t.x}
+		for _, s := range []float64{1, -1} {
+			corner := fpoint{
+				v.x + halfWidth*t.x + s*halfWidth*n.x,
+				v.y + halfWidth*t.y + s*halfWidth*n.y,
+			}
+			if outside(corner, 0) {
+				return true
+			}
+		}
+		return false
+	}
+	type seg struct{ startT, endT, start, end fpoint }
+	flush := func(segs []seg, closed bool) bool {
+		for i := 0; i+1 < len(segs); i++ {
+			if join == "miter" && checkJoin(segs[i].end, segs[i].endT, segs[i+1].startT) {
+				return true
+			}
+		}
+		if closed {
+			if join == "miter" && len(segs) >= 2 &&
+				checkJoin(segs[0].start, segs[len(segs)-1].endT, segs[0].startT) {
+				return true
+			}
+			return false
+		}
+		// Open subpath: its two endpoints are square/round/flat caps.
+		if capStyle == "sq" && len(segs) > 0 {
+			first, last := segs[0], segs[len(segs)-1]
+			// Outward tangent points away from the path at each endpoint.
+			if checkCap(first.start, fpoint{-first.startT.x, -first.startT.y}) ||
+				checkCap(last.end, last.endT) {
+				return true
+			}
+		}
+		return false
+	}
 	for _, p := range gs.Paths {
-		type seg struct{ startT, endT, start, end fpoint }
 		var segs []seg
 		var cur, startPt fpoint
 		closed := false
 		for _, cmd := range p.Cmds {
 			switch cmd.Verb {
 			case pptx.MoveTo:
+				// A new subpath begins: evaluate the accumulated one first.
+				if flush(segs, closed) {
+					return true
+				}
+				segs = segs[:0]
+				closed = false
 				if len(cmd.Pts) >= 1 {
 					cur = fp(cmd.Pts[0])
 					startPt = cur
@@ -584,17 +635,8 @@ func (c *conv) miterJoinExceedsViewport(gs *pptx.GeomShape, halfWidth float64, t
 				closed = true
 			}
 		}
-		// Interior joins: between consecutive segments.
-		for i := 0; i+1 < len(segs); i++ {
-			if check(segs[i].end, segs[i].endT, segs[i+1].startT) {
-				return true
-			}
-		}
-		// A closed subpath also joins the last segment back to the first.
-		if closed && len(segs) >= 2 {
-			if check(segs[0].start, segs[len(segs)-1].endT, segs[0].startT) {
-				return true
-			}
+		if flush(segs, closed) {
+			return true
 		}
 	}
 	return false
@@ -768,10 +810,10 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 					bx1+se > c.chW+tol || by1+se > c.chH+tol {
 					return false
 				}
-				// A miter join adds a spike beyond the half-width, up to
-				// miterlimit*half-width at the sharpest joins; check the actual
-				// per-join apex so a corner near the edge can't leak.
-				if stroke.Join == "miter" && c.miterJoinExceedsViewport(gs, float64(se), tol) {
+				// A miter join adds a spike beyond the half-width, and a square
+				// cap extends past open endpoints; check the actual per-join
+				// apex and per-cap corners so a shape near the edge can't leak.
+				if c.strokeExtremesExceedViewport(gs, float64(se), stroke.Join, stroke.Cap, tol) {
 					return false
 				}
 			}

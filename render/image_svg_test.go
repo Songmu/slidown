@@ -254,6 +254,27 @@ func TestRenderSVGExternalGradientHrefRasterOnly(t *testing.T) {
 	}
 }
 
+// hasExternalStyleRef classifies the decoded CSS, so an escaped local fragment
+// (url(\#grad) / url(\23 grad)) is internal while an escaped-obfuscated external
+// url is still detected.
+func TestHasExternalStyleRefEscapes(t *testing.T) {
+	cases := []struct {
+		s    string
+		want bool
+	}{
+		{`fill:url(\#grad)`, false},
+		{`fill:url(\23 grad)`, false},
+		{`fill:url(#grad)`, false},
+		{`fill:\75 rl(ext.svg#g)`, true},
+		{`fill:url(http://example.com/y.svg#g)`, true},
+	}
+	for _, c := range cases {
+		if got := hasExternalStyleRef(c.s); got != c.want {
+			t.Errorf("hasExternalStyleRef(%q) = %v, want %v", c.s, got, c.want)
+		}
+	}
+}
+
 // directiveReferencesExternal must flag real external DTDs but not a stray
 // SYSTEM/PUBLIC substring inside a comment or name.
 func TestDirectiveReferencesExternal(t *testing.T) {
