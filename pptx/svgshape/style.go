@@ -247,7 +247,24 @@ func (c *conv) resolveStyle(n *node, inherited style) (style, bool) {
 			st[k] = st["color"]
 		}
 	}
+	// Enumerated properties with an unrecognized value are invalid declarations.
+	// CSS would ignore them (keeping the inherited value), so treating the raw
+	// value as a default here could flip hole-filling (fill-rule) or reveal
+	// hidden geometry (visibility). Reject so the document takes the faithful
+	// native-image fallback instead.
+	for prop, allowed := range enumStyleValues {
+		if v, ok := st[prop]; ok && !allowed[strings.ToLower(strings.TrimSpace(v))] {
+			return nil, false
+		}
+	}
 	return st, true
+}
+
+// enumStyleValues lists the valid keyword values for the enumerated properties
+// the converter relies on for correct rendering.
+var enumStyleValues = map[string]map[string]bool{
+	"fill-rule":  {"nonzero": true, "evenodd": true},
+	"visibility": {"visible": true, "hidden": true, "collapse": true},
 }
 
 // matchedRule pairs a rule's declarations with the specificity of the most

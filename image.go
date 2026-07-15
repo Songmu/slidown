@@ -282,17 +282,52 @@ func capDimensions(w, h float64) (int, int) {
 	return iw, ih
 }
 
+// svgRootAttr returns the raw value of an unqualified, case-correct attribute on
+// the root <svg> element (empty when absent or when the root isn't an <svg>).
+func svgRootAttr(b []byte, name string) string {
+	b = bytes.TrimPrefix(b, []byte{0xef, 0xbb, 0xbf})
+	dec := xml.NewDecoder(bytes.NewReader(b))
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return ""
+		}
+		se, isStart := tok.(xml.StartElement)
+		if !isStart {
+			continue
+		}
+		if !strings.EqualFold(se.Name.Local, "svg") {
+			return ""
+		}
+		for _, a := range se.Attr {
+			if a.Name.Space == "" && a.Name.Local == name {
+				return a.Value
+			}
+		}
+		return ""
+	}
+}
+
 // svgHasExplicitZeroSize reports whether the root <svg> sets width or height to
 // an explicit zero (including "0%"), which per SVG disables rendering.
 func svgHasExplicitZeroSize(b []byte) bool {
 	ws, hs, _ := svgRootSize(b)
 	isZero := func(s string) bool {
 		s = strings.TrimSpace(s)
-		if strings.HasSuffix(s, "%") {
-			s = strings.TrimSpace(strings.TrimSuffix(s, "%"))
+		// Zero is unit-independent, so strip any trailing unit (%, em, rem, ex,
+		// px, ...) before checking the numeric value: parseCSSLength rejects
+		// relative units and would otherwise miss "0em"/"0rem".
+		n := len(s)
+		for n > 0 {
+			c := s[n-1]
+			if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '%' {
+				n--
+				continue
+			}
+			break
 		}
-		v, ok := parseCSSLength(s)
-		return ok && v == 0
+		v, err := strconv.ParseFloat(strings.TrimSpace(s[:n]), 64)
+		return err == nil && v == 0
 	}
 	return isZero(ws) || isZero(hs)
 }
@@ -467,7 +502,11 @@ func (i *Image) RasterPNG(scale float64) ([]byte, error) {
 	if icon.ViewBox.H <= 0 {
 		icon.ViewBox.H = float64(intrinsicH)
 	}
-	icon.SetTarget(0, 0, float64(iw), float64(ih))
+	// oksvg's SetTarget applies independent X/Y scales and ignores
+	// preserveAspectRatio, which would stretch content when the viewport and
+	// viewBox aspect ratios differ. Apply the root preserveAspectRatio
+	// alignment and meet/slice scale so the raster matches SVG semantics.
+	setRasterTarget(icon, iw, ih, i.b)
 	rgba := image.NewRGBA(image.Rect(0, 0, iw, ih))
 	scanner := rasterx.NewScannerGV(iw, ih, rgba, rgba.Bounds())
 	raster := rasterx.NewDasher(iw, ih, scanner)
@@ -482,6 +521,62 @@ func (i *Image) RasterPNG(scale float64) ([]byte, error) {
 // maxSVGRasterBytes bounds the raw SVG size passed to the oksvg rasterizer so a
 // pathological input can't drive uncapped parsing/allocation.
 const maxSVGRasterBytes = 20 << 20 // 20 MiB
+
+// setRasterTarget maps the icon's viewBox onto an iw×ih canvas honoring the
+// root preserveAspectRatio (alignment + meet/slice). preserveAspectRatio="none"
+// keeps the independent-scale (stretch) behavior.
+func setRasterTarget(icon *oksvg.SvgIcon, iw, ih int, raw []byte) {
+	vbW, vbH := icon.ViewBox.W, icon.ViewBox.H
+	fx, fy, none, slice := parsePreserveAspect(svgRootAttr(raw, "preserveAspectRatio"))
+	if vbW <= 0 || vbH <= 0 || none {
+		icon.SetTarget(0, 0, float64(iw), float64(ih))
+		return
+	}
+	sx, sy := float64(iw)/vbW, float64(ih)/vbH
+	s := math.Min(sx, sy)
+	if slice {
+		s = math.Max(sx, sy)
+	}
+	drawW, drawH := vbW*s, vbH*s
+	offX := (float64(iw) - drawW) * fx
+	offY := (float64(ih) - drawH) * fy
+	icon.SetTarget(offX, offY, drawW, drawH)
+}
+
+// parsePreserveAspect parses an SVG preserveAspectRatio value into alignment
+// fractions (0=min, 0.5=mid, 1=max) plus none/slice flags. The default is
+// "xMidYMid meet" (centered, scale-to-fit).
+func parsePreserveAspect(s string) (fx, fy float64, none, slice bool) {
+	fx, fy = 0.5, 0.5
+	f := strings.Fields(s)
+	if len(f) > 0 && strings.EqualFold(f[0], "defer") {
+		f = f[1:]
+	}
+	if len(f) == 0 {
+		return
+	}
+	if strings.EqualFold(f[0], "none") {
+		none = true
+		return
+	}
+	a := strings.ToLower(f[0])
+	switch {
+	case strings.HasPrefix(a, "xmin"):
+		fx = 0
+	case strings.HasPrefix(a, "xmax"):
+		fx = 1
+	}
+	switch {
+	case strings.HasSuffix(a, "ymin"):
+		fy = 0
+	case strings.HasSuffix(a, "ymax"):
+		fy = 1
+	}
+	if len(f) > 1 && strings.EqualFold(f[1], "slice") {
+		slice = true
+	}
+	return
+}
 
 func (i *Image) parseSVG() (*oksvg.SvgIcon, error) {
 	if i.svgIcon != nil {

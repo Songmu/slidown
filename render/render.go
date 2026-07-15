@@ -16,6 +16,7 @@ import (
 	"image/png"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/Songmu/slidown"
@@ -383,8 +384,19 @@ func isExternalRef(v string) bool {
 
 // hasExternalStyleRef reports whether a style/attribute value references an
 // external resource: a url(...) target or a string-form @import (which carries
-// no url()).
+// no url()). CSS escapes (e.g. \75 rl(...) for url(...)) are decoded first so an
+// obfuscated reference can't bypass the scan.
 func hasExternalStyleRef(s string) bool {
+	if hasExternalStyleRefRaw(s) {
+		return true
+	}
+	if dec := cssUnescape(s); dec != s {
+		return hasExternalStyleRefRaw(dec)
+	}
+	return false
+}
+
+func hasExternalStyleRefRaw(s string) bool {
 	if hasExternalURLRef(s) {
 		return true
 	}
@@ -398,6 +410,52 @@ func hasExternalStyleRef(s string) bool {
 		}
 	}
 	return false
+}
+
+// cssUnescape decodes CSS escape sequences: a backslash followed by 1-6 hex
+// digits (with one optional trailing whitespace) yields that code point, and a
+// backslash followed by any other character yields that literal character.
+func cssUnescape(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		if s[i] != '\\' {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		i++
+		if i >= len(s) {
+			break
+		}
+		j := i
+		for j < len(s) && j-i < 6 && isHexDigit(s[j]) {
+			j++
+		}
+		if j > i {
+			if v, err := strconv.ParseInt(s[i:j], 16, 32); err == nil {
+				b.WriteRune(rune(v))
+			}
+			i = j
+			if i < len(s) {
+				switch s[i] {
+				case ' ', '\t', '\n', '\r', '\f':
+					i++
+				}
+			}
+			continue
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
+}
+
+func isHexDigit(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 }
 
 // importStringRE matches a string-form CSS import, e.g. @import "theme.css".

@@ -322,6 +322,22 @@ func TestRenderSVGMalformedTreatedAsExternal(t *testing.T) {
 	}
 }
 
+// An unsupported SVG whose external url() reference is hidden behind CSS
+// escapes (\75 rl -> url) must still be embedded raster-only.
+func TestRenderSVGEscapedURLRasterOnly(t *testing.T) {
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" style="fill:\75 rl(other.svg#g);clip-path:url(#c)"/></svg>`
+	img, err := slidown.NewImageFromCodeBlock(bytes.NewReader([]byte(svg)))
+	if err != nil {
+		t.Fatalf("NewImageFromCodeBlock: %v", err)
+	}
+	parts := renderSlidesToParts(t, slidown.Slides{
+		{Titles: []string{"esc"}, Images: []*slidown.Image{img}},
+	})
+	if strings.Contains(string(parts["ppt/slides/slide1.xml"]), "asvg:svgBlip") {
+		t.Errorf("escaped external url() should force raster-only, not native svgBlip")
+	}
+}
+
 // An SVG with a string-form @import or an xml-stylesheet PI references an
 // external stylesheet and must be embedded raster-only (no native svgBlip).
 func TestRenderSVGExternalStylesheetRasterOnly(t *testing.T) {

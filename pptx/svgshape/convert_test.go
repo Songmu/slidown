@@ -443,10 +443,17 @@ func TestReviewBatch4(t *testing.T) {
 	if len(g.Texts) != 1 || len(g.Texts[0].Paragraphs[0].Runs) != 1 || g.Texts[0].Paragraphs[0].Runs[0].Text != "ok" {
 		t.Fatalf("trailing display:none tspan should be skipped: %#v", g.Texts)
 	}
-	// A hidden tspan with text *before* visible text shifts the visible run's
-	// position (the hidden glyphs still advance), so it falls back.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10"><tspan display="none">x</tspan><tspan>ok</tspan></text></svg>`)); ok {
-		t.Error("hidden text before visible text should fall back")
+	// A display:none tspan with text *before* visible text does not advance the
+	// position (display:none is removed from layout), so the visible run stays
+	// anchored and conversion succeeds.
+	g = mustConvert(t, `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10"><tspan display="none">x</tspan><tspan>ok</tspan></text></svg>`)
+	if len(g.Texts[0].Paragraphs[0].Runs) != 1 || g.Texts[0].Paragraphs[0].Runs[0].Text != "ok" {
+		t.Fatalf("display:none run before visible text should be dropped without advancing: %#v", g.Texts)
+	}
+	// A visibility:hidden tspan before visible text *does* advance, so it falls
+	// back.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10"><tspan visibility="hidden">x</tspan><tspan>ok</tspan></text></svg>`)); ok {
+		t.Error("visibility:hidden text before visible text should fall back")
 	}
 	// Hidden text with a visibility:visible tspan still renders the child.
 	g = mustConvert(t, `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10" visibility="hidden"><tspan visibility="visible">seen</tspan></text></svg>`)
@@ -700,6 +707,44 @@ func TestReviewBatch12(t *testing.T) {
 	// falls back (vertical bounds use the max run size).
 	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 20"><text x="1" y="18" fill="red" font-size="5"><tspan font-size="200">Big</tspan></text></svg>`)); ok {
 		t.Error("oversized tspan overflowing the viewport should fall back")
+	}
+}
+
+func TestReviewBatch15(t *testing.T) {
+	// A font-size below the DrawingML 1pt minimum can't be represented.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="1" y="10" font-size="0.5">Hi</text></svg>`)); ok {
+		t.Error("sub-1pt font size should fall back")
+	}
+	// A font-size above the 4000pt maximum can't be represented.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 100000 100000"><text x="1" y="10" font-size="6000">Hi</text></svg>`)); ok {
+		t.Error("oversized font size should fall back")
+	}
+	// A tspan font-size override outside the range also falls back.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="1" y="10" font-size="10"><tspan font-size="0.5">Hi</tspan></text></svg>`)); ok {
+		t.Error("tspan sub-1pt font size should fall back")
+	}
+	// An invalid enumerated value (fill-rule/visibility) is a dropped CSS
+	// declaration; treating it as a default could flip rendering, so fall back.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><path d="M0 0h10v10h-10z" fill-rule="bogus"/></svg>`)); ok {
+		t.Error("invalid fill-rule should fall back")
+	}
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect width="10" height="10" visibility="sometimes"/></svg>`)); ok {
+		t.Error("invalid visibility should fall back")
+	}
+	// display:none removes a run from layout without advancing, so the
+	// surrounding visible runs stay adjacent and conversion succeeds.
+	g := mustConvert(t, `<svg viewBox="0 0 100 40"><text x="1" y="20" fill="blue" font-size="10"><tspan>A</tspan><tspan display="none">X</tspan><tspan>B</tspan></text></svg>`)
+	var joined string
+	for _, r := range g.Texts[0].Paragraphs[0].Runs {
+		joined += r.Text
+	}
+	if joined != "AB" {
+		t.Fatalf("display:none run should be dropped without advancing, got %q", joined)
+	}
+	// visibility:hidden whitespace still advances the position, so a later
+	// visible run can't be faithfully placed: fall back.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 40"><text x="1" y="20" fill="blue" font-size="10"><tspan>A</tspan><tspan visibility="hidden"> </tspan><tspan>B</tspan></text></svg>`)); ok {
+		t.Error("visibility:hidden whitespace separator should fall back")
 	}
 }
 

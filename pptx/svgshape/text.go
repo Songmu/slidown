@@ -6,6 +6,13 @@ import (
 	"github.com/Songmu/slidown/pptx"
 )
 
+// DrawingML a:rPr@sz must be 1..4000 pt (emitted as hundredths of a point); a
+// font size outside this range can't be represented and forces the fallback.
+const (
+	minFontPt = 1.0
+	maxFontPt = 4000.0
+)
+
 func (c *conv) text(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 	// Only the anchor point is transformed; font size and box dimensions are
 	// not, so fall back for any non-translation transform (scale/rotate/skew).
@@ -34,6 +41,11 @@ func (c *conv) text(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 	if !ok || fs <= 0 {
 		// A non-positive font size is invalid and would emit a negative OOXML
 		// extent; fall back.
+		return false
+	}
+	if pt := fs * 0.75; pt < minFontPt || pt > maxFontPt {
+		// Outside the DrawingML a:rPr@sz range; fall back rather than emit an
+		// out-of-range (schema-invalid) size.
 		return false
 	}
 	// The text box starts at x and extends rightward, which only matches
@@ -196,10 +208,16 @@ func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]
 		if strings.EqualFold(child.get("xml:space"), "preserve") {
 			return nil, false
 		}
-		// A tspan hidden via display/visibility renders nothing but still
-		// advances the text position.
-		if displayNone(child) || visibilityHidden(child) {
-			if strings.TrimSpace(collapseSpace(ch.Text)) != "" {
+		// display:none removes the run from layout entirely (no advance), so it
+		// can be skipped without affecting the placement of later runs.
+		if displayNone(child) {
+			continue
+		}
+		// visibility:hidden renders nothing but still advances the text
+		// position; any non-empty run (including a whitespace separator) means a
+		// later visible run can't be faithfully placed, so mark it pending.
+		if visibilityHidden(child) {
+			if collapseSpace(ch.Text) != "" {
 				pendingInvisible = true
 			}
 			continue
@@ -216,6 +234,10 @@ func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]
 				return nil, false
 			}
 			cpt = f * 0.75
+			if cpt < minFontPt || cpt > maxFontPt {
+				// Outside the DrawingML a:rPr@sz range; fall back.
+				return nil, false
+			}
 		}
 		// Runs carry no alpha, so a translucent tspan can't be represented:
 		// fall back for the whole SVG.

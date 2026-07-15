@@ -174,6 +174,77 @@ func TestSVGRasterPNG(t *testing.T) {
 	}
 }
 
+func TestSVGRasterPreservesAspect(t *testing.T) {
+	// width:height is 2:1 but the viewBox is 1:1, so under the default
+	// xMidYMid meet the content is a centered 100x100 square with transparent
+	// bars on the left/right rather than a 2:1 stretch.
+	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 100 100"><rect width="100" height="100" fill="red"/></svg>`)
+	img, err := newImageFromBuffer(bytes.NewReader(svg))
+	if err != nil {
+		t.Fatalf("newImageFromBuffer: %v", err)
+	}
+	pngBytes, err := img.RasterPNG(1)
+	if err != nil {
+		t.Fatalf("RasterPNG: %v", err)
+	}
+	decoded, err := png.Decode(bytes.NewReader(pngBytes))
+	if err != nil {
+		t.Fatalf("png.Decode: %v", err)
+	}
+	b := decoded.Bounds()
+	if b.Dx() != 200 || b.Dy() != 100 {
+		t.Fatalf("bounds = %dx%d, want 200x100", b.Dx(), b.Dy())
+	}
+	// Center is opaque red; the left/right bars are transparent (letterboxed).
+	if _, _, _, a := decoded.At(100, 50).RGBA(); a == 0 {
+		t.Errorf("center pixel should be opaque (letterboxed square), got transparent")
+	}
+	if _, _, _, a := decoded.At(10, 50).RGBA(); a != 0 {
+		t.Errorf("left bar should be transparent, got opaque (content was stretched)")
+	}
+	if _, _, _, a := decoded.At(190, 50).RGBA(); a != 0 {
+		t.Errorf("right bar should be transparent, got opaque (content was stretched)")
+	}
+}
+
+func TestParsePreserveAspect(t *testing.T) {
+	cases := []struct {
+		in                 string
+		fx, fy             float64
+		wantNone, wantSlce bool
+	}{
+		{"", 0.5, 0.5, false, false},
+		{"xMidYMid meet", 0.5, 0.5, false, false},
+		{"none", 0.5, 0.5, true, false},
+		{"xMinYMin meet", 0, 0, false, false},
+		{"xMaxYMax slice", 1, 1, false, true},
+		{"defer xMinYMax meet", 0, 1, false, false},
+	}
+	for _, c := range cases {
+		fx, fy, none, slice := parsePreserveAspect(c.in)
+		if fx != c.fx || fy != c.fy || none != c.wantNone || slice != c.wantSlce {
+			t.Errorf("parsePreserveAspect(%q) = (%v,%v,none=%v,slice=%v), want (%v,%v,none=%v,slice=%v)",
+				c.in, fx, fy, none, slice, c.fx, c.fy, c.wantNone, c.wantSlce)
+		}
+	}
+}
+
+func TestSVGZeroRelativeUnitSizeSkipped(t *testing.T) {
+	// width="0em" is an explicit zero in a relative unit; zero is
+	// unit-independent, so the SVG viewport is empty and must report 0x0.
+	img, err := newImageFromBuffer(bytes.NewReader([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="0em" height="100" viewBox="0 0 100 100"></svg>`)))
+	if err != nil {
+		t.Fatalf("newImageFromBuffer: %v", err)
+	}
+	w, h, err := img.Dimensions()
+	if err != nil {
+		t.Fatalf("Dimensions: %v", err)
+	}
+	if w != 0 || h != 0 {
+		t.Fatalf("width=0em should report 0x0, got %dx%d", w, h)
+	}
+}
+
 func TestSVGJSONRoundTrip(t *testing.T) {
 	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50"></svg>`)
 	img, err := newImageFromBuffer(bytes.NewReader(svg))
