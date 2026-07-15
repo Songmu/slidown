@@ -215,6 +215,7 @@ func (t *Template) contentTypesXML(slideCount int, notesSlideNums []int) string 
 		{"jpeg", "image/jpeg"},
 		{"jpg", "image/jpeg"},
 		{"gif", "image/gif"},
+		{"svg", "image/svg+xml"},
 	}
 	seenExt := make(map[string]bool, len(baseDefaults))
 	for _, d := range baseDefaults {

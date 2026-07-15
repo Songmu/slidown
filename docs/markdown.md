@@ -222,3 +222,38 @@ the first body placeholder as emphasized (bold) lead paragraphs instead.
 > unrendered. This overflow/fold behavior is not yet a stable contract and may
 > change in a future release — possibly to align `slidown` and `deck` with each
 > other.
+
+## Images
+
+Images use standard Markdown syntax `![alt text](path-or-url)` and may reference
+local files or remote URLs. PNG, JPEG and GIF are embedded directly.
+
+### SVG Images
+
+SVG images are handled specially so they stay crisp and, where possible, remain
+editable inside PowerPoint:
+
+- **Native shape conversion (preferred).** When placed as free-floating slide
+  content, an SVG is converted into native, editable PowerPoint shapes
+  (DrawingML custom geometry). Paths, basic shapes (`rect`, `circle`, `ellipse`,
+  `line`, `polyline`, `polygon`), groups, transforms, solid fills, strokes,
+  linear/radial gradients, `<use>`/`<symbol>`, simple CSS (class/id/tag
+  selectors) and basic `<text>` are supported. Elliptical arcs are approximated
+  with Bézier curves.
+- **Native SVG image fallback.** If the SVG uses a feature that cannot be
+  faithfully converted (for example `clipPath`, `mask`, `pattern`, `filter`,
+  embedded `<image>`, `foreignObject`, `textPath`, animation, complex gradients
+  or unsupported CSS), the whole SVG is embedded as a native SVG picture
+  instead. PowerPoint 2016+ renders the vector version; a rasterized PNG is
+  embedded alongside as a fallback for older viewers.
+- **Picture placeholders.** When an SVG fills a layout **picture placeholder**,
+  it is always embedded as a native SVG picture (with the PNG fallback) rather
+  than converted to shapes, so it fills the placeholder correctly.
+- **External/relative resources.** If a fallback SVG references resources that
+  can't be packaged (for example `<image href="asset.png">` or a
+  `url(other.svg#id)` paint), the native SVG isn't embedded (its reference would
+  dangle); a **best-effort rasterized PNG only** is used instead. That PNG omits
+  the external resource, so such images may be incomplete.
+
+The fallback decision is made per SVG document (whole-image granularity), so a
+converted SVG never mixes editable shapes with a raster fallback.

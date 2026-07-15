@@ -2,6 +2,7 @@ package pptx
 
 import (
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -35,6 +36,11 @@ func renderSlide(s *Slide, mediaIdx *int) (xml string, rels []slideRel, media []
 
 	relIdx := 1 // rId1 is reserved for the slide layout relationship
 	id := 2     // shape ids; 1 is the group
+	// Z-order is grouped by element type, not markdown insertion order: all
+	// shapes, then pictures, then SVG shape groups, then tables. slidown lays
+	// images out side by side (non-overlapping) and offers no way to stack them,
+	// so this type-ordered drawing is intentional and does not cause overlap
+	// issues. Revisit only if free-positioning/overlap support is added.
 	for _, sh := range s.Shapes {
 		b.WriteString(renderShape(sh, id, &relIdx, &rels))
 		id++
@@ -42,6 +48,9 @@ func renderSlide(s *Slide, mediaIdx *int) (xml string, rels []slideRel, media []
 	for _, pic := range s.Pictures {
 		b.WriteString(renderPicture(pic, id, &relIdx, &rels, mediaIdx, &media))
 		id++
+	}
+	for _, g := range s.Groups {
+		b.WriteString(renderGroup(g, &id, &relIdx, &rels))
 	}
 	for _, tbl := range s.Tables {
 		b.WriteString(renderTable(tbl, id, &relIdx, &rels))
@@ -142,6 +151,23 @@ func renderPicture(pic *Picture, id int, relIdx *int, rels *[]slideRel, mediaIdx
 		relTyp: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
 		target: "../media/" + fileName,
 	})
+	blip := `<a:blip r:embed="` + embedID + `"/>`
+	if pic.SVGData != nil {
+		*mediaIdx++
+		svgFileName := fmt.Sprintf("image%d.svg", *mediaIdx)
+		*media = append(*media, mediaPart{name: svgFileName, data: pic.SVGData})
+
+		*relIdx++
+		svgEmbedID := fmt.Sprintf("rId%d", *relIdx)
+		*rels = append(*rels, slideRel{
+			id:     svgEmbedID,
+			relTyp: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+			target: "../media/" + svgFileName,
+		})
+		blip = `<a:blip r:embed="` + embedID + `"><a:extLst><a:ext uri="{96DAC541-7B7A-43D3-8B79-37D633B846F1}">` +
+			`<asvg:svgBlip xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main" r:embed="` + svgEmbedID + `"/>` +
+			`</a:ext></a:extLst></a:blip>`
+	}
 
 	var linkAttr string
 	if pic.Link != "" {
@@ -164,10 +190,215 @@ func renderPicture(pic *Picture, id int, relIdx *int, rels *[]slideRel, mediaIdx
 	return `<p:pic><p:nvPicPr>` +
 		fmt.Sprintf(`<p:cNvPr id="%d" name="%s">`, id, escapeXML(name)) + linkAttr + `</p:cNvPr>` +
 		`<p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr>` + picNvPr(pic) + `</p:nvPicPr>` +
-		`<p:blipFill><a:blip r:embed="` + embedID + `"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
+		`<p:blipFill>` + blip + `<a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
 		`<p:spPr><a:xfrm><a:off x="` + itoa64(pic.X) + `" y="` + itoa64(pic.Y) + `"/>` +
 		`<a:ext cx="` + itoa64(pic.W) + `" cy="` + itoa64(pic.H) + `"/></a:xfrm>` +
 		`<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`
+}
+
+func renderGroup(g *GroupShape, id *int, relIdx *int, rels *[]slideRel) string {
+	groupID := *id
+	*id++
+	name := g.Name
+	if name == "" {
+		name = fmt.Sprintf("Group %d", groupID)
+	}
+
+	var b strings.Builder
+	b.WriteString(`<p:grpSp><p:nvGrpSpPr>`)
+	b.WriteString(fmt.Sprintf(`<p:cNvPr id="%d" name="%s"/>`, groupID, escapeXML(name)))
+	b.WriteString(`<p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>`)
+	b.WriteString(`<p:grpSpPr><a:xfrm>`)
+	b.WriteString(`<a:off x="` + itoa64(g.X) + `" y="` + itoa64(g.Y) + `"/>`)
+	b.WriteString(`<a:ext cx="` + itoa64(g.W) + `" cy="` + itoa64(g.H) + `"/>`)
+	b.WriteString(`<a:chOff x="` + itoa64(g.ChX) + `" y="` + itoa64(g.ChY) + `"/>`)
+	b.WriteString(`<a:chExt cx="` + itoa64(g.ChW) + `" cy="` + itoa64(g.ChH) + `"/>`)
+	b.WriteString(`</a:xfrm></p:grpSpPr>`)
+	if len(g.Children) > 0 {
+		// Preferred path: render children in document order so geometry and
+		// text z-order matches the source.
+		for _, ch := range g.Children {
+			switch {
+			case ch.Geom != nil:
+				b.WriteString(renderGeom(ch.Geom, *id))
+				*id++
+			case ch.Text != nil:
+				b.WriteString(renderShape(ch.Text, *id, relIdx, rels))
+				*id++
+			}
+		}
+	} else {
+		for _, gs := range g.Geoms {
+			b.WriteString(renderGeom(gs, *id))
+			*id++
+		}
+		for _, sh := range g.Texts {
+			b.WriteString(renderShape(sh, *id, relIdx, rels))
+			*id++
+		}
+	}
+	b.WriteString(`</p:grpSp>`)
+	return b.String()
+}
+
+func renderGeom(gs *GeomShape, id int) string {
+	var b strings.Builder
+	name := gs.Name
+	if name == "" {
+		name = fmt.Sprintf("Shape %d", id)
+	}
+
+	b.WriteString(`<p:sp><p:nvSpPr>`)
+	b.WriteString(fmt.Sprintf(`<p:cNvPr id="%d" name="%s"/>`, id, escapeXML(name)))
+	b.WriteString(`<p:cNvSpPr/><p:nvPr/></p:nvSpPr>`)
+	b.WriteString(`<p:spPr>`)
+	b.WriteString(`<a:xfrm><a:off x="` + itoa64(gs.X) + `" y="` + itoa64(gs.Y) + `"/>`)
+	b.WriteString(`<a:ext cx="` + itoa64(gs.W) + `" cy="` + itoa64(gs.H) + `"/></a:xfrm>`)
+	b.WriteString(`<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/>`)
+	b.WriteString(`<a:rect l="0" t="0" r="` + itoa64(gs.PathW) + `" b="` + itoa64(gs.PathH) + `"/>`)
+	b.WriteString(`<a:pathLst>`)
+	for _, p := range gs.Paths {
+		b.WriteString(`<a:path w="` + itoa64(gs.PathW) + `" h="` + itoa64(gs.PathH) + `">`)
+		for _, cmd := range p.Cmds {
+			b.WriteString(renderPathCmd(cmd))
+		}
+		b.WriteString(`</a:path>`)
+	}
+	b.WriteString(`</a:pathLst></a:custGeom>`)
+	b.WriteString(renderFill(gs.Fill))
+	if gs.Stroke != nil {
+		b.WriteString(renderStroke(gs.Stroke))
+	}
+	b.WriteString(`</p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr/></a:p></p:txBody></p:sp>`)
+	return b.String()
+}
+
+func renderPathCmd(cmd PathCmd) string {
+	switch cmd.Verb {
+	case MoveTo:
+		if len(cmd.Pts) < 1 {
+			return ""
+		}
+		return `<a:moveTo>` + renderPathPoint(cmd.Pts[0]) + `</a:moveTo>`
+	case LineTo:
+		if len(cmd.Pts) < 1 {
+			return ""
+		}
+		return `<a:lnTo>` + renderPathPoint(cmd.Pts[0]) + `</a:lnTo>`
+	case CubicTo:
+		if len(cmd.Pts) < 3 {
+			return ""
+		}
+		return `<a:cubicBezTo>` + renderPathPoint(cmd.Pts[0]) + renderPathPoint(cmd.Pts[1]) + renderPathPoint(cmd.Pts[2]) + `</a:cubicBezTo>`
+	case QuadTo:
+		if len(cmd.Pts) < 2 {
+			return ""
+		}
+		return `<a:quadBezTo>` + renderPathPoint(cmd.Pts[0]) + renderPathPoint(cmd.Pts[1]) + `</a:quadBezTo>`
+	case ClosePath:
+		return `<a:close/>`
+	default:
+		return ""
+	}
+}
+
+func renderPathPoint(p PathPoint) string {
+	return `<a:pt x="` + itoa64(p.X) + `" y="` + itoa64(p.Y) + `"/>`
+}
+
+func renderFill(fill Fill) string {
+	switch fill.Kind {
+	case FillSolid:
+		return `<a:solidFill><a:srgbClr val="` + escapeXML(fill.Color) + `">` + renderAlpha(fill.Alpha) + `</a:srgbClr></a:solidFill>`
+	case FillGradient:
+		if fill.Gradient == nil {
+			return `<a:noFill/>`
+		}
+		return renderGradient(fill.Gradient, fill.Alpha)
+	default:
+		return `<a:noFill/>`
+	}
+}
+
+func renderGradient(g *Gradient, overallAlpha float64) string {
+	var b strings.Builder
+	b.WriteString(`<a:gradFill><a:gsLst>`)
+	for _, stop := range g.Stops {
+		pos := stop.Pos
+		if pos < 0 {
+			pos = 0
+		}
+		if pos > 1 {
+			pos = 1
+		}
+		alpha := stop.Alpha
+		if overallAlpha < 1 {
+			alpha *= overallAlpha
+		}
+		b.WriteString(fmt.Sprintf(`<a:gs pos="%d"><a:srgbClr val="%s">%s</a:srgbClr></a:gs>`,
+			int(math.Round(pos*100000)), escapeXML(stop.Color), renderAlpha(alpha)))
+	}
+	b.WriteString(`</a:gsLst>`)
+	switch g.Kind {
+	case GradientRadial:
+		b.WriteString(`<a:path path="circle"><a:fillToRect l="50000" t="50000" r="50000" b="50000"/></a:path>`)
+	default:
+		b.WriteString(fmt.Sprintf(`<a:lin ang="%d" scaled="1"/>`, normalizeAngle60000(g.Angle)))
+	}
+	b.WriteString(`</a:gradFill>`)
+	return b.String()
+}
+
+// normalizeAngle60000 converts an angle in degrees to OOXML's 60000ths of a
+// degree in the valid positive range [0, 21600000).
+func normalizeAngle60000(deg float64) int {
+	deg = math.Mod(deg, 360)
+	if deg < 0 {
+		deg += 360
+	}
+	return int(deg * 60000)
+}
+
+func renderStroke(st *Stroke) string {
+	width := st.Width
+	if width < 1 {
+		width = 1
+	}
+	cap := st.Cap
+	if cap == "" {
+		cap = "flat"
+	}
+	join := st.Join
+	if join == "" {
+		join = "round"
+	}
+
+	var b strings.Builder
+	b.WriteString(`<a:ln w="` + itoa64(width) + `" cap="` + escapeXML(cap) + `">`)
+	b.WriteString(`<a:solidFill><a:srgbClr val="` + escapeXML(st.Color) + `">` + renderAlpha(st.Alpha) + `</a:srgbClr></a:solidFill>`)
+	if st.Dash != "" {
+		b.WriteString(`<a:prstDash val="` + escapeXML(st.Dash) + `"/>`)
+	}
+	switch join {
+	case "bevel":
+		b.WriteString(`<a:bevel/>`)
+	case "miter":
+		b.WriteString(`<a:miter lim="400000"/>`)
+	default:
+		b.WriteString(`<a:round/>`)
+	}
+	b.WriteString(`</a:ln>`)
+	return b.String()
+}
+
+func renderAlpha(alpha float64) string {
+	if alpha >= 1 {
+		return ""
+	}
+	if alpha < 0 {
+		alpha = 0
+	}
+	return fmt.Sprintf(`<a:alpha val="%d"/>`, int(math.Round(alpha*100000)))
 }
 
 // picNvPr returns the picture's <p:nvPr> element, embedding a <p:ph> binding
@@ -220,7 +451,15 @@ func renderShape(sh *Shape, id int, relIdx *int, rels *[]slideRel) string {
 	}
 	b.WriteString(`</p:spPr>`)
 
-	b.WriteString(`<p:txBody><a:bodyPr/><a:lstStyle/>`)
+	var bodyAttrs string
+	if sh.NoWrap {
+		bodyAttrs += ` wrap="none"`
+	}
+	if sh.NoInset {
+		bodyAttrs += ` lIns="0" tIns="0" rIns="0" bIns="0"`
+	}
+	bodyPr := `<a:bodyPr` + bodyAttrs + `/>`
+	b.WriteString(`<p:txBody>` + bodyPr + `<a:lstStyle/>`)
 	if len(sh.Paragraphs) == 0 {
 		b.WriteString(`<a:p><a:endParaRPr/></a:p>`)
 	}
@@ -297,8 +536,15 @@ func renderRun(r *Run, relIdx *int, rels *[]slideRel) string {
 	// follow fill/highlight and precede hlinkClick, so emit fonts before Link.
 	if r.FontFamily != "" {
 		inner.WriteString(fmt.Sprintf(`<a:latin typeface="%s"/>`, escapeXML(r.FontFamily)))
+		if r.FontAllScripts {
+			// SVG font-family applies to all scripts, so emit the same typeface
+			// for East Asian and complex-script runs (CJK, Arabic, ...).
+			inner.WriteString(fmt.Sprintf(`<a:ea typeface="%s"/>`, escapeXML(r.FontFamily)))
+		}
 		if r.Code {
 			inner.WriteString(`<a:cs typeface="Noto Sans Mono"/>`)
+		} else if r.FontAllScripts {
+			inner.WriteString(fmt.Sprintf(`<a:cs typeface="%s"/>`, escapeXML(r.FontFamily)))
 		}
 	} else if r.Code {
 		inner.WriteString(`<a:latin typeface="Noto Sans Mono" pitchFamily="49" charset="0"/><a:cs typeface="Noto Sans Mono"/>`)
@@ -324,7 +570,13 @@ func renderRun(r *Run, relIdx *int, rels *[]slideRel) string {
 		s := rPr.String()
 		rPrStr = s[:len(s)-1] + `/>`
 	}
-	return `<a:r>` + rPrStr + `<a:t>` + escapeXML(r.Text) + `</a:t></a:r>`
+	at := `<a:t>`
+	if r.PreserveSpace {
+		// Preserve leading/trailing whitespace (used as a separator between
+		// runs); PowerPoint otherwise strips it.
+		at = `<a:t xml:space="preserve">`
+	}
+	return `<a:r>` + rPrStr + at + escapeXML(r.Text) + `</a:t></a:r>`
 }
 
 // slideRelsXML builds the slide's .rels part from its relationships.

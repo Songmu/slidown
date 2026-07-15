@@ -10,10 +10,18 @@ package render
 
 import (
 	"bytes"
+	"encoding/xml"
+	"errors"
 	"image"
+	"image/png"
+	"io"
+	"regexp"
+	"strconv"
+	"strings"
 
 	"github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/pptx"
+	"github.com/Songmu/slidown/pptx/svgshape"
 )
 
 type converter struct {
@@ -157,13 +165,10 @@ func renderImagesAt(sl *pptx.Slide, images []*slidown.Image, rx, ry, rw, rh int6
 		if img == nil {
 			continue
 		}
-		data := img.Bytes()
-		cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
-		if err != nil || cfg.Width == 0 || cfg.Height == 0 {
+		natW, natH, format, ok := imageNatEMU(img)
+		if !ok {
 			continue
 		}
-		natW := int64(cfg.Width) * emuPerPixel
-		natH := int64(cfg.Height) * emuPerPixel
 
 		// Scale to fit the cell (cellW x regionH) preserving aspect ratio.
 		w, h := fit(natW, natH, cellW, regionH)
@@ -171,12 +176,347 @@ func renderImagesAt(sl *pptx.Slide, images []*slidown.Image, rx, ry, rw, rh int6
 		x := cellX + (cellW-w)/2
 		y := regionY + (regionH-h)/2
 
+		if img.IsSVG() {
+			// Prefer converting the SVG into native, editable PowerPoint shapes.
+			// Fall back to embedding it as a native SVG picture when the
+			// document uses features the converter can't faithfully reproduce.
+			if g, converted := svgshape.Convert(img.Bytes()); converted {
+				g.X, g.Y, g.W, g.H = x, y, w, h
+				sl.AddGroup(g)
+				continue
+			}
+			if pic := buildSVGPicture(img, x, y, w, h); pic != nil {
+				sl.AddPicture(pic)
+			}
+			continue
+		}
+
 		sl.AddPicture(&pptx.Picture{
-			Data: data,
+			Data: img.Bytes(),
 			Ext:  imageExt(format),
 			X:    x, Y: y, W: w, H: h,
 		})
 	}
+}
+
+// imageNatEMU returns the natural image dimensions in EMUs, handling both
+// raster images (decoded via image.DecodeConfig) and SVG images (whose
+// intrinsic size comes from the viewBox/width/height). format is the raster
+// image format ("png"/"jpeg"/"gif") and is empty for SVG. ok is false when the
+// dimensions cannot be determined.
+func imageNatEMU(img *slidown.Image) (natW, natH int64, format string, ok bool) {
+	if img == nil {
+		return 0, 0, "", false
+	}
+	if img.IsSVG() {
+		w, h, err := img.Dimensions()
+		if err != nil || w == 0 || h == 0 {
+			return 0, 0, "", false
+		}
+		return int64(w) * emuPerPixel, int64(h) * emuPerPixel, "", true
+	}
+	cfg, f, err := image.DecodeConfig(bytes.NewReader(img.Bytes()))
+	if err != nil || cfg.Width == 0 || cfg.Height == 0 {
+		return 0, 0, "", false
+	}
+	return int64(cfg.Width) * emuPerPixel, int64(cfg.Height) * emuPerPixel, f, true
+}
+
+// buildSVGPicture builds a native SVG picture: the raster PNG fallback lives in
+// Data (rendered at roughly the placed size for crispness) while SVGData holds
+// the original SVG so PowerPoint 2016+ renders the vector version. For SVGs that
+// reference external/relative resources, SVGData is omitted (best-effort raster
+// only). It returns nil only when the image's dimensions can't be resolved, or
+// when rasterization fails and no native SVG can be embedded either.
+func buildSVGPicture(img *slidown.Image, x, y, w, h int64) *pptx.Picture {
+	natW, natH, _, ok := imageNatEMU(img)
+	if !ok {
+		return nil
+	}
+	// Rasterize at roughly 2x the on-slide size for crispness. Use the larger of
+	// the width/height ratios so the PNG is not under-sized when one dimension is
+	// the tighter bound after fit()'s rounding.
+	ratio := 0.0
+	if natW > 0 {
+		if r := float64(w) / float64(natW); r > ratio {
+			ratio = r
+		}
+	}
+	if natH > 0 {
+		if r := float64(h) / float64(natH); r > ratio {
+			ratio = r
+		}
+	}
+	scale := 2.0
+	if ratio > 0 {
+		scale = 2 * ratio
+	}
+	// An SVG that references external/relative resources (e.g.
+	// <image href="asset.png">) can't be reproduced fully: the pure-Go raster
+	// omits <image> content and the embedded native SVG can't resolve a
+	// relocated relative path. Prefer showing the best-effort raster (which
+	// still renders the SVG's own vector content) over dropping the image, but
+	// don't embed the native SVG whose external reference would dangle.
+	embedSVG := !svgReferencesExternalResource(img.Bytes())
+	png, err := img.RasterPNG(scale)
+	if err != nil || len(png) == 0 {
+		if !embedSVG {
+			// No native SVG and no usable raster: nothing meaningful to embed.
+			return nil
+		}
+		// Keep the native SVG (modern PowerPoint renders it) with a 1x1
+		// transparent PNG so older viewers get a valid, if blank, fallback.
+		png = transparentPNG()
+	}
+	pic := &pptx.Picture{
+		Data: png,
+		Ext:  "png",
+		X:    x, Y: y, W: w, H: h,
+	}
+	if embedSVG {
+		pic.SVGData = img.Bytes()
+	}
+	return pic
+}
+
+// svgReferencesExternalResource reports whether the SVG references a resource
+// the package can't resolve after embedding: a resource-bearing element
+// (<image>, <use>, <feImage>) with an external href, or an external url(...)
+// reference in any attribute value or <style> text. Fragment (#id) and data:
+// URIs are self-contained and ignored. It tokenizes the XML so unrelated text
+// or hrefs on other elements don't cause false positives.
+func svgReferencesExternalResource(b []byte) bool {
+	dec := xml.NewDecoder(bytes.NewReader(b))
+	// Match isSVG's lenient tokenization so common HTML entities or
+	// slightly-noncompliant XML don't abort the scan and mask an external
+	// reference.
+	dec.Strict = false
+	dec.AutoClose = xml.HTMLAutoClose
+	dec.Entity = xml.HTMLEntity
+	inStyle := false
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			// Clean end of input: the whole document was scanned and no
+			// external reference was found.
+			if errors.Is(err, io.EOF) {
+				return false
+			}
+			// A malformed/partially-parseable document may hide an external
+			// reference past the parse error; treat it conservatively as unsafe
+			// to embed as a native SVG.
+			return true
+		}
+		switch t := tok.(type) {
+		case xml.ProcInst:
+			// An xml-stylesheet PI can pull in an external stylesheet; treat a
+			// non-self-contained href as an external reference.
+			if strings.EqualFold(t.Target, "xml-stylesheet") {
+				if href := piHref(string(t.Inst)); href == "" || isExternalRef(href) {
+					return true
+				}
+			}
+		case xml.StartElement:
+			name := strings.ToLower(t.Name.Local)
+			inStyle = name == "style"
+			// Any element other than a navigational <a> can reference a
+			// rendering resource via href (image, use, feImage, linear/radial
+			// gradients, pattern, textPath, mpath, ...). An external href on any
+			// of them cannot be resolved by PowerPoint or the raster fallback,
+			// so treat it as unsafe to embed as native SVG.
+			resource := name != "a"
+			for _, a := range t.Attr {
+				if resource && strings.EqualFold(a.Name.Local, "href") {
+					if isExternalRef(a.Value) {
+						return true
+					}
+				}
+				// A <foreignObject> can embed HTML that references resources via
+				// non-href attributes (e.g. <img src>, <object data>); a
+				// non-fragment target there is an external dependency too.
+				if a.Name.Space == "" &&
+					(strings.EqualFold(a.Name.Local, "src") || strings.EqualFold(a.Name.Local, "data")) &&
+					isExternalRef(a.Value) {
+					return true
+				}
+				// xml:base rebases every relative/fragment reference; a
+				// non-fragment base pulls in an external document, so the SVG
+				// can't be embedded self-contained.
+				if strings.EqualFold(a.Name.Local, "base") &&
+					a.Name.Space == "http://www.w3.org/XML/1998/namespace" &&
+					isExternalRef(a.Value) {
+					return true
+				}
+				if hasExternalStyleRef(a.Value) {
+					return true
+				}
+			}
+		case xml.CharData:
+			if inStyle && hasExternalStyleRef(string(t)) {
+				return true
+			}
+		case xml.Directive:
+			// A DOCTYPE with an external DTD (SYSTEM/PUBLIC) or an internal
+			// subset declaring external entities pulls in resources PowerPoint
+			// can't resolve, so force the raster-only path.
+			if directiveReferencesExternal(string(t)) {
+				return true
+			}
+		case xml.EndElement:
+			inStyle = false
+		}
+	}
+}
+
+// piHref extracts the href pseudo-attribute value from an xml-stylesheet PI's
+// instruction text (e.g. `type="text/css" href="theme.css"`).
+func piHref(inst string) string {
+	m := piHrefRE.FindStringSubmatch(inst)
+	if m == nil {
+		return ""
+	}
+	if m[1] != "" {
+		return m[1]
+	}
+	return m[2]
+}
+
+// piHrefRE matches the href pseudo-attribute of an xml-stylesheet PI.
+var piHrefRE = regexp.MustCompile(`(?i)href\s*=\s*(?:"([^"]*)"|'([^']*)')`)
+
+// directiveExternalRE matches the SYSTEM/PUBLIC external-identifier keywords as
+// whole words so a substring inside a name (e.g. an entity "mysystem") doesn't
+// falsely force the raster-only path.
+var directiveExternalRE = regexp.MustCompile(`(?i)\b(?:SYSTEM|PUBLIC)\b`)
+
+// directiveCommentRE matches an XML comment that may appear in a DOCTYPE's
+// internal subset.
+var directiveCommentRE = regexp.MustCompile(`(?s)<!--.*?-->`)
+
+// directiveReferencesExternal reports whether an XML directive (e.g. a DOCTYPE)
+// declares an external DTD or entity via a SYSTEM or PUBLIC identifier. Comments
+// are stripped and the keywords are matched as whole words (case-insensitively,
+// since a non-strict parser may accept other casings) so a stray "public"/
+// "system" substring or comment doesn't force a false positive.
+func directiveReferencesExternal(d string) bool {
+	d = directiveCommentRE.ReplaceAllString(d, " ")
+	return directiveExternalRE.MatchString(d)
+}
+
+// isExternalRef reports whether a reference target is external (not a #fragment
+// or data: URI).
+func isExternalRef(v string) bool {
+	v = strings.TrimSpace(v)
+	return v != "" && !strings.HasPrefix(v, "#") && !strings.HasPrefix(strings.ToLower(v), "data:")
+}
+
+// hasExternalStyleRef reports whether a style/attribute value references an
+// external resource: a url(...) target or a string-form @import (which carries
+// no url()). CSS escapes are decoded first so an obfuscated external reference
+// (e.g. \75 rl(...) for url(...)) is revealed, and an escaped local fragment
+// (e.g. url(\#grad) or url(\23 grad)) is correctly seen as internal.
+func hasExternalStyleRef(s string) bool {
+	return hasExternalStyleRefRaw(cssUnescape(s))
+}
+
+func hasExternalStyleRefRaw(s string) bool {
+	if hasExternalURLRef(s) {
+		return true
+	}
+	for _, m := range importStringRE.FindAllStringSubmatch(s, -1) {
+		target := m[1]
+		if target == "" {
+			target = m[2]
+		}
+		if isExternalRef(target) {
+			return true
+		}
+	}
+	return false
+}
+
+// cssUnescape decodes CSS escape sequences: a backslash followed by 1-6 hex
+// digits (with one optional trailing whitespace) yields that code point, and a
+// backslash followed by any other character yields that literal character.
+func cssUnescape(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		if s[i] != '\\' {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		i++
+		if i >= len(s) {
+			break
+		}
+		j := i
+		for j < len(s) && j-i < 6 && isHexDigit(s[j]) {
+			j++
+		}
+		if j > i {
+			if v, err := strconv.ParseInt(s[i:j], 16, 32); err == nil {
+				b.WriteRune(rune(v))
+			}
+			i = j
+			if i < len(s) {
+				switch s[i] {
+				case ' ', '\t', '\n', '\r', '\f':
+					i++
+				}
+			}
+			continue
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
+}
+
+func isHexDigit(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
+// importStringRE matches a string-form CSS import, e.g. @import "theme.css". A
+// CSS comment may separate the @import keyword from the string
+// (@import/**/"theme.css"), so comments are accepted as separators.
+var importStringRE = regexp.MustCompile(`(?is)@import\s*(?:/\*.*?\*/\s*)*(?:"([^"]*)"|'([^']*)')`)
+
+// hasExternalURLRef reports whether s contains a url(...) reference whose target
+// is external (not a #fragment or data: URI).
+func hasExternalURLRef(s string) bool {
+	// Scan the lowercased copy only: strings.ToLower can change a string's byte
+	// length, so offsets into it must not be used to slice the original.
+	lower := strings.ToLower(s)
+	for {
+		i := strings.Index(lower, "url(")
+		if i < 0 {
+			return false
+		}
+		rest := lower[i+4:]
+		j := strings.IndexByte(rest, ')')
+		if j < 0 {
+			return false
+		}
+		target := strings.Trim(strings.TrimSpace(rest[:j]), "'\"")
+		if target != "" && !strings.HasPrefix(target, "#") && !strings.HasPrefix(target, "data:") {
+			return true
+		}
+		lower = rest[j+1:]
+	}
+}
+
+// transparentPNG returns a 1x1 fully transparent PNG used as a raster fallback
+// placeholder when rasterization fails but a native SVG is available.
+func transparentPNG() []byte {
+	m := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	var buf bytes.Buffer
+	_ = png.Encode(&buf, m)
+	return buf.Bytes()
 }
 
 // distributeImagePlaceholders binds images to the layout's picture placeholders
@@ -208,18 +548,29 @@ func distributeImagePlaceholders(sl *pptx.Slide, tmpl *pptx.Template, layout *pp
 		if img == nil {
 			continue
 		}
-		data := img.Bytes()
-		cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
-		if err != nil || cfg.Width == 0 || cfg.Height == 0 {
+		natW, natH, format, ok := imageNatEMU(img)
+		if !ok {
 			continue
 		}
-		natW := int64(cfg.Width) * emuPerPixel
-		natH := int64(cfg.Height) * emuPerPixel
 		w, h := fit(natW, natH, pw, ph2)
 		x := px + (pw-w)/2
 		y := py + (ph2-h)/2
+		if img.IsSVG() {
+			// Picture placeholders bind a native picture; SVGs are embedded as
+			// native SVG images (with a raster fallback) rather than converted
+			// to shapes, which would not fill the picture placeholder.
+			pic := buildSVGPicture(img, x, y, w, h)
+			if pic == nil {
+				continue
+			}
+			pic.IsPlaceholder = true
+			pic.Placeholder = pptx.PlaceholderType(ph.Type)
+			pic.PlaceholderIdx = ph.Idx
+			sl.AddPicture(pic)
+			continue
+		}
 		sl.AddPicture(&pptx.Picture{
-			Data:           data,
+			Data:           img.Bytes(),
 			Ext:            imageExt(format),
 			X:              x,
 			Y:              y,

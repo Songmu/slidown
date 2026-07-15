@@ -47,6 +47,8 @@ var visualGoldenCases = []string{
 	"multi_subtitle_overflow.md",
 	"image_placeholder.md",
 	"style_layout.md",
+	"svg_shapes.md",
+	"svg_fallback.md",
 }
 
 // visualTemplateOverride maps a fixture to a non-default template. Fixtures not

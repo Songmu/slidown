@@ -1,0 +1,1224 @@
+package svgshape
+
+import (
+	"bytes"
+	"encoding/xml"
+	"errors"
+	"io"
+	"math"
+	"strconv"
+	"strings"
+	"unicode"
+
+	"github.com/Songmu/slidown/pptx"
+)
+
+const emuPerUnit = 9525.0
+
+// Conversion resource limits guard against pathological or malicious SVGs
+// (deeply nested groups, exponential <use> fan-out) exhausting stack/memory.
+const (
+	maxDepth  = 1000
+	maxShapes = 100000
+	// maxCommands bounds the total number of path commands across all shapes,
+	// so a single huge <path> can't drive unbounded allocations or slide XML.
+	maxCommands = 2000000
+	// maxVisits bounds the total number of walk/use expansions so a small SVG
+	// with a diamond/exponential <use> graph (whose nodes emit no shapes) can't
+	// consume unbounded CPU.
+	maxVisits = 1000000
+	// maxGradientDepth bounds the gradient href reference chain so a long chain
+	// can't exhaust the Go stack during recursive resolution.
+	maxGradientDepth = 1000
+	// maxCSSRules / maxCSSSelectors bound stylesheet size so matchedCSS (scanned
+	// per element) can't cause CPU/memory exhaustion.
+	maxCSSRules     = 10000
+	maxCSSSelectors = 20000
+	// maxCSSWork bounds the total selector-matching comparisons (rules/selectors
+	// scanned per element) so a stylesheet crossed with many elements can't
+	// exhaust CPU.
+	maxCSSWork = 20000000
+	// maxInputBytes caps the raw SVG size so pathological inputs are rejected
+	// before any parsing/allocation work.
+	maxInputBytes = 20 << 20 // 20 MiB
+)
+
+// errTooComplex is returned when parsing exceeds the resource limits above.
+var errTooComplex = errors.New("svg too complex")
+
+type node struct {
+	Name string
+	// rawName is the element's original (case-preserving) local name, used for
+	// case-sensitive CSS type-selector matching (SVG/XML is case-sensitive).
+	rawName  string
+	Attrs    map[string]string
+	Children []*node
+	Text     string
+	// textB accumulates character data during parsing to keep large/split text
+	// nodes linear; it is materialized into Text on the element's end tag.
+	textB *strings.Builder
+	// foreign marks an element in a non-SVG namespace, which is not rendered.
+	foreign bool
+	// parent points to the element's tree parent (nil for the root), used to
+	// compute the inherited style at definition nodes (e.g. gradients in <defs>)
+	// whose stops inherit from their real ancestors, not the referencing shape.
+	parent *node
+	// badCase marks a known SVG element whose name used an invalid case (SVG/XML
+	// is case-sensitive). Such an element is not the real SVG element, so it must
+	// not be converted; it forces the whole-document fallback.
+	badCase bool
+	// textAfterChild is set when character data appears after a child element
+	// within this node (mixed content like <text>A<tspan/>C</text>), which the
+	// parser flattens into Text and Children separately, losing order.
+	textAfterChild bool
+}
+
+const (
+	svgNS   = "http://www.w3.org/2000/svg"
+	xlinkNS = "http://www.w3.org/1999/xlink"
+	xmlNS   = "http://www.w3.org/XML/1998/namespace"
+)
+
+type conv struct {
+	root         *node
+	css          []cssRule
+	defs         map[string]*node
+	gradients    map[string]*pptx.Gradient
+	vbMinX       float64
+	vbMinY       float64
+	vbW          float64
+	vbH          float64
+	chW          int64
+	chH          int64
+	geomCount    int
+	textCount    int
+	cmdCount     int
+	depth        int
+	visits       int
+	cssWork      int
+	cssSelectors int
+	resolvingUse map[string]bool
+}
+
+// Convert parses svg and returns a native pptx group when the whole document is faithfully converted.
+// Unsupported SVG features return ok=false so callers can fall back to embedding the SVG as an image.
+func Convert(svg []byte) (g *pptx.GroupShape, ok bool) {
+	if len(svg) > maxInputBytes {
+		return nil, false
+	}
+	r, err := parseXML(svg)
+	if err != nil || r == nil || r.Name != "svg" || r.foreign || r.badCase {
+		return nil, false
+	}
+	c := &conv{root: r, defs: map[string]*node{}, gradients: map[string]*pptx.Gradient{}, resolvingUse: map[string]bool{}}
+	if !c.initViewport() || !c.collectDefsAndCSS(r) || !c.buildGradients() {
+		return nil, false
+	}
+	g = &pptx.GroupShape{Name: "SVG", X: 0, Y: 0, W: c.chW, H: c.chH, ChX: 0, ChY: 0, ChW: c.chW, ChH: c.chH}
+	st := defaultStyle()
+	if !c.walk(r, st, identity(), g, true) {
+		return nil, false
+	}
+	return g, true
+}
+
+func parseXML(data []byte) (*node, error) {
+	dec := xml.NewDecoder(bytes.NewReader(data))
+	var stack []*node
+	var root *node
+	var rootNS string
+	nodeCount := 0
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return root, nil
+			}
+			return nil, err
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			// Bound the tree so pathological inputs (deeply nested or huge
+			// element counts) cannot allocate an enormous tree before Convert
+			// aborts.
+			if len(stack) >= maxDepth {
+				return nil, errTooComplex
+			}
+			nodeCount++
+			if nodeCount > maxShapes {
+				return nil, errTooComplex
+			}
+			n := &node{Name: strings.ToLower(t.Name.Local), rawName: t.Name.Local, Attrs: map[string]string{}}
+			// SVG/XML element names are case-sensitive; a known element spelled
+			// with the wrong case (e.g. <RECT>, <lineargradient>) is not that
+			// element and must not be converted into geometry/gradients.
+			if canon, known := canonicalSVGElement[n.Name]; known && t.Name.Local != canon {
+				n.badCase = true
+			}
+			if len(stack) == 0 {
+				// The root establishes the document's namespace mode: either the
+				// SVG namespace or (leniently) no namespace. A root in any other
+				// namespace isn't SVG content.
+				rootNS = t.Name.Space
+				n.foreign = t.Name.Space != "" && t.Name.Space != svgNS
+			} else {
+				// Descendants must stay in the root's namespace mode. An element
+				// that switches namespace (e.g. <rect xmlns=""> under an
+				// SVG-namespaced root) is not SVG content and is not rendered.
+				n.foreign = t.Name.Space != rootNS
+			}
+			for _, a := range t.Attr {
+				key := strings.ToLower(a.Name.Local)
+				switch {
+				case a.Name.Space == "":
+					// SVG presentation attributes are unqualified (no namespace);
+					// a prefixed attribute such as svg:fill is not one. Attribute
+					// names are also case-sensitive: a known SVG attribute in the
+					// wrong case (e.g. FILL, WIDTH, VIEWBOX) is unknown, so keep
+					// it under its raw name to force the fallback via
+					// hasUnsupportedAttrs rather than silently activating it.
+					if canon, known := canonicalSVGAttr[key]; known && a.Name.Local != canon {
+						n.Attrs[a.Name.Local] = strings.TrimSpace(a.Value)
+					} else {
+						n.Attrs[key] = strings.TrimSpace(a.Value)
+					}
+				case a.Name.Space == xlinkNS && key == "href":
+					n.Attrs["xlink:href"] = strings.TrimSpace(a.Value)
+				case a.Name.Space == xmlNS && key == "space":
+					n.Attrs["xml:space"] = strings.TrimSpace(a.Value)
+				case a.Name.Space == xmlNS && key == "base":
+					// xml:base changes how href="#id"/url(#id) resolve; the
+					// converter can't honor it, so keep it so hasUnsupportedAttrs
+					// forces the fallback.
+					n.Attrs["xml:base"] = strings.TrimSpace(a.Value)
+				default:
+					// Foreign-namespaced attribute (e.g. an extension); ignore
+					// rather than misinterpret it as an SVG presentation attr.
+				}
+			}
+			if len(stack) == 0 {
+				root = n
+			} else {
+				parent := stack[len(stack)-1]
+				n.parent = parent
+				parent.Children = append(parent.Children, n)
+			}
+			stack = append(stack, n)
+		case xml.EndElement:
+			if len(stack) > 0 {
+				n := stack[len(stack)-1]
+				if n.textB != nil {
+					n.Text = n.textB.String()
+					n.textB = nil
+				}
+				stack = stack[:len(stack)-1]
+			}
+		case xml.CharData:
+			if len(stack) > 0 {
+				top := stack[len(stack)-1]
+				// Any character data after a child element is order-significant
+				// in mixed content (including a whitespace separator between
+				// tspans); flag it so text conversion falls back rather than
+				// reordering.
+				if len(top.Children) > 0 {
+					top.textAfterChild = true
+				}
+				// Accumulate in a builder so a text node split into many small
+				// CharData tokens (e.g. by comments/CDATA) stays linear rather
+				// than quadratic.
+				if top.textB == nil {
+					top.textB = &strings.Builder{}
+				}
+				top.textB.Write(t)
+			}
+		case xml.ProcInst:
+			// An xml-stylesheet PI can restyle the document; we can't evaluate
+			// it, so fall back rather than convert with different output.
+			if strings.EqualFold(t.Target, "xml-stylesheet") {
+				return nil, errTooComplex
+			}
+		case xml.Directive:
+			// A DOCTYPE may carry an internal subset (ATTLIST default
+			// presentation attributes, entity definitions) or an external DTD
+			// that the parser doesn't apply, so converting could differ from a
+			// faithful render. Reject so the whole-document fallback handles it.
+			return nil, errTooComplex
+		}
+	}
+}
+
+func (c *conv) initViewport() bool {
+	// An explicit zero root width/height means the SVG viewport renders nothing;
+	// don't emit geometry for it (the exported Convert API must not treat it as
+	// usable, independent of the render pipeline's Dimensions prefilter).
+	if explicitZeroDim(c.root.Attrs["width"]) || explicitZeroDim(c.root.Attrs["height"]) {
+		return false
+	}
+	if vb := c.root.Attrs["viewbox"]; vb != "" {
+		n, ok := parseNumberList(vb)
+		if !ok || len(n) != 4 || n[2] <= 0 || n[3] <= 0 {
+			return false
+		}
+		c.vbMinX, c.vbMinY, c.vbW, c.vbH = n[0], n[1], n[2], n[3]
+		// A viewBox combined with a root width/height of a different aspect
+		// ratio (or a non-default preserveAspectRatio) needs the SVG viewport
+		// transform / letterboxing, which isn't modeled; fall back so the
+		// native SVG picture renders it faithfully.
+		if pa := strings.TrimSpace(c.root.Attrs["preserveaspectratio"]); pa != "" &&
+			!strings.EqualFold(pa, "xMidYMid meet") && !strings.EqualFold(pa, "xMidYMid") {
+			return false
+		}
+		w, okw := parseRootLength(c.root.Attrs["width"])
+		h, okh := parseRootLength(c.root.Attrs["height"])
+		if okw && okh && w > 0 && h > 0 {
+			// Compare aspect ratios (w/h vs vbW/vbH) with cross-multiplication.
+			if math.Abs(w*c.vbH-h*c.vbW) > 1e-6*w*h {
+				return false
+			}
+		}
+	} else {
+		// No viewBox: fall back per-dimension to the SVG spec defaults
+		// (300x150) so a valid width/height isn't discarded when only the other
+		// is missing/invalid. This matches Image.Dimensions()'s handling,
+		// including default-font relative units (em/rem/ex/ch).
+		w, okw := parseRootLength(c.root.Attrs["width"])
+		h, okh := parseRootLength(c.root.Attrs["height"])
+		if !okw || w <= 0 {
+			w = 300
+		}
+		if !okh || h <= 0 {
+			h = 150
+		}
+		c.vbW, c.vbH = w, h
+	}
+	// DrawingML ST_PositiveCoordinate tops out at 27,273,042,316,900 EMU, so a
+	// huge (otherwise valid) viewBox would write schema-invalid extents; fall
+	// back to the native picture instead.
+	const maxCoordEMU = 27273042316900.0
+	wf, hf := c.vbW*emuPerUnit, c.vbH*emuPerUnit
+	if !(wf > 0 && hf > 0 && wf <= maxCoordEMU && hf <= maxCoordEMU) {
+		return false
+	}
+	c.chW, c.chH = round(wf), round(hf)
+	return true
+}
+
+func (c *conv) collectDefsAndCSS(n *node) bool {
+	if n != c.root && (n.foreign || n.badCase) {
+		// Foreign-namespace or wrong-case elements aren't the real SVG element;
+		// don't interpret their <style>, ids, or element names as SVG content.
+		return true
+	}
+	if n != c.root && isFallbackElement(n.Name) {
+		return false
+	}
+	if n.Name == "style" {
+		// Only unconditional CSS stylesheets are applied. A non-CSS type or a
+		// media query the converter can't evaluate would be applied
+		// unconditionally here, so fall back instead.
+		if ty := strings.TrimSpace(strings.ToLower(n.Attrs["type"])); ty != "" && ty != "text/css" {
+			return false
+		}
+		if md := strings.TrimSpace(strings.ToLower(n.Attrs["media"])); md != "" && md != "all" && md != "screen" {
+			return false
+		}
+		rules, ok := parseCSS(n.Text)
+		if !ok {
+			return false
+		}
+		// Bound the cumulative rule/selector counts across all <style> elements
+		// (parseCSS's caps are per-stylesheet) so many small stylesheets can't
+		// grow c.css without bound.
+		sels := 0
+		for _, r := range rules {
+			sels += len(r.sels)
+		}
+		if len(c.css)+len(rules) > maxCSSRules || c.cssSelectors+sels > maxCSSSelectors {
+			return false
+		}
+		c.cssSelectors += sels
+		c.css = append(c.css, rules...)
+	}
+	if id := n.Attrs["id"]; id != "" {
+		c.defs[id] = n
+	}
+	for _, ch := range n.Children {
+		if !c.collectDefsAndCSS(ch) {
+			return false
+		}
+	}
+	return true
+}
+
+// displayNone reports whether the resolved style sets display:none, which
+// removes the element and its whole subtree.
+func displayNone(st style) bool {
+	return strings.EqualFold(strings.TrimSpace(st.get("display")), "none")
+}
+
+// visibilityHidden reports whether the resolved style hides the element via
+// visibility:hidden/collapse. Unlike display:none, a descendant can override it
+// with visibility:visible, so this is only applied per painted leaf.
+func visibilityHidden(st style) bool {
+	v := strings.ToLower(strings.TrimSpace(st.get("visibility")))
+	return v == "hidden" || v == "collapse"
+}
+
+// containerOpacity reports the element's own opacity (0..1) when it is a
+// container whose opacity would need group compositing that DrawingML custom
+// geometry can't reproduce.
+func containerOpacity(st style) (float64, bool) {
+	op, ok := parseUnit(st.get("opacity"), 1)
+	if !ok {
+		return 0, false
+	}
+	return op, true
+}
+
+// tightenGradientBounds rebases a gradient-filled shape onto its own bounding
+// box so a DrawingML gradient (which spans the shape's transform rectangle)
+// matches SVG's objectBoundingBox extent. It shifts every path point so the
+// bbox origin is 0,0 and sets the shape/path extent to the bbox size. Returns
+// false when the bbox is degenerate.
+func tightenGradientBounds(gs *pptx.GeomShape) bool {
+	minX, minY, maxX, maxY, ok := geomPathBounds(gs)
+	if !ok {
+		return false
+	}
+	w, h := maxX-minX, maxY-minY
+	if w <= 0 || h <= 0 {
+		return false
+	}
+	for _, p := range gs.Paths {
+		for _, cmd := range p.Cmds {
+			for i := range cmd.Pts {
+				cmd.Pts[i].X -= minX
+				cmd.Pts[i].Y -= minY
+			}
+		}
+	}
+	gs.X, gs.Y, gs.W, gs.H = minX, minY, w, h
+	gs.PathW, gs.PathH = w, h
+	return true
+}
+
+// geomPathBounds returns the tight bounding box of a path in EMU, evaluating
+// Bezier extrema (not just control points, which can lie outside the curve).
+func geomPathBounds(gs *pptx.GeomShape) (minX, minY, maxX, maxY int64, ok bool) {
+	first := true
+	var cur, start pptx.PathPoint
+	acc := func(p pptx.PathPoint) {
+		if first {
+			minX, minY, maxX, maxY = p.X, p.Y, p.X, p.Y
+			first = false
+			return
+		}
+		if p.X < minX {
+			minX = p.X
+		}
+		if p.Y < minY {
+			minY = p.Y
+		}
+		if p.X > maxX {
+			maxX = p.X
+		}
+		if p.Y > maxY {
+			maxY = p.Y
+		}
+	}
+	accF := func(x, y float64) { acc(pptx.PathPoint{X: int64(math.Round(x)), Y: int64(math.Round(y))}) }
+	for _, p := range gs.Paths {
+		for _, cmd := range p.Cmds {
+			switch cmd.Verb {
+			case pptx.MoveTo:
+				if len(cmd.Pts) >= 1 {
+					cur = cmd.Pts[0]
+					start = cur
+					acc(cur)
+				}
+			case pptx.LineTo:
+				if len(cmd.Pts) >= 1 {
+					cur = cmd.Pts[0]
+					acc(cur)
+				}
+			case pptx.ClosePath:
+				// A subsequent segment resumes from the subpath's start point.
+				cur = start
+			case pptx.CubicTo:
+				if len(cmd.Pts) >= 3 {
+					p0, p1, p2, p3 := cur, cmd.Pts[0], cmd.Pts[1], cmd.Pts[2]
+					acc(p3)
+					for _, t := range cubicExtrema(float64(p0.X), float64(p1.X), float64(p2.X), float64(p3.X)) {
+						accF(cubicAt(float64(p0.X), float64(p1.X), float64(p2.X), float64(p3.X), t), cubicAt(float64(p0.Y), float64(p1.Y), float64(p2.Y), float64(p3.Y), t))
+					}
+					for _, t := range cubicExtrema(float64(p0.Y), float64(p1.Y), float64(p2.Y), float64(p3.Y)) {
+						accF(cubicAt(float64(p0.X), float64(p1.X), float64(p2.X), float64(p3.X), t), cubicAt(float64(p0.Y), float64(p1.Y), float64(p2.Y), float64(p3.Y), t))
+					}
+					cur = p3
+				}
+			case pptx.QuadTo:
+				if len(cmd.Pts) >= 2 {
+					p0, p1, p2 := cur, cmd.Pts[0], cmd.Pts[1]
+					acc(p2)
+					for _, t := range quadExtrema(float64(p0.X), float64(p1.X), float64(p2.X)) {
+						accF(quadAt(float64(p0.X), float64(p1.X), float64(p2.X), t), quadAt(float64(p0.Y), float64(p1.Y), float64(p2.Y), t))
+					}
+					for _, t := range quadExtrema(float64(p0.Y), float64(p1.Y), float64(p2.Y)) {
+						accF(quadAt(float64(p0.X), float64(p1.X), float64(p2.X), t), quadAt(float64(p0.Y), float64(p1.Y), float64(p2.Y), t))
+					}
+					cur = p2
+				}
+			}
+		}
+	}
+	return minX, minY, maxX, maxY, !first
+}
+
+func cubicAt(p0, p1, p2, p3, t float64) float64 {
+	u := 1 - t
+	return u*u*u*p0 + 3*u*u*t*p1 + 3*u*t*t*p2 + t*t*t*p3
+}
+
+// fpoint is a floating-point 2D point/vector used for stroke-join geometry.
+type fpoint struct{ x, y float64 }
+
+func fp(p pptx.PathPoint) fpoint { return fpoint{float64(p.X), float64(p.Y)} }
+func fsub(a, b fpoint) fpoint    { return fpoint{a.x - b.x, a.y - b.y} }
+func funit(v fpoint) (fpoint, bool) {
+	m := math.Hypot(v.x, v.y)
+	if m < 1e-9 {
+		return fpoint{}, false
+	}
+	return fpoint{v.x / m, v.y / m}, true
+}
+
+// segTangents returns the (non-unit) direction leaving the start point and the
+// direction arriving at the end point for a segment. kind: 0=line, 1=quad
+// (c1 is the control), 2=cubic (c1, c2 are the controls).
+func segTangents(p0, c1, c2, p3 fpoint, kind int) (startT, endT fpoint) {
+	nz := func(cands ...fpoint) fpoint {
+		for _, c := range cands {
+			if _, ok := funit(c); ok {
+				return c
+			}
+		}
+		return fsub(p3, p0)
+	}
+	switch kind {
+	case 2:
+		startT = nz(fsub(c1, p0), fsub(c2, p0), fsub(p3, p0))
+		endT = nz(fsub(p3, c2), fsub(p3, c1), fsub(p3, p0))
+	case 1:
+		startT = nz(fsub(c1, p0), fsub(p3, p0))
+		endT = nz(fsub(p3, c1), fsub(p3, p0))
+	default:
+		startT = fsub(p3, p0)
+		endT = startT
+	}
+	return startT, endT
+}
+
+// strokeExtremesExceedViewport reports whether a stroked path paints outside the
+// viewport by more than tol at a miter join or a square line cap. A miter apex
+// extends halfWidth/sin(theta/2) along the join (bevelled beyond the miter limit
+// of 4); a square cap extends halfWidth past an open endpoint along the tangent,
+// so its far corners reach up to sqrt(2)*halfWidth on a diagonal. Each subpath is
+// evaluated independently.
+func (c *conv) strokeExtremesExceedViewport(gs *pptx.GeomShape, halfWidth float64, join, capStyle string, tol int64) bool {
+	const miterLimit = 4.0
+	outside := func(v fpoint, r float64) bool {
+		ft := float64(tol)
+		return v.x-r < -ft || v.y-r < -ft ||
+			v.x+r > float64(c.chW)+ft || v.y+r > float64(c.chH)+ft
+	}
+	// A join between an incoming tangent (pointing into the vertex) and an
+	// outgoing tangent (pointing out of it): dot = cos(delta) where delta is the
+	// turn, and sin(theta/2) = sqrt((1+dot)/2).
+	checkJoin := func(v, inT, outT fpoint) bool {
+		a, ok1 := funit(inT)
+		b, ok2 := funit(outT)
+		if !ok1 || !ok2 {
+			return false
+		}
+		dot := a.x*b.x + a.y*b.y
+		sinHalf := math.Sqrt((1 + dot) / 2)
+		r := halfWidth
+		if sinHalf > 1e-6 {
+			if m := halfWidth / sinHalf; m <= miterLimit*halfWidth {
+				r = m
+			}
+		}
+		return outside(v, r)
+	}
+	// A square cap extends the endpoint by halfWidth along the outward tangent,
+	// with two corners at +/- halfWidth perpendicular.
+	checkCap := func(v, outward fpoint) bool {
+		t, ok := funit(outward)
+		if !ok {
+			return false
+		}
+		n := fpoint{-t.y, t.x}
+		for _, s := range []float64{1, -1} {
+			corner := fpoint{
+				v.x + halfWidth*t.x + s*halfWidth*n.x,
+				v.y + halfWidth*t.y + s*halfWidth*n.y,
+			}
+			if outside(corner, 0) {
+				return true
+			}
+		}
+		return false
+	}
+	type seg struct{ startT, endT, start, end fpoint }
+	flush := func(segs []seg, closed bool) bool {
+		for i := 0; i+1 < len(segs); i++ {
+			if join == "miter" && checkJoin(segs[i].end, segs[i].endT, segs[i+1].startT) {
+				return true
+			}
+		}
+		if closed {
+			if join == "miter" && len(segs) >= 2 &&
+				checkJoin(segs[0].start, segs[len(segs)-1].endT, segs[0].startT) {
+				return true
+			}
+			return false
+		}
+		// Open subpath: its two endpoints are square/round/flat caps.
+		if capStyle == "sq" && len(segs) > 0 {
+			first, last := segs[0], segs[len(segs)-1]
+			// Outward tangent points away from the path at each endpoint.
+			if checkCap(first.start, fpoint{-first.startT.x, -first.startT.y}) ||
+				checkCap(last.end, last.endT) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, p := range gs.Paths {
+		var segs []seg
+		var cur, startPt fpoint
+		closed := false
+		for _, cmd := range p.Cmds {
+			switch cmd.Verb {
+			case pptx.MoveTo:
+				// A new subpath begins: evaluate the accumulated one first.
+				if flush(segs, closed) {
+					return true
+				}
+				segs = segs[:0]
+				closed = false
+				if len(cmd.Pts) >= 1 {
+					cur = fp(cmd.Pts[0])
+					startPt = cur
+				}
+			case pptx.LineTo:
+				if len(cmd.Pts) >= 1 {
+					e := fp(cmd.Pts[0])
+					st, et := segTangents(cur, fpoint{}, fpoint{}, e, 0)
+					segs = append(segs, seg{st, et, cur, e})
+					cur = e
+				}
+			case pptx.QuadTo:
+				if len(cmd.Pts) >= 2 {
+					c1, e := fp(cmd.Pts[0]), fp(cmd.Pts[1])
+					st, et := segTangents(cur, c1, fpoint{}, e, 1)
+					segs = append(segs, seg{st, et, cur, e})
+					cur = e
+				}
+			case pptx.CubicTo:
+				if len(cmd.Pts) >= 3 {
+					c1, c2, e := fp(cmd.Pts[0]), fp(cmd.Pts[1]), fp(cmd.Pts[2])
+					st, et := segTangents(cur, c1, c2, e, 2)
+					segs = append(segs, seg{st, et, cur, e})
+					cur = e
+				}
+			case pptx.ClosePath:
+				if len(segs) > 0 && (cur.x != startPt.x || cur.y != startPt.y) {
+					st, et := segTangents(cur, fpoint{}, fpoint{}, startPt, 0)
+					segs = append(segs, seg{st, et, cur, startPt})
+					cur = startPt
+				}
+				closed = true
+			}
+		}
+		if flush(segs, closed) {
+			return true
+		}
+	}
+	return false
+}
+
+func cubicExtrema(p0, p1, p2, p3 float64) []float64 {
+	// B'(t) = 3[(p1-p0)(1-t)^2 + 2(p2-p1)(1-t)t + (p3-p2)t^2]; solve a t^2+b t+c=0.
+	a := -p0 + 3*p1 - 3*p2 + p3
+	b := 2 * (p0 - 2*p1 + p2)
+	cc := p1 - p0
+	var out []float64
+	if math.Abs(a) < 1e-12 {
+		if math.Abs(b) > 1e-12 {
+			out = appendRoot(out, -cc/b)
+		}
+		return out
+	}
+	disc := b*b - 4*a*cc
+	if disc < 0 {
+		return out
+	}
+	sq := math.Sqrt(disc)
+	out = appendRoot(out, (-b+sq)/(2*a))
+	out = appendRoot(out, (-b-sq)/(2*a))
+	return out
+}
+
+func quadAt(p0, p1, p2, t float64) float64 {
+	u := 1 - t
+	return u*u*p0 + 2*u*t*p1 + t*t*p2
+}
+
+func quadExtrema(p0, p1, p2 float64) []float64 {
+	den := p0 - 2*p1 + p2
+	if math.Abs(den) < 1e-12 {
+		return nil
+	}
+	return appendRoot(nil, (p0-p1)/den)
+}
+
+func appendRoot(out []float64, t float64) []float64 {
+	if t > 0 && t < 1 {
+		return append(out, t)
+	}
+	return out
+}
+
+func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root bool) bool {
+	c.depth++
+	defer func() { c.depth-- }()
+	c.visits++
+	if c.depth > maxDepth || c.geomCount+c.textCount > maxShapes || c.visits > maxVisits {
+		return false
+	}
+	if !root && isFallbackElement(n.Name) {
+		return false
+	}
+	if !root && n.foreign {
+		// Foreign-namespace content is not rendered by SVG.
+		return true
+	}
+	if !root && n.badCase {
+		// A wrong-case known element can't be faithfully interpreted; fall back.
+		return false
+	}
+	if !root && n.Name == "style" {
+		return true
+	}
+	if !root && (n.Name == "title" || n.Name == "desc" || n.Name == "metadata") {
+		return true
+	}
+	if !root && n.Name == "defs" {
+		return true
+	}
+	if hasUnsupportedAttrs(n) {
+		return false
+	}
+
+	st, ok := c.resolveStyle(n, inherited)
+	if !ok {
+		return false
+	}
+	if displayNone(st) {
+		// display:none removes the element and its whole subtree (including the
+		// root <svg>, which then renders nothing).
+		return true
+	}
+	if tr := n.Attrs["transform"]; tr != "" {
+		tm, ok := parseTransform(tr)
+		if !ok {
+			return false
+		}
+		m = m.mul(tm)
+	}
+
+	switch n.Name {
+	case "svg", "g":
+		// A nested <svg> establishes its own viewport (x/y/width/height/viewBox/
+		// preserveAspectRatio) that isn't modeled; only the root is handled.
+		if n.Name == "svg" && !root {
+			return false
+		}
+		// A container with opacity < 1 requires group compositing (its content
+		// is flattened and blended as a whole), which flat custom-geometry
+		// shapes can't reproduce; fall back to the native SVG picture.
+		if op, ok := containerOpacity(st); !ok {
+			return false
+		} else if op < 1 {
+			return false
+		}
+		// Keep walking visibility-hidden containers: a descendant may override
+		// with visibility:visible.
+		for _, ch := range n.Children {
+			if !c.walk(ch, st, m, g, false) {
+				return false
+			}
+		}
+		return true
+	case "symbol":
+		// A <symbol> renders only when instantiated by <use>; encountered
+		// directly in the tree it draws nothing.
+		return true
+	case "path", "rect", "circle", "ellipse", "line", "polyline", "polygon":
+		gp, forceFillNone, ok := c.geometry(n, m)
+		if !ok {
+			return false
+		}
+		if len(gp.Cmds) == 0 {
+			return true
+		}
+		c.cmdCount += len(gp.Cmds)
+		if c.cmdCount > maxCommands {
+			return false
+		}
+		if visibilityHidden(st) {
+			return true
+		}
+		fill, stroke, ok := c.paint(st, m, forceFillNone)
+		if !ok {
+			return false
+		}
+		// DrawingML custom geometry fills always use nonzero winding, so any
+		// filled evenodd path (holes, or a self-intersecting subpath such as a
+		// star) can mis-render; fall back to embedding the SVG as an image.
+		evenOdd := strings.EqualFold(st.get("fill-rule"), "evenodd")
+		if evenOdd && fill.Kind != pptx.FillNone {
+			return false
+		}
+		// A DrawingML gradient spans the shape's own transform rectangle, so a
+		// gradient-filled shape must use tight element bounds (not the whole
+		// viewBox) to match SVG objectBoundingBox, and its direction can't be
+		// rotated/skewed; fall back for rotation/skew.
+		gs := &pptx.GeomShape{Name: shapeName(n, "Shape", c.geomCount+1), X: 0, Y: 0, W: c.chW, H: c.chH, PathW: c.chW, PathH: c.chH, Paths: []pptx.GeomPath{gp}, Fill: fill, Stroke: stroke, EvenOdd: evenOdd}
+		// SVG clips painting to the root viewport by default, but a PowerPoint
+		// group does not clip its children. Fall back when a shape's geometry —
+		// or a stroke painted around it — extends beyond the viewBox, since an
+		// SVG rendered as an image would be clipped there. Only EMU rounding
+		// slack is tolerated; any real overhang leaks pixels past the image rect.
+		if bx0, by0, bx1, by1, ok := geomPathBounds(gs); ok {
+			const tol = 16 // EMU, absorbs rounding of edge-aligned content
+			if bx0 < -tol || by0 < -tol || bx1 > c.chW+tol || by1 > c.chH+tol {
+				return false
+			}
+			if stroke != nil {
+				// A stroke paints half its width perpendicular to the path, so
+				// that half-width is the baseline overhang past the geometry
+				// bounds. Any overhang beyond rounding slack leaks outside the
+				// image rectangle (SVG-as-image clips to the viewport).
+				se := stroke.Width / 2
+				if bx0-se < -tol || by0-se < -tol ||
+					bx1+se > c.chW+tol || by1+se > c.chH+tol {
+					return false
+				}
+				// A miter join adds a spike beyond the half-width, and a square
+				// cap extends past open endpoints; check the actual per-join
+				// apex and per-cap corners so a shape near the edge can't leak.
+				if c.strokeExtremesExceedViewport(gs, float64(se), stroke.Join, stroke.Cap, tol) {
+					return false
+				}
+			}
+		}
+		if fill.Kind == pptx.FillGradient {
+			// <a:lin> only expresses a direction over the shape's box, so a
+			// rotation, skew or axis reflection baked into the geometry can't be
+			// reflected in the gradient; fall back for those.
+			if m.b != 0 || m.c != 0 || m.a < 0 || m.d < 0 {
+				return false
+			}
+			if !tightenGradientBounds(gs) {
+				return false
+			}
+		}
+		c.geomCount++
+		g.Geoms = append(g.Geoms, gs)
+		g.Children = append(g.Children, pptx.GroupChild{Geom: gs})
+		return true
+	case "use":
+		return c.expandUse(n, st, m, g)
+	case "text":
+		return c.text(n, st, m, g)
+	default:
+		if root {
+			return true
+		}
+		return false
+	}
+}
+
+func (c *conv) geometry(n *node, m matrix) (pptx.GeomPath, bool, bool) {
+	switch n.Name {
+	case "path":
+		return parsePath(n.Attrs["d"], maxCommands-c.cmdCount, func(x, y float64) pptx.PathPoint { return c.point(m.apply(point{x, y})) })
+	case "rect":
+		x, ok1 := attrLen(n, "x", 0)
+		y, ok2 := attrLen(n, "y", 0)
+		w, ok3 := attrLen(n, "width", 0)
+		h, ok4 := attrLen(n, "height", 0)
+		if !ok1 || !ok2 || !ok3 || !ok4 || w < 0 || h < 0 {
+			return pptx.GeomPath{}, false, false
+		}
+		rx, rxSet, ok5 := rectRadius(n, "rx")
+		ry, rySet, ok6 := rectRadius(n, "ry")
+		if !ok5 || !ok6 || rx < 0 || ry < 0 {
+			return pptx.GeomPath{}, false, false
+		}
+		// SVG "auto" (omitted) radius inherits the other axis; an explicit value
+		// (including 0, which disables rounding on that axis) is kept as-is.
+		if !rxSet && rySet {
+			rx = ry
+		}
+		if !rySet && rxSet {
+			ry = rx
+		}
+		return rectPath(x, y, w, h, rx, ry, func(x, y float64) pptx.PathPoint { return c.point(m.apply(point{x, y})) }), false, true
+	case "circle":
+		cx, ok1 := attrLen(n, "cx", 0)
+		cy, ok2 := attrLen(n, "cy", 0)
+		r, ok3 := attrLen(n, "r", 0)
+		if !ok1 || !ok2 || !ok3 || r < 0 {
+			return pptx.GeomPath{}, false, false
+		}
+		return ellipsePath(cx, cy, r, r, func(x, y float64) pptx.PathPoint { return c.point(m.apply(point{x, y})) }), false, true
+	case "ellipse":
+		cx, ok1 := attrLen(n, "cx", 0)
+		cy, ok2 := attrLen(n, "cy", 0)
+		rx, ok3 := attrLen(n, "rx", 0)
+		ry, ok4 := attrLen(n, "ry", 0)
+		if !ok1 || !ok2 || !ok3 || !ok4 || rx < 0 || ry < 0 {
+			return pptx.GeomPath{}, false, false
+		}
+		return ellipsePath(cx, cy, rx, ry, func(x, y float64) pptx.PathPoint { return c.point(m.apply(point{x, y})) }), false, true
+	case "line":
+		x1, ok1 := attrLen(n, "x1", 0)
+		y1, ok2 := attrLen(n, "y1", 0)
+		x2, ok3 := attrLen(n, "x2", 0)
+		y2, ok4 := attrLen(n, "y2", 0)
+		if !ok1 || !ok2 || !ok3 || !ok4 {
+			return pptx.GeomPath{}, false, false
+		}
+		return pptx.GeomPath{Cmds: []pptx.PathCmd{{Verb: pptx.MoveTo, Pts: []pptx.PathPoint{c.point(m.apply(point{x1, y1}))}}, {Verb: pptx.LineTo, Pts: []pptx.PathPoint{c.point(m.apply(point{x2, y2}))}}}}, true, true
+	case "polyline", "polygon":
+		// Pass the remaining command budget so parsePoints rejects an
+		// over-size attribute before allocating the full point slice.
+		pts, ok := parsePoints(n.Attrs["points"], maxCommands-c.cmdCount)
+		if !ok {
+			return pptx.GeomPath{}, false, false
+		}
+		if len(pts) < 2 {
+			// Fewer than two points can't form a line/polygon; emit no
+			// geometry (rather than a MoveTo-less ClosePath) so the shape is
+			// skipped as empty.
+			return pptx.GeomPath{}, false, true
+		}
+		cmds := []pptx.PathCmd{}
+		for i, p := range pts {
+			verb := pptx.LineTo
+			if i == 0 {
+				verb = pptx.MoveTo
+			}
+			cmds = append(cmds, pptx.PathCmd{Verb: verb, Pts: []pptx.PathPoint{c.point(m.apply(p))}})
+		}
+		if n.Name == "polygon" {
+			cmds = append(cmds, pptx.PathCmd{Verb: pptx.ClosePath})
+		}
+		return pptx.GeomPath{Cmds: cmds}, false, true
+	}
+	return pptx.GeomPath{}, false, false
+}
+
+func (c *conv) point(p point) pptx.PathPoint {
+	return pptx.PathPoint{X: round((p.x - c.vbMinX) * emuPerUnit), Y: round((p.y - c.vbMinY) * emuPerUnit)}
+}
+
+func attrLen(n *node, name string, def float64) (float64, bool) {
+	if v := n.Attrs[name]; v != "" {
+		return parseLength(v, false)
+	}
+	return def, true
+}
+
+// rectRadius parses a rect corner radius. present reports whether the attribute
+// was explicitly set (an omitted radius is "auto" and inherits the other axis);
+// ok is false only when a present value is unparseable.
+func rectRadius(n *node, name string) (val float64, present, ok bool) {
+	v, exists := n.Attrs[name]
+	if !exists || v == "" {
+		return 0, false, true
+	}
+	f, valid := parseLength(v, false)
+	if !valid {
+		return 0, true, false
+	}
+	return f, true, true
+}
+func parseLength(s string, allowPercent bool) (float64, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	if strings.HasSuffix(s, "%") {
+		return 0, allowPercent
+	}
+	units := []string{"px", "pt", "pc", "mm", "cm", "in"}
+	unit := ""
+	for _, u := range units {
+		if strings.HasSuffix(strings.ToLower(s), u) {
+			unit = u
+			s = strings.TrimSpace(s[:len(s)-len(u)])
+			break
+		}
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, false
+	}
+	switch unit {
+	case "pt":
+		v *= 96.0 / 72.0
+	case "pc":
+		v *= 16
+	case "mm":
+		v *= 96.0 / 25.4
+	case "cm":
+		v *= 96.0 / 2.54
+	case "in":
+		v *= 96
+	}
+	return v, true
+}
+func round(v float64) int64 { return int64(math.Round(v)) }
+
+// svgLengthUnits is the set of recognized length-unit suffixes (plus "" and
+// "%"); any other suffix is an invalid, not-zero dimension.
+var svgLengthUnits = map[string]bool{
+	"": true, "%": true, "px": true, "pt": true, "pc": true, "mm": true,
+	"cm": true, "in": true, "em": true, "rem": true, "ex": true, "ch": true,
+	"q": true, "vw": true, "vh": true, "vmin": true, "vmax": true,
+}
+
+// explicitZeroDim reports whether s is an explicit zero length (a unitless zero,
+// zero percent, or zero in a recognized unit). An unknown/malformed unit is an
+// invalid dimension, not a zero.
+func explicitZeroDim(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	n := len(s)
+	for n > 0 {
+		ch := s[n-1]
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '%' {
+			n--
+			continue
+		}
+		break
+	}
+	if !svgLengthUnits[strings.ToLower(strings.TrimSpace(s[n:]))] {
+		return false
+	}
+	v, err := strconv.ParseFloat(strings.TrimSpace(s[:n]), 64)
+	return err == nil && v == 0
+}
+
+// parseRootLength parses a root width/height, additionally resolving the
+// default-font relative units (em/rem/ex/ch at 16px) so a valid relative size
+// participates in the viewport aspect-ratio check. Percentages and unknown
+// units are rejected (the caller then keeps the viewBox aspect).
+func parseRootLength(s string) (float64, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.HasSuffix(s, "%") {
+		return 0, false
+	}
+	rel := map[string]float64{"em": 16, "rem": 16, "ex": 8, "ch": 8}
+	for _, n := range []int{3, 2} {
+		if len(s) > n {
+			if m, ok := rel[strings.ToLower(s[len(s)-n:])]; ok {
+				v, err := strconv.ParseFloat(strings.TrimSpace(s[:len(s)-n]), 64)
+				if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+					return 0, false
+				}
+				return v * m, true
+			}
+		}
+	}
+	return parseLength(s, false)
+}
+
+func shapeName(n *node, prefix string, i int) string {
+	if id := n.Attrs["id"]; id != "" {
+		return id
+	}
+	return prefix + " " + strconv.Itoa(i)
+}
+func isFallbackElement(name string) bool {
+	return name == "clippath" || name == "mask" || name == "pattern" || name == "filter" || name == "image" || name == "foreignobject" || name == "textpath" || name == "switch" || name == "set" || strings.HasPrefix(name, "animate")
+}
+
+// allowedAttrs is the set of attribute local-names the converter understands
+// (structural geometry + supported presentation attributes). Any other
+// rendering-affecting attribute triggers the whole-SVG fallback rather than
+// being silently ignored (e.g. vector-effect, font-weight, letter-spacing).
+var allowedAttrs = map[string]bool{
+	// structural / geometry
+	"id": true, "class": true, "style": true, "transform": true,
+	"x": true, "y": true, "width": true, "height": true,
+	"cx": true, "cy": true, "r": true, "rx": true, "ry": true,
+	"d": true, "points": true, "x1": true, "y1": true, "x2": true, "y2": true,
+	"href": true, "xlink:href": true,
+	"viewbox": true, "preserveaspectratio": true, "version": true,
+	"baseprofile": true, "space": true, "lang": true, "overflow": true,
+	"role": true, "focusable": true, "tabindex": true, "xml:space": true,
+	// gradients
+	"offset": true, "gradientunits": true, "gradienttransform": true,
+	"spreadmethod": true, "fx": true, "fy": true, "fr": true,
+}
+
+// canonicalSVGElement maps a lowercased element name to its case-sensitive
+// canonical SVG spelling, for the elements the converter interprets. An element
+// whose name matches case-insensitively but not exactly is not the real SVG
+// element and must not be converted.
+var canonicalSVGElement = map[string]string{
+	"svg": "svg", "g": "g", "defs": "defs", "symbol": "symbol", "use": "use",
+	"path": "path", "rect": "rect", "circle": "circle", "ellipse": "ellipse",
+	"line": "line", "polyline": "polyline", "polygon": "polygon",
+	"text": "text", "tspan": "tspan", "style": "style",
+	"lineargradient": "linearGradient", "radialgradient": "radialGradient", "stop": "stop",
+}
+
+// canonicalSVGAttr maps a lowercased attribute name to its case-sensitive
+// canonical SVG spelling, derived from the attributes the converter recognizes.
+var canonicalSVGAttr = buildCanonicalAttrs()
+
+func buildCanonicalAttrs() map[string]string {
+	m := map[string]string{}
+	for k := range allowedAttrs {
+		m[k] = k
+	}
+	for k := range inheritedProps {
+		m[k] = k
+	}
+	m["stop-color"] = "stop-color"
+	m["stop-opacity"] = "stop-opacity"
+	// camelCase SVG attributes whose canonical spelling differs from lowercase.
+	for lc, canon := range map[string]string{
+		"viewbox":             "viewBox",
+		"preserveaspectratio": "preserveAspectRatio",
+		"baseprofile":         "baseProfile",
+		"gradientunits":       "gradientUnits",
+		"gradienttransform":   "gradientTransform",
+		"spreadmethod":        "spreadMethod",
+	} {
+		m[lc] = canon
+	}
+	return m
+}
+
+// hasUnsupportedAttrs reports whether an element carries any attribute the
+// converter can't faithfully honor. Supported style properties (inheritedProps,
+// stop-color/stop-opacity) and structural attributes are allowed; xmlns/xml:*,
+// aria-*, data-* and event handlers are harmless and ignored; everything else
+// forces a fallback.
+func hasUnsupportedAttrs(n *node) bool {
+	for k := range n.Attrs {
+		if k == "xml:base" {
+			// xml:base is rendering-relevant (it rebases href/url references)
+			// and can't be honored; force the fallback.
+			return true
+		}
+		if allowedAttrs[k] || inheritedProps[k] || k == "stop-color" || k == "stop-opacity" {
+			continue
+		}
+		if strings.HasPrefix(k, "xmlns") || strings.HasPrefix(k, "xml:") ||
+			strings.HasPrefix(k, "aria-") || strings.HasPrefix(k, "data-") ||
+			strings.HasPrefix(k, "on") {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func parseNumberList(s string) ([]float64, bool) { return scanNumbers(s, 0) }
+
+// parsePoints parses a polygon/polyline point list and returns at most budget
+// points. When budget <= 0 no limit is applied; callers should pass the
+// remaining command budget so an over-size attribute is rejected before a large
+// slice is built.
+func parsePoints(s string, budget int) ([]point, bool) {
+	// Each point requires two numbers, so translate the point budget into a
+	// number budget for the scanner.
+	numBudget := 0
+	if budget > 0 {
+		numBudget = budget * 2
+	}
+	nums, ok := scanNumbers(s, numBudget)
+	if !ok || len(nums)%2 != 0 {
+		return nil, false
+	}
+	pts := make([]point, 0, len(nums)/2)
+	for i := 0; i < len(nums); i += 2 {
+		pts = append(pts, point{nums[i], nums[i+1]})
+	}
+	return pts, true
+}
+
+// scanNumbers parses a whitespace/comma-separated number list. When maxCount > 0
+// it returns false as soon as more than maxCount numbers have been accumulated,
+// so a pathological attribute is rejected before a huge slice is built.
+func scanNumbers(s string, maxCount int) ([]float64, bool) {
+	var out []float64
+	i := 0
+	for i < len(s) {
+		for i < len(s) && (unicode.IsSpace(rune(s[i])) || s[i] == ',') {
+			i++
+		}
+		if i >= len(s) {
+			break
+		}
+		start := i
+		if s[i] == '+' || s[i] == '-' {
+			i++
+		}
+		dot := false
+		for i < len(s) && ((s[i] >= '0' && s[i] <= '9') || s[i] == '.') {
+			if s[i] == '.' {
+				if dot {
+					break
+				}
+				dot = true
+			}
+			i++
+		}
+		if i < len(s) && (s[i] == 'e' || s[i] == 'E') {
+			j := i + 1
+			if j < len(s) && (s[j] == '+' || s[j] == '-') {
+				j++
+			}
+			k := j
+			for k < len(s) && s[k] >= '0' && s[k] <= '9' {
+				k++
+			}
+			if k > j {
+				i = k
+			}
+		}
+		if start == i {
+			return nil, false
+		}
+		v, err := strconv.ParseFloat(s[start:i], 64)
+		if err != nil {
+			return nil, false
+		}
+		out = append(out, v)
+		if maxCount > 0 && len(out) > maxCount {
+			return nil, false
+		}
+	}
+	return out, true
+}
