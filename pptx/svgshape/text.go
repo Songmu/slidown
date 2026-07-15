@@ -151,7 +151,7 @@ func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]
 	// invisible run appears, fall back if any later run is visible.
 	pendingInvisible := false
 	emit := func(txt, col string, fpt float64, fam string) bool {
-		if strings.TrimSpace(txt) == "" && txt == "" {
+		if txt == "" {
 			return true
 		}
 		if col == "" {
