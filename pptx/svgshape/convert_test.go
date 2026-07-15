@@ -716,6 +716,34 @@ func TestReviewBatch12(t *testing.T) {
 	}
 }
 
+func TestReviewBatch19(t *testing.T) {
+	// A gradient stop's currentColor inherits the color computed at the
+	// gradient's own ancestors, not defaultStyle: here ancestor color="red".
+	g := mustConvert(t, `<svg viewBox="0 0 10 10" color="red"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="currentColor"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)
+	if g.Geoms[0].Fill.Gradient.Stops[0].Color != "ff0000" {
+		t.Fatalf("gradient currentColor should inherit ancestor red, got %#v", g.Geoms[0].Fill.Gradient.Stops[0])
+	}
+	// A stroke wider than the DrawingML a:ln@w limit (even inside a large
+	// viewBox) can't be represented; fall back.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 1000000 1000000"><line x1="1" y1="5" x2="9" y2="5" stroke="black" stroke-width="500000"/></svg>`)); ok {
+		t.Error("stroke width beyond the DrawingML limit should fall back")
+	}
+	// A viewBox whose EMU extent exceeds ST_PositiveCoordinate can't be written;
+	// fall back.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 9000000000 9000000000"><rect width="1" height="1" fill="red"/></svg>`)); ok {
+		t.Error("oversized viewBox should fall back")
+	}
+	// xml:base rebases href/url references; the converter can't honor it.
+	if _, ok := Convert([]byte(`<svg xml:base="http://example.com/" viewBox="0 0 10 10"><rect width="1" height="1" fill="red"/></svg>`)); ok {
+		t.Error("xml:base should force the fallback")
+	}
+	// A relative root height (1em) gives a real aspect (32x16) that differs from
+	// a square viewBox, which needs letterboxing this model can't do; fall back.
+	if _, ok := Convert([]byte(`<svg width="32px" height="1em" viewBox="0 0 32 32"><rect width="1" height="1" fill="red"/></svg>`)); ok {
+		t.Error("mismatched em-based aspect should fall back")
+	}
+}
+
 func TestReviewBatch18(t *testing.T) {
 	// A sharp miter corner whose apex points past the viewport edge leaks
 	// outside the non-clipping group; fall back.

@@ -333,6 +333,23 @@ func TestSVGExplicitZeroSizeSkipped(t *testing.T) {
 	}
 }
 
+func TestSVGRelativeUnitDimensions(t *testing.T) {
+	// A relative height (1em = 16px at the default font) must be resolved, so a
+	// 32px x 1em SVG reports 32x16 rather than substituting the viewBox axis.
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" width="32px" height="1em" viewBox="0 0 32 32"></svg>`
+	img, err := newImageFromBuffer(bytes.NewReader([]byte(svg)))
+	if err != nil {
+		t.Fatalf("newImageFromBuffer: %v", err)
+	}
+	w, h, err := img.Dimensions()
+	if err != nil {
+		t.Fatalf("Dimensions: %v", err)
+	}
+	if w != 32 || h != 16 {
+		t.Fatalf("Dimensions = %dx%d, want 32x16", w, h)
+	}
+}
+
 func TestSVGInvalidUnitNotZeroSize(t *testing.T) {
 	// An unknown/malformed unit is an invalid dimension, not an explicit zero,
 	// so the SVG uses its viewBox size rather than being dropped.

@@ -439,6 +439,15 @@ func (c *conv) paint(st style, m matrix, forceFillNone bool) (pptx.Fill, *pptx.S
 		if join != "round" && join != "bevel" && join != "miter" {
 			return fill, nil, false
 		}
+		// DrawingML a:ln@w is limited to 20,116,800 EMU; a wider (or non-finite)
+		// scaled stroke can't be represented, so fall back rather than emit an
+		// out-of-range or overflowed width.
+		const maxLineWidthEMU = 20116800.0
+		we := w * emuPerUnit * m.avgScale()
+		if math.IsNaN(we) || math.IsInf(we, 0) || we > maxLineWidthEMU {
+			return fill, nil, false
+		}
+		strokeWidthEMU := round(we)
 		// The writer emits SVG's default miter limit (4); an explicit different
 		// limit isn't modeled, so fall back for miter joins that set one.
 		if join == "miter" {
@@ -449,7 +458,7 @@ func (c *conv) paint(st style, m matrix, forceFillNone bool) (pptx.Fill, *pptx.S
 				}
 			}
 		}
-		stroke = &pptx.Stroke{Color: col, Alpha: op * so, Width: round(w * emuPerUnit * m.avgScale()), Cap: cap, Join: join}
+		stroke = &pptx.Stroke{Color: col, Alpha: op * so, Width: strokeWidthEMU, Cap: cap, Join: join}
 		// Arbitrary dash patterns can't be mapped to a single OOXML preset
 		// faithfully, so fall back to the native SVG picture rather than
 		// silently rendering a different dash.

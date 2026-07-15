@@ -435,21 +435,31 @@ func parseViewBoxWH(s string) (w, h float64, ok bool) {
 	return wv, hv, true
 }
 
-// cssUnitPx maps the standard absolute CSS/SVG length units to px (96 dpi).
-var cssUnitPx = map[string]float64{"px": 1, "in": 96, "cm": 96 / 2.54, "mm": 96 / 25.4, "pt": 96.0 / 72, "pc": 16}
+// cssUnitPx maps CSS/SVG length units to px (96 dpi). The relative units use the
+// default (medium) font of 16px, valid for the root viewport where these lengths
+// are resolved: 1em/1rem = 16px, 1ex ≈ 0.5em, 1ch ≈ 0.5em.
+var cssUnitPx = map[string]float64{
+	"px": 1, "in": 96, "cm": 96 / 2.54, "mm": 96 / 25.4, "pt": 96.0 / 72, "pc": 16,
+	"em": 16, "rem": 16, "ex": 8, "ch": 8,
+}
 
-// parseCSSLength parses an SVG length with an optional absolute unit (px, in,
-// cm, mm, pt, pc) into px. Percentages and unknown units are rejected.
+// parseCSSLength parses an SVG length with an optional absolute or (default-font)
+// relative unit into px. Percentages and unknown units are rejected.
 func parseCSSLength(s string) (float64, bool) {
 	s = strings.TrimSpace(s)
 	if s == "" || strings.HasSuffix(s, "%") {
 		return 0, false
 	}
 	mul := 1.0
-	if len(s) > 2 {
-		if m, ok := cssUnitPx[strings.ToLower(s[len(s)-2:])]; ok {
-			mul = m
-			s = s[:len(s)-2]
+	// Try a 3-character unit (rem) before a 2-character one so "1rem" isn't
+	// mis-parsed as the "em" unit on "1r".
+	for _, n := range []int{3, 2} {
+		if len(s) > n {
+			if m, ok := cssUnitPx[strings.ToLower(s[len(s)-n:])]; ok {
+				mul = m
+				s = s[:len(s)-n]
+				break
+			}
 		}
 	}
 	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)

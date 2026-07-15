@@ -254,6 +254,22 @@ func TestRenderSVGExternalGradientHrefRasterOnly(t *testing.T) {
 	}
 }
 
+// An SVG with an external xml:base rebases its references, so it can't be
+// embedded self-contained and must be raster-only.
+func TestRenderSVGXMLBaseRasterOnly(t *testing.T) {
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" xml:base="http://example.com/" viewBox="0 0 10 10"><rect width="10" height="10" fill="red"/></svg>`
+	img, err := slidown.NewImageFromCodeBlock(bytes.NewReader([]byte(svg)))
+	if err != nil {
+		t.Fatalf("NewImageFromCodeBlock: %v", err)
+	}
+	parts := renderSlidesToParts(t, slidown.Slides{
+		{Titles: []string{"base"}, Images: []*slidown.Image{img}},
+	})
+	if strings.Contains(string(parts["ppt/slides/slide1.xml"]), "asvg:svgBlip") {
+		t.Errorf("external xml:base SVG should not embed a native svgBlip")
+	}
+}
+
 // An SVG with an external DTD (DOCTYPE ... SYSTEM/PUBLIC) declares an
 // unresolvable external dependency and must be embedded raster-only.
 func TestRenderSVGExternalDTDRasterOnly(t *testing.T) {

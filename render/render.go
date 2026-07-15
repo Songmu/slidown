@@ -331,6 +331,14 @@ func svgReferencesExternalResource(b []byte) bool {
 						return true
 					}
 				}
+				// xml:base rebases every relative/fragment reference; a
+				// non-fragment base pulls in an external document, so the SVG
+				// can't be embedded self-contained.
+				if strings.EqualFold(a.Name.Local, "base") &&
+					a.Name.Space == "http://www.w3.org/XML/1998/namespace" &&
+					isExternalRef(a.Value) {
+					return true
+				}
 				if hasExternalStyleRef(a.Value) {
 					return true
 				}

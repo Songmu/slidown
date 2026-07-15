@@ -163,12 +163,38 @@ func parseGradCoord(s string) (float64, bool) {
 	}
 	return parseLength(s, false)
 }
+
+// inheritedStyle computes the style inherited at n from its ancestor chain
+// (root first), so a definition node resolved out of tree context (e.g. a
+// gradient in <defs>) still sees inherited properties like color.
+func (c *conv) inheritedStyle(n *node) (style, bool) {
+	var chain []*node
+	for p := n.parent; p != nil; p = p.parent {
+		chain = append(chain, p)
+	}
+	st := defaultStyle()
+	for i := len(chain) - 1; i >= 0; i-- {
+		s, ok := c.resolveStyle(chain[i], st)
+		if !ok {
+			return nil, false
+		}
+		st = s
+	}
+	return st, true
+}
+
 func (c *conv) gradientStops(n *node) ([]pptx.GradientStop, bool) {
 	var out []pptx.GradientStop
 	prevOff := 0.0
-	// Resolve the gradient element's own style so a stop's currentColor picks up
-	// the gradient's color context instead of defaulting to black.
-	base, ok := c.resolveStyle(n, defaultStyle())
+	// Resolve the gradient element's own style against its real ancestor chain
+	// (not defaultStyle), so a stop's currentColor inherits the color computed
+	// at the gradient's location in the tree (e.g. from an ancestor <svg
+	// color="red">) rather than defaulting to black.
+	inherited, ok := c.inheritedStyle(n)
+	if !ok {
+		return nil, false
+	}
+	base, ok := c.resolveStyle(n, inherited)
 	if !ok {
 		return nil, false
 	}

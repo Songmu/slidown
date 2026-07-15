@@ -59,6 +59,10 @@ type node struct {
 	textB *strings.Builder
 	// foreign marks an element in a non-SVG namespace, which is not rendered.
 	foreign bool
+	// parent points to the element's tree parent (nil for the root), used to
+	// compute the inherited style at definition nodes (e.g. gradients in <defs>)
+	// whose stops inherit from their real ancestors, not the referencing shape.
+	parent *node
 	// badCase marks a known SVG element whose name used an invalid case (SVG/XML
 	// is case-sensitive). Such an element is not the real SVG element, so it must
 	// not be converted; it forces the whole-document fallback.
@@ -182,6 +186,11 @@ func parseXML(data []byte) (*node, error) {
 					n.Attrs["xlink:href"] = strings.TrimSpace(a.Value)
 				case a.Name.Space == xmlNS && key == "space":
 					n.Attrs["xml:space"] = strings.TrimSpace(a.Value)
+				case a.Name.Space == xmlNS && key == "base":
+					// xml:base changes how href="#id"/url(#id) resolve; the
+					// converter can't honor it, so keep it so hasUnsupportedAttrs
+					// forces the fallback.
+					n.Attrs["xml:base"] = strings.TrimSpace(a.Value)
 				default:
 					// Foreign-namespaced attribute (e.g. an extension); ignore
 					// rather than misinterpret it as an SVG presentation attr.
@@ -190,7 +199,9 @@ func parseXML(data []byte) (*node, error) {
 			if len(stack) == 0 {
 				root = n
 			} else {
-				stack[len(stack)-1].Children = append(stack[len(stack)-1].Children, n)
+				parent := stack[len(stack)-1]
+				n.parent = parent
+				parent.Children = append(parent.Children, n)
 			}
 			stack = append(stack, n)
 		case xml.EndElement:
@@ -251,8 +262,8 @@ func (c *conv) initViewport() bool {
 			!strings.EqualFold(pa, "xMidYMid meet") && !strings.EqualFold(pa, "xMidYMid") {
 			return false
 		}
-		w, okw := parseLength(c.root.Attrs["width"], false)
-		h, okh := parseLength(c.root.Attrs["height"], false)
+		w, okw := parseRootLength(c.root.Attrs["width"])
+		h, okh := parseRootLength(c.root.Attrs["height"])
 		if okw && okh && w > 0 && h > 0 {
 			// Compare aspect ratios (w/h vs vbW/vbH) with cross-multiplication.
 			if math.Abs(w*c.vbH-h*c.vbW) > 1e-6*w*h {
@@ -273,8 +284,16 @@ func (c *conv) initViewport() bool {
 		}
 		c.vbW, c.vbH = w, h
 	}
-	c.chW, c.chH = round(c.vbW*emuPerUnit), round(c.vbH*emuPerUnit)
-	return c.chW > 0 && c.chH > 0
+	// DrawingML ST_PositiveCoordinate tops out at 27,273,042,316,900 EMU, so a
+	// huge (otherwise valid) viewBox would write schema-invalid extents; fall
+	// back to the native picture instead.
+	const maxCoordEMU = 27273042316900.0
+	wf, hf := c.vbW*emuPerUnit, c.vbH*emuPerUnit
+	if !(wf > 0 && hf > 0 && wf <= maxCoordEMU && hf <= maxCoordEMU) {
+		return false
+	}
+	c.chW, c.chH = round(wf), round(hf)
+	return true
 }
 
 func (c *conv) collectDefsAndCSS(n *node) bool {
@@ -928,6 +947,30 @@ func parseLength(s string, allowPercent bool) (float64, bool) {
 }
 func round(v float64) int64 { return int64(math.Round(v)) }
 
+// parseRootLength parses a root width/height, additionally resolving the
+// default-font relative units (em/rem/ex/ch at 16px) so a valid relative size
+// participates in the viewport aspect-ratio check. Percentages and unknown
+// units are rejected (the caller then keeps the viewBox aspect).
+func parseRootLength(s string) (float64, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.HasSuffix(s, "%") {
+		return 0, false
+	}
+	rel := map[string]float64{"em": 16, "rem": 16, "ex": 8, "ch": 8}
+	for _, n := range []int{3, 2} {
+		if len(s) > n {
+			if m, ok := rel[strings.ToLower(s[len(s)-n:])]; ok {
+				v, err := strconv.ParseFloat(strings.TrimSpace(s[:len(s)-n]), 64)
+				if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+					return 0, false
+				}
+				return v * m, true
+			}
+		}
+	}
+	return parseLength(s, false)
+}
+
 func shapeName(n *node, prefix string, i int) string {
 	if id := n.Attrs["id"]; id != "" {
 		return id
@@ -1004,6 +1047,11 @@ func buildCanonicalAttrs() map[string]string {
 // forces a fallback.
 func hasUnsupportedAttrs(n *node) bool {
 	for k := range n.Attrs {
+		if k == "xml:base" {
+			// xml:base is rendering-relevant (it rebases href/url references)
+			// and can't be honored; force the fallback.
+			return true
+		}
 		if allowedAttrs[k] || inheritedProps[k] || k == "stop-color" || k == "stop-opacity" {
 			continue
 		}
