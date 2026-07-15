@@ -262,6 +262,23 @@ func TestSVGExplicitZeroSizeSkipped(t *testing.T) {
 	}
 }
 
+func TestSVGNamespacedSizeAttrIgnored(t *testing.T) {
+	// A namespaced foo:width shares Name.Local "width" but must not affect the
+	// intrinsic size; the real dimensions come from viewBox.
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" xmlns:foo="http://example.com/foo" foo:width="0" foo:height="0" viewBox="0 0 100 50"></svg>`
+	img, err := newImageFromBuffer(bytes.NewReader([]byte(svg)))
+	if err != nil {
+		t.Fatalf("newImageFromBuffer: %v", err)
+	}
+	w, h, err := img.Dimensions()
+	if err != nil {
+		t.Fatalf("Dimensions: %v", err)
+	}
+	if w != 100 || h != 50 {
+		t.Fatalf("namespaced size attrs should be ignored, got %dx%d, want 100x50", w, h)
+	}
+}
+
 func TestSVGZeroPercentSizeSkipped(t *testing.T) {
 	img, err := newImageFromBuffer(bytes.NewReader([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="0%" height="100%" viewBox="0 0 100 100"></svg>`)))
 	if err != nil {

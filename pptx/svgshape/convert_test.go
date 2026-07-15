@@ -703,6 +703,42 @@ func TestReviewBatch12(t *testing.T) {
 	}
 }
 
+func TestReviewBatch14(t *testing.T) {
+	// An explicit rx="0" disables rounding on that axis even when ry is set, so
+	// the rect keeps square corners (no cubic segments).
+	g := mustConvert(t, `<svg viewBox="0 0 20 20"><rect width="10" height="10" rx="0" ry="4"/></svg>`)
+	for _, p := range g.Geoms[0].Paths {
+		for _, cmd := range p.Cmds {
+			if cmd.Verb == pptx.CubicTo {
+				t.Fatalf("explicit rx=0 should keep square corners, got a cubic segment")
+			}
+		}
+	}
+	// An omitted rx still inherits ry (auto), producing rounded corners.
+	g = mustConvert(t, `<svg viewBox="0 0 20 20"><rect width="10" height="10" ry="4"/></svg>`)
+	var rounded bool
+	for _, p := range g.Geoms[0].Paths {
+		for _, cmd := range p.Cmds {
+			if cmd.Verb == pptx.CubicTo {
+				rounded = true
+			}
+		}
+	}
+	if !rounded {
+		t.Fatalf("omitted rx should inherit ry and round the corners")
+	}
+	// A negative corner radius is invalid and forces the fallback.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 20 20"><rect width="10" height="10" rx="-4"/></svg>`)); ok {
+		t.Error("negative rx should fall back")
+	}
+	// A comment-like sequence inside a quoted CSS string must not be stripped,
+	// so the selector still matches and converts.
+	g = mustConvert(t, `<svg viewBox="0 0 10 10"><style>rect{fill:red;font-family:"A/*B*/"}</style><rect width="1" height="1"/></svg>`)
+	if g.Geoms[0].Fill.Color != "ff0000" {
+		t.Fatalf("CSS comment inside a string must not break parsing, got %#v", g.Geoms[0].Fill)
+	}
+}
+
 func TestReviewBatch13(t *testing.T) {
 	// A whitespace-only invisible run advances the SVG text position, so a
 	// later visible run must trigger the fallback rather than emit adjacent

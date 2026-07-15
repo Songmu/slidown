@@ -345,12 +345,6 @@ func rectPath(x, y, w, h, rx, ry float64, mapPt pathMapper) pptx.GeomPath {
 	if w == 0 || h == 0 {
 		return pptx.GeomPath{}
 	}
-	if rx == 0 && ry > 0 {
-		rx = ry
-	}
-	if ry == 0 && rx > 0 {
-		ry = rx
-	}
 	if rx > w/2 {
 		rx = w / 2
 	}

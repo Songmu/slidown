@@ -350,12 +350,18 @@ func svgRootSize(b []byte) (width, height, viewBox string) {
 			return "", "", ""
 		}
 		for _, a := range se.Attr {
-			switch strings.ToLower(a.Name.Local) {
+			// Only unqualified, case-correct SVG sizing attributes affect the
+			// intrinsic size. A namespaced attribute (e.g. foo:width) shares the
+			// same Name.Local and must not be mistaken for the SVG attribute.
+			if a.Name.Space != "" {
+				continue
+			}
+			switch a.Name.Local {
 			case "width":
 				width = a.Value
 			case "height":
 				height = a.Value
-			case "viewbox":
+			case "viewBox":
 				viewBox = a.Value
 			}
 		}

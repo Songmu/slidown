@@ -338,6 +338,13 @@ func svgReferencesExternalResource(b []byte) bool {
 			if inStyle && hasExternalStyleRef(string(t)) {
 				return true
 			}
+		case xml.Directive:
+			// A DOCTYPE with an external DTD (SYSTEM/PUBLIC) or an internal
+			// subset declaring external entities pulls in resources PowerPoint
+			// can't resolve, so force the raster-only path.
+			if directiveReferencesExternal(string(t)) {
+				return true
+			}
 		case xml.EndElement:
 			inStyle = false
 		}
@@ -355,6 +362,14 @@ func piHref(inst string) string {
 		return m[1]
 	}
 	return m[2]
+}
+
+// directiveReferencesExternal reports whether an XML directive (e.g. a DOCTYPE)
+// declares an external DTD or entity via a SYSTEM or PUBLIC identifier. These
+// keywords are uppercase per the XML grammar; a match is treated conservatively
+// as an external dependency.
+func directiveReferencesExternal(d string) bool {
+	return strings.Contains(d, "SYSTEM") || strings.Contains(d, "PUBLIC")
 }
 
 // isExternalRef reports whether a reference target is external (not a #fragment

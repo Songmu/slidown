@@ -131,24 +131,45 @@ func parseCSS(s string) ([]cssRule, bool) {
 	}
 	return rules, true
 }
+
+// stripCSSComments removes /* ... */ comments, but not comment-like sequences
+// that appear inside a quoted string (e.g. font-family:"A/*B*/"), so a valid
+// stylesheet isn't silently rewritten into a different one.
 func stripCSSComments(s string) string {
 	if !strings.Contains(s, "/*") {
 		return s
 	}
 	var b strings.Builder
 	b.Grow(len(s))
-	for {
-		i := strings.Index(s, "/*")
-		if i < 0 {
-			b.WriteString(s)
-			break
+	var quote byte // 0 when not inside a string, else the opening quote char
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if quote != 0 {
+			b.WriteByte(c)
+			if c == '\\' && i+1 < len(s) {
+				i++
+				b.WriteByte(s[i])
+				continue
+			}
+			if c == quote {
+				quote = 0
+			}
+			continue
 		}
-		b.WriteString(s[:i])
-		j := strings.Index(s[i+2:], "*/")
-		if j < 0 {
-			break // unterminated comment: drop the rest
+		if c == '"' || c == '\'' {
+			quote = c
+			b.WriteByte(c)
+			continue
 		}
-		s = s[i+2+j+2:]
+		if c == '/' && i+1 < len(s) && s[i+1] == '*' {
+			end := strings.Index(s[i+2:], "*/")
+			if end < 0 {
+				return b.String() // unterminated comment: drop the rest
+			}
+			i += 2 + end + 1 // loop's i++ lands just past the closing */
+			continue
+		}
+		b.WriteByte(c)
 	}
 	return b.String()
 }

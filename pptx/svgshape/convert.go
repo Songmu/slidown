@@ -624,10 +624,18 @@ func (c *conv) geometry(n *node, m matrix) (pptx.GeomPath, bool, bool) {
 		if !ok1 || !ok2 || !ok3 || !ok4 || w < 0 || h < 0 {
 			return pptx.GeomPath{}, false, false
 		}
-		rx, ok5 := attrLen(n, "rx", 0)
-		ry, ok6 := attrLen(n, "ry", 0)
-		if !ok5 || !ok6 {
+		rx, rxSet, ok5 := rectRadius(n, "rx")
+		ry, rySet, ok6 := rectRadius(n, "ry")
+		if !ok5 || !ok6 || rx < 0 || ry < 0 {
 			return pptx.GeomPath{}, false, false
+		}
+		// SVG "auto" (omitted) radius inherits the other axis; an explicit value
+		// (including 0, which disables rounding on that axis) is kept as-is.
+		if !rxSet && rySet {
+			rx = ry
+		}
+		if !rySet && rxSet {
+			ry = rx
 		}
 		return rectPath(x, y, w, h, rx, ry, func(x, y float64) pptx.PathPoint { return c.point(m.apply(point{x, y})) }), false, true
 	case "circle":
@@ -695,6 +703,21 @@ func attrLen(n *node, name string, def float64) (float64, bool) {
 		return parseLength(v, false)
 	}
 	return def, true
+}
+
+// rectRadius parses a rect corner radius. present reports whether the attribute
+// was explicitly set (an omitted radius is "auto" and inherits the other axis);
+// ok is false only when a present value is unparseable.
+func rectRadius(n *node, name string) (val float64, present, ok bool) {
+	v, exists := n.Attrs[name]
+	if !exists || v == "" {
+		return 0, false, true
+	}
+	f, valid := parseLength(v, false)
+	if !valid {
+		return 0, true, false
+	}
+	return f, true, true
 }
 func parseLength(s string, allowPercent bool) (float64, bool) {
 	s = strings.TrimSpace(s)

@@ -254,6 +254,26 @@ func TestRenderSVGExternalGradientHrefRasterOnly(t *testing.T) {
 	}
 }
 
+// An SVG with an external DTD (DOCTYPE ... SYSTEM/PUBLIC) declares an
+// unresolvable external dependency and must be embedded raster-only.
+func TestRenderSVGExternalDTDRasterOnly(t *testing.T) {
+	svg := `<!DOCTYPE svg SYSTEM "theme.dtd"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="red" clip-path="url(#c)"/></svg>`
+	img, err := slidown.NewImageFromCodeBlock(bytes.NewReader([]byte(svg)))
+	if err != nil {
+		t.Fatalf("NewImageFromCodeBlock: %v", err)
+	}
+	parts := renderSlidesToParts(t, slidown.Slides{
+		{Titles: []string{"dtd"}, Images: []*slidown.Image{img}},
+	})
+	slide := string(parts["ppt/slides/slide1.xml"])
+	if !strings.Contains(slide, "<p:pic>") {
+		t.Errorf("expected a best-effort raster picture for the external-DTD SVG")
+	}
+	if strings.Contains(slide, "asvg:svgBlip") {
+		t.Errorf("external-DTD SVG should not embed a native svgBlip: %s", slide)
+	}
+}
+
 // SVG text whose runs are separated by whitespace must keep that separator in
 // the generated slide XML via xml:space="preserve".
 func TestRenderSVGTextPreservesSeparator(t *testing.T) {
