@@ -595,6 +595,12 @@ func (c *conv) geometry(n *node, m matrix) (pptx.GeomPath, bool, bool) {
 		if !ok {
 			return pptx.GeomPath{}, false, false
 		}
+		if len(pts) < 2 {
+			// Fewer than two points can't form a line/polygon; emit no
+			// geometry (rather than a MoveTo-less ClosePath) so the shape is
+			// skipped as empty.
+			return pptx.GeomPath{}, false, true
+		}
 		if len(pts) > maxCommands-c.cmdCount {
 			return pptx.GeomPath{}, false, false
 		}

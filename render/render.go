@@ -279,6 +279,12 @@ func buildSVGPicture(img *slidown.Image, x, y, w, h int64) *pptx.Picture {
 // or hrefs on other elements don't cause false positives.
 func svgReferencesExternalResource(b []byte) bool {
 	dec := xml.NewDecoder(bytes.NewReader(b))
+	// Match isSVG's lenient tokenization so common HTML entities or
+	// slightly-noncompliant XML don't abort the scan and mask an external
+	// reference.
+	dec.Strict = false
+	dec.AutoClose = xml.HTMLAutoClose
+	dec.Entity = xml.HTMLEntity
 	inStyle := false
 	for {
 		tok, err := dec.Token()

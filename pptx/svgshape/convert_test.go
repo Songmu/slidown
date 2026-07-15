@@ -555,3 +555,20 @@ func TestReviewBatch8(t *testing.T) {
 		}
 	}
 }
+
+func TestEmptyPolygonSkipped(t *testing.T) {
+	// A polygon/polyline with no (or too few) points emits no geometry rather
+	// than a malformed MoveTo-less path.
+	for _, svg := range []string{
+		`<svg viewBox="0 0 10 10"><polygon points="" fill="red"/></svg>`,
+		`<svg viewBox="0 0 10 10"><polyline points="1,1" fill="none" stroke="red"/></svg>`,
+	} {
+		g, ok := Convert([]byte(svg))
+		if !ok {
+			t.Fatalf("expected conversion for %s", svg)
+		}
+		if len(g.Geoms) != 0 {
+			t.Fatalf("expected no geometry for %s, got %d", svg, len(g.Geoms))
+		}
+	}
+}
