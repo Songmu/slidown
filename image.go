@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -235,56 +236,91 @@ func (i *Image) Dimensions() (w, h int, err error) {
 	return w, h, nil
 }
 
-// svgExplicitSize returns the SVG's declared width and height (in px-equivalent
-// user units) when the root <svg> element sets both as plain lengths. It
-// returns ok=false when either is missing or uses a unit/percentage that isn't
-// a simple pixel length.
+// svgExplicitSize returns the SVG's intrinsic width and height in px-equivalent
+// user units. It resolves the root width/height (supporting px and the standard
+// absolute units in/cm/mm/pt/pc) and, when those are missing or percentages,
+// falls back to the viewBox dimensions. Returns ok=false when neither yields a
+// usable size.
 func svgExplicitSize(b []byte) (w, h float64, ok bool) {
+	ws, hs, vb := svgRootSize(b)
+	wv, okw := parseCSSLength(ws)
+	hv, okh := parseCSSLength(hs)
+	if okw && okh && wv > 0 && hv > 0 {
+		return wv, hv, true
+	}
+	if vw, vh, ok := parseViewBoxWH(vb); ok {
+		return vw, vh, true
+	}
+	return 0, 0, false
+}
+
+// svgRootSize returns the raw width/height/viewBox attribute strings of the
+// root <svg> element (empty when absent or when the root isn't an <svg>).
+func svgRootSize(b []byte) (width, height, viewBox string) {
 	b = bytes.TrimPrefix(b, []byte{0xef, 0xbb, 0xbf})
 	dec := xml.NewDecoder(bytes.NewReader(b))
 	for {
 		tok, err := dec.Token()
 		if err != nil {
-			return 0, 0, false
+			return "", "", ""
 		}
 		se, isStart := tok.(xml.StartElement)
 		if !isStart {
 			continue
 		}
 		if !strings.EqualFold(se.Name.Local, "svg") {
-			return 0, 0, false
+			return "", "", ""
 		}
-		var ws, hs string
 		for _, a := range se.Attr {
 			switch strings.ToLower(a.Name.Local) {
 			case "width":
-				ws = a.Value
+				width = a.Value
 			case "height":
-				hs = a.Value
+				height = a.Value
+			case "viewbox":
+				viewBox = a.Value
 			}
 		}
-		wv, okw := parsePixelLength(ws)
-		hv, okh := parsePixelLength(hs)
-		if !okw || !okh || wv <= 0 || hv <= 0 {
-			return 0, 0, false
-		}
-		return wv, hv, true
+		return width, height, viewBox
 	}
 }
 
-// parsePixelLength parses a plain SVG length (optionally suffixed with "px")
-// into a float. Percentages and other units are rejected.
-func parsePixelLength(s string) (float64, bool) {
+// parseViewBoxWH extracts the width and height from a viewBox="minX minY w h".
+func parseViewBoxWH(s string) (w, h float64, ok bool) {
+	f := strings.FieldsFunc(strings.TrimSpace(s), func(r rune) bool { return r == ' ' || r == ',' || r == '\t' || r == '\n' })
+	if len(f) != 4 {
+		return 0, 0, false
+	}
+	wv, err1 := strconv.ParseFloat(f[2], 64)
+	hv, err2 := strconv.ParseFloat(f[3], 64)
+	if err1 != nil || err2 != nil || wv <= 0 || hv <= 0 {
+		return 0, 0, false
+	}
+	return wv, hv, true
+}
+
+// cssUnitPx maps the standard absolute CSS/SVG length units to px (96 dpi).
+var cssUnitPx = map[string]float64{"px": 1, "in": 96, "cm": 96 / 2.54, "mm": 96 / 25.4, "pt": 96.0 / 72, "pc": 16}
+
+// parseCSSLength parses an SVG length with an optional absolute unit (px, in,
+// cm, mm, pt, pc) into px. Percentages and unknown units are rejected.
+func parseCSSLength(s string) (float64, bool) {
 	s = strings.TrimSpace(s)
 	if s == "" || strings.HasSuffix(s, "%") {
 		return 0, false
 	}
-	s = strings.TrimSuffix(s, "px")
+	mul := 1.0
+	if len(s) > 2 {
+		if m, ok := cssUnitPx[strings.ToLower(s[len(s)-2:])]; ok {
+			mul = m
+			s = s[:len(s)-2]
+		}
+	}
 	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
 	if err != nil {
 		return 0, false
 	}
-	return v, true
+	return v * mul, true
 }
 
 func roundDimension(v, fallback float64) int {
@@ -388,10 +424,52 @@ func (i *Image) parseSVG() (*oksvg.SvgIcon, error) {
 	}
 	icon, err := oksvg.ReadIconStream(bytes.NewReader(i.b))
 	if err != nil {
+		// oksvg rejects non-pixel root width/height units (e.g. in, %); retry
+		// with those attributes normalized so the raster fallback still works.
+		if norm, ok := normalizeSVGRootSize(i.b); ok {
+			if icon2, err2 := oksvg.ReadIconStream(bytes.NewReader(norm)); err2 == nil {
+				i.svgIcon = icon2
+				return icon2, nil
+			}
+		}
 		return nil, err
 	}
 	i.svgIcon = icon
 	return icon, nil
+}
+
+// svgRootSizeAttr matches a width= or height= attribute on the root svg tag.
+var svgRootSizeAttr = regexp.MustCompile(`(?i)\b(width|height)\s*=\s*"([^"]*)"`)
+
+// normalizeSVGRootSize rewrites the root <svg> element's width/height values to
+// plain pixel numbers (resolving absolute units) or drops them (for
+// percentages/unknown units so oksvg falls back to the viewBox). Returns
+// ok=false when there is no root <svg> tag to adjust.
+func normalizeSVGRootSize(b []byte) ([]byte, bool) {
+	lower := bytes.ToLower(b)
+	start := bytes.Index(lower, []byte("<svg"))
+	if start < 0 {
+		return nil, false
+	}
+	end := bytes.IndexByte(b[start:], '>')
+	if end < 0 {
+		return nil, false
+	}
+	end += start
+	tag := b[start : end+1]
+	newTag := svgRootSizeAttr.ReplaceAllFunc(tag, func(m []byte) []byte {
+		sub := svgRootSizeAttr.FindSubmatch(m)
+		name, val := string(sub[1]), string(sub[2])
+		if px, ok := parseCSSLength(val); ok {
+			return []byte(fmt.Sprintf(`%s="%g"`, name, px))
+		}
+		return nil // drop percentage/unknown-unit sizes
+	})
+	out := make([]byte, 0, len(b))
+	out = append(out, b[:start]...)
+	out = append(out, newTag...)
+	out = append(out, b[end+1:]...)
+	return out, true
 }
 
 func (i *Image) Image() (image.Image, error) {

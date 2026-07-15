@@ -47,6 +47,7 @@ type node struct {
 const (
 	svgNS   = "http://www.w3.org/2000/svg"
 	xlinkNS = "http://www.w3.org/1999/xlink"
+	xmlNS   = "http://www.w3.org/XML/1998/namespace"
 )
 
 type conv struct {
@@ -125,6 +126,8 @@ func parseXML(data []byte) (*node, error) {
 					n.Attrs[key] = strings.TrimSpace(a.Value)
 				case a.Name.Space == xlinkNS && key == "href":
 					n.Attrs["xlink:href"] = strings.TrimSpace(a.Value)
+				case a.Name.Space == xmlNS && key == "space":
+					n.Attrs["xml:space"] = strings.TrimSpace(a.Value)
 				default:
 					// Foreign-namespaced attribute (e.g. an extension); ignore
 					// rather than misinterpret it as an SVG presentation attr.
@@ -198,6 +201,11 @@ func (c *conv) initViewport() bool {
 }
 
 func (c *conv) collectDefsAndCSS(n *node) bool {
+	if n != c.root && n.foreign {
+		// Foreign-namespace subtrees aren't SVG; don't interpret their <style>,
+		// ids, or element names as SVG content.
+		return true
+	}
 	if n != c.root && isFallbackElement(n.Name) {
 		return false
 	}
@@ -275,7 +283,7 @@ func tightenGradientBounds(gs *pptx.GeomShape) bool {
 // Bezier extrema (not just control points, which can lie outside the curve).
 func geomPathBounds(gs *pptx.GeomShape) (minX, minY, maxX, maxY int64, ok bool) {
 	first := true
-	var cur pptx.PathPoint
+	var cur, start pptx.PathPoint
 	acc := func(p pptx.PathPoint) {
 		if first {
 			minX, minY, maxX, maxY = p.X, p.Y, p.X, p.Y
@@ -299,11 +307,20 @@ func geomPathBounds(gs *pptx.GeomShape) (minX, minY, maxX, maxY int64, ok bool) 
 	for _, p := range gs.Paths {
 		for _, cmd := range p.Cmds {
 			switch cmd.Verb {
-			case pptx.MoveTo, pptx.LineTo:
+			case pptx.MoveTo:
+				if len(cmd.Pts) >= 1 {
+					cur = cmd.Pts[0]
+					start = cur
+					acc(cur)
+				}
+			case pptx.LineTo:
 				if len(cmd.Pts) >= 1 {
 					cur = cmd.Pts[0]
 					acc(cur)
 				}
+			case pptx.ClosePath:
+				// A subsequent segment resumes from the subpath's start point.
+				cur = start
 			case pptx.CubicTo:
 				if len(cmd.Pts) >= 3 {
 					p0, p1, p2, p3 := cur, cmd.Pts[0], cmd.Pts[1], cmd.Pts[2]
@@ -483,9 +500,14 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 		// rotated/skewed; fall back for rotation/skew.
 		gs := &pptx.GeomShape{Name: shapeName(n, "Shape", c.geomCount+1), X: 0, Y: 0, W: c.chW, H: c.chH, PathW: c.chW, PathH: c.chH, Paths: []pptx.GeomPath{gp}, Fill: fill, Stroke: stroke, EvenOdd: evenOdd}
 		// SVG clips painting to the root viewport by default, but a PowerPoint
-		// group does not clip its children; fall back when a shape's tight
-		// bounds extend beyond the viewBox so nothing renders outside the
-		// placed rectangle.
+		// group does not clip its children; fall back when a shape's painted
+		// bounds (geometry plus half the stroke width) extend beyond the viewBox
+		// so nothing renders outside the placed rectangle.
+		// SVG clips painting to the root viewport by default, but a PowerPoint
+		// group does not clip its children; fall back when a shape's geometry
+		// extends beyond the viewBox. (A stroke may still overhang the edge by
+		// up to half its width, as is common for border shapes; that minor
+		// overflow is accepted.)
 		if bx0, by0, bx1, by1, ok := geomPathBounds(gs); ok {
 			const tol = 16 // EMU, absorbs rounding of edge-aligned content
 			if bx0 < -tol || by0 < -tol || bx1 > c.chW+tol || by1 > c.chH+tol {
@@ -493,7 +515,10 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 			}
 		}
 		if fill.Kind == pptx.FillGradient {
-			if m.b != 0 || m.c != 0 {
+			// <a:lin> only expresses a direction over the shape's box, so a
+			// rotation, skew or axis reflection baked into the geometry can't be
+			// reflected in the gradient; fall back for those.
+			if m.b != 0 || m.c != 0 || m.a < 0 || m.d < 0 {
 				return false
 			}
 			if !tightenGradientBounds(gs) {
@@ -654,7 +679,7 @@ var allowedAttrs = map[string]bool{
 	"href": true, "xlink:href": true,
 	"viewbox": true, "preserveaspectratio": true, "version": true,
 	"baseprofile": true, "space": true, "lang": true, "overflow": true,
-	"role": true, "focusable": true, "tabindex": true,
+	"role": true, "focusable": true, "tabindex": true, "xml:space": true,
 	// gradients
 	"offset": true, "gradientunits": true, "gradienttransform": true,
 	"spreadmethod": true, "fx": true, "fy": true, "fr": true,

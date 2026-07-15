@@ -12,6 +12,16 @@ func (c *conv) text(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 	if !m.isTranslateOnly() {
 		return false
 	}
+	// xml:space="preserve" keeps runs of whitespace verbatim; the converter
+	// collapses whitespace, so fall back to preserve fidelity.
+	if strings.EqualFold(n.Attrs["xml:space"], "preserve") {
+		return false
+	}
+	// PowerPoint text runs can't render a glyph stroke, so any visible stroke on
+	// the text forces the native-image fallback.
+	if sv := resolvePaint(st, st.get("stroke")); sv != "none" && sv != "" {
+		return false
+	}
 	x, ok1 := attrLen(n, "x", 0)
 	y, ok2 := attrLen(n, "y", 0)
 	if !ok1 || !ok2 {
@@ -81,14 +91,18 @@ func (c *conv) text(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 	if len(runs) == 0 {
 		return true
 	}
-	// Clamp the text box width so an x beyond the viewBox cannot produce a
-	// negative (invalid) OOXML extent.
+	// A PowerPoint group doesn't clip its children, so a text box positioned
+	// outside the viewport would render outside the placed image. Fall back
+	// rather than clamp when the box origin/extent leaves the viewBox.
+	boxY := yemu - round(fs*emuPerUnit)
+	boxH := round(fs * emuPerUnit * 1.5)
 	w := c.chW - xemu
-	if minW := round(fs * emuPerUnit); w < minW {
-		w = minW
+	const tol = 16
+	if xemu < -tol || xemu > c.chW+tol || boxY < -tol || boxY+boxH > c.chH+tol || w <= 0 {
+		return false
 	}
 	c.textCount++
-	sh := &pptx.Shape{Name: shapeName(n, "Text", c.textCount), X: xemu, Y: yemu - round(fs*emuPerUnit), W: w, H: round(fs * emuPerUnit * 1.5), NoInset: true, Paragraphs: []*pptx.Paragraph{{Align: align, Runs: runs}}}
+	sh := &pptx.Shape{Name: shapeName(n, "Text", c.textCount), X: xemu, Y: boxY, W: w, H: boxH, NoInset: true, Paragraphs: []*pptx.Paragraph{{Align: align, Runs: runs}}}
 	g.Texts = append(g.Texts, sh)
 	g.Children = append(g.Children, pptx.GroupChild{Text: sh})
 	return true
@@ -125,6 +139,10 @@ func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]
 		if len(ch.Children) > 0 {
 			return nil, false
 		}
+		// xml:space="preserve" on a tspan changes whitespace handling.
+		if strings.EqualFold(ch.Attrs["xml:space"], "preserve") {
+			return nil, false
+		}
 		child, ok := c.resolveStyle(ch, st)
 		if !ok {
 			return nil, false
@@ -132,6 +150,10 @@ func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]
 		// A tspan hidden via display/visibility renders nothing.
 		if displayNone(child) || visibilityHidden(child) {
 			continue
+		}
+		// Glyph strokes on a tspan can't be represented; fall back.
+		if sv := resolvePaint(child, child.get("stroke")); sv != "none" && sv != "" {
+			return nil, false
 		}
 		cpt := pt
 		if fs := child.get("font-size"); fs != "" {

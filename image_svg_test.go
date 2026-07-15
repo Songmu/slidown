@@ -220,3 +220,30 @@ func TestSVGFingerprintUsesChecksum(t *testing.T) {
 		t.Fatalf("fingerprint should be stable for identical SVG content")
 	}
 }
+
+func TestSVGDimensionsUnits(t *testing.T) {
+	cases := []struct {
+		name         string
+		svg          string
+		wantW, wantH int
+	}{
+		{"inches", `<svg xmlns="http://www.w3.org/2000/svg" width="1in" height="2in"></svg>`, 96, 192},
+		{"points", `<svg xmlns="http://www.w3.org/2000/svg" width="72pt" height="144pt"></svg>`, 96, 192},
+		{"percent with viewBox", `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 120 60"></svg>`, 120, 60},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			img, err := newImageFromBuffer(bytes.NewReader([]byte(tc.svg)))
+			if err != nil {
+				t.Fatalf("newImageFromBuffer: %v", err)
+			}
+			w, h, err := img.Dimensions()
+			if err != nil {
+				t.Fatalf("Dimensions: %v", err)
+			}
+			if w != tc.wantW || h != tc.wantH {
+				t.Fatalf("Dimensions = %dx%d, want %dx%d", w, h, tc.wantW, tc.wantH)
+			}
+		})
+	}
+}

@@ -158,16 +158,18 @@ func (c *conv) gradientStops(n *node) ([]pptx.GradientStop, bool) {
 			off = prevOff
 		}
 		prevOff = off
+		// CSS cascade: a resolved style value (matched stylesheet rule or inline
+		// style) overrides the presentation attribute.
 		color := ch.Attrs["stop-color"]
-		if color == "" {
-			color = st.get("stop-color")
+		if v := st.get("stop-color"); v != "" {
+			color = v
 		}
 		if color == "" {
 			color = "black"
 		}
 		op := ch.Attrs["stop-opacity"]
-		if op == "" {
-			op = st.get("stop-opacity")
+		if v := st.get("stop-opacity"); v != "" {
+			op = v
 		}
 		alpha, ok := parseUnit(op, 1)
 		if !ok {

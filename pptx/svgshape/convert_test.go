@@ -217,10 +217,10 @@ func TestTextFillEdgeCases(t *testing.T) {
 	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="10" y="20" fill="red" fill-opacity="0.5" font-size="10">Hi</text></svg>`)); ok {
 		t.Fatal("expected fallback for translucent text")
 	}
-	// x beyond the viewBox must not yield a negative text-box width.
-	g = mustConvert(t, `<svg viewBox="0 0 100 100"><text x="500" y="20" fill="red" font-size="10">Hi</text></svg>`)
-	if len(g.Texts) != 1 || g.Texts[0].W <= 0 {
-		t.Fatalf("text width must stay positive, got %#v", g.Texts)
+	// x beyond the viewBox would render outside the (non-clipping) group, so it
+	// now falls back rather than emitting an externally positioned box.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="500" y="20" fill="red" font-size="10">Hi</text></svg>`)); ok {
+		t.Fatal("expected fallback for text positioned outside the viewport")
 	}
 }
 
@@ -460,6 +460,26 @@ func TestReviewBatch4(t *testing.T) {
 		"zero-length gradient":          `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg" x1="0.5" y1="0.5" x2="0.5" y2="0.5"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`,
 		"opacity fill and stroke":       `<svg viewBox="0 0 10 10"><rect width="5" height="5" fill="red" stroke="blue" stroke-width="1" opacity="0.5"/></svg>`,
 		"circle outside viewport":       `<svg viewBox="0 0 10 10"><circle cx="0" cy="5" r="3" fill="red"/></svg>`,
+	} {
+		if _, ok := Convert([]byte(svg)); ok {
+			t.Errorf("%s: expected fallback", name)
+		}
+	}
+}
+
+func TestReviewBatch5(t *testing.T) {
+	// Gradient stop-color from a matching CSS rule overrides the presentation attr.
+	g := mustConvert(t, `<svg viewBox="0 0 10 10"><style>.s{stop-color:#00ff00}</style><defs><linearGradient id="lg"><stop class="s" offset="0" stop-color="#ff0000"/><stop offset="1" stop-color="#0000ff"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`)
+	if g.Geoms[0].Fill.Gradient.Stops[0].Color != "00ff00" {
+		t.Fatalf("CSS stop-color should override attr, got %s", g.Geoms[0].Fill.Gradient.Stops[0].Color)
+	}
+
+	for name, svg := range map[string]string{
+		"xml:space preserve text":  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10" xml:space="preserve">a   b</text></svg>`,
+		"text with stroke":         `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="none" stroke="red" stroke-width="1" font-size="10">Hi</text></svg>`,
+		"tspan with stroke":        `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10"><tspan stroke="blue" stroke-width="1">Hi</tspan></text></svg>`,
+		"gradient axis reflection": `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect x="-5" width="5" height="5" fill="url(#lg)" transform="translate(10,0) scale(-1,1)"/></svg>`,
+		"text outside viewport":    `<svg viewBox="0 0 100 100"><text x="1" y="200" fill="red" font-size="10">Hi</text></svg>`,
 	} {
 		if _, ok := Convert([]byte(svg)); ok {
 			t.Errorf("%s: expected fallback", name)
