@@ -214,6 +214,12 @@ func parseXML(data []byte) (*node, error) {
 			if strings.EqualFold(t.Target, "xml-stylesheet") {
 				return nil, errTooComplex
 			}
+		case xml.Directive:
+			// A DOCTYPE may carry an internal subset (ATTLIST default
+			// presentation attributes, entity definitions) or an external DTD
+			// that the parser doesn't apply, so converting could differ from a
+			// faithful render. Reject so the whole-document fallback handles it.
+			return nil, errTooComplex
 		}
 	}
 }
@@ -584,25 +590,23 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 		// rotated/skewed; fall back for rotation/skew.
 		gs := &pptx.GeomShape{Name: shapeName(n, "Shape", c.geomCount+1), X: 0, Y: 0, W: c.chW, H: c.chH, PathW: c.chW, PathH: c.chH, Paths: []pptx.GeomPath{gp}, Fill: fill, Stroke: stroke, EvenOdd: evenOdd}
 		// SVG clips painting to the root viewport by default, but a PowerPoint
-		// group does not clip its children. Fall back when a shape's geometry
-		// extends beyond the viewBox, and separately when a stroke would paint
-		// substantially outside it. A thin stroke may overhang the edge by up to
-		// ~2 user units (common for border shapes); a large stroke that would
-		// paint far outside falls back so it isn't visible beyond the image.
+		// group does not clip its children. Fall back when a shape's geometry —
+		// or a stroke painted around it — extends beyond the viewBox, since an
+		// SVG rendered as an image would be clipped there. Only EMU rounding
+		// slack is tolerated; any real overhang leaks pixels past the image rect.
 		if bx0, by0, bx1, by1, ok := geomPathBounds(gs); ok {
 			const tol = 16 // EMU, absorbs rounding of edge-aligned content
 			if bx0 < -tol || by0 < -tol || bx1 > c.chW+tol || by1 > c.chH+tol {
 				return false
 			}
 			if stroke != nil {
+				// A stroke paints half its width perpendicular to the path, so
+				// that half-width is the actual overhang past the geometry
+				// bounds. Any overhang beyond rounding slack leaks outside the
+				// image rectangle (SVG-as-image clips to the viewport).
 				se := stroke.Width / 2
-				if stroke.Join == "miter" {
-					// A miter join can extend up to miterlimit*half-width.
-					se = stroke.Width * 2
-				}
-				maxOverhang := int64(2 * emuPerUnit)
-				if bx0-se < -maxOverhang || by0-se < -maxOverhang ||
-					bx1+se > c.chW+maxOverhang || by1+se > c.chH+maxOverhang {
+				if bx0-se < -tol || by0-se < -tol ||
+					bx1+se > c.chW+tol || by1+se > c.chH+tol {
 					return false
 				}
 			}

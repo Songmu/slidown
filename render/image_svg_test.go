@@ -351,6 +351,23 @@ func TestRenderSVGUnicodeCommentInchUnits(t *testing.T) {
 	}
 }
 
+// A string-form @import separated from its URL by a CSS comment
+// (@import/**/"theme.css") is still an external stylesheet and must be embedded
+// raster-only.
+func TestRenderSVGImportCommentSeparatorRasterOnly(t *testing.T) {
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><style>@import/**/"theme.css";</style><rect width="10" height="10" clip-path="url(#c)"/></svg>`
+	img, err := slidown.NewImageFromCodeBlock(bytes.NewReader([]byte(svg)))
+	if err != nil {
+		t.Fatalf("NewImageFromCodeBlock: %v", err)
+	}
+	parts := renderSlidesToParts(t, slidown.Slides{
+		{Titles: []string{"imp"}, Images: []*slidown.Image{img}},
+	})
+	if strings.Contains(string(parts["ppt/slides/slide1.xml"]), "asvg:svgBlip") {
+		t.Errorf("comment-separated @import should force raster-only, not native svgBlip")
+	}
+}
+
 // An unsupported SVG whose external url() reference is hidden behind CSS
 // escapes (\75 rl -> url) must still be embedded raster-only.
 func TestRenderSVGEscapedURLRasterOnly(t *testing.T) {

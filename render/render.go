@@ -458,8 +458,10 @@ func isHexDigit(c byte) bool {
 	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 }
 
-// importStringRE matches a string-form CSS import, e.g. @import "theme.css".
-var importStringRE = regexp.MustCompile(`(?i)@import\s+(?:"([^"]*)"|'([^']*)')`)
+// importStringRE matches a string-form CSS import, e.g. @import "theme.css". A
+// CSS comment may separate the @import keyword from the string
+// (@import/**/"theme.css"), so comments are accepted as separators.
+var importStringRE = regexp.MustCompile(`(?is)@import\s*(?:/\*.*?\*/\s*)*(?:"([^"]*)"|'([^']*)')`)
 
 // hasExternalURLRef reports whether s contains a url(...) reference whose target
 // is external (not a #fragment or data: URI).

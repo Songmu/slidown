@@ -177,10 +177,25 @@ func isIdent(s string) bool {
 	if s == "" {
 		return false
 	}
-	for _, r := range s {
-		if !(r == '-' || r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+	for i, r := range s {
+		switch {
+		case r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z':
+			// Always a valid identifier code point.
+		case r == '-':
+			// '-' is allowed; leading-hyphen constraints are checked below.
+		case r >= '0' && r <= '9':
+			// A CSS identifier can't start with a digit.
+			if i == 0 {
+				return false
+			}
+		default:
 			return false
 		}
+	}
+	// A lone "-" and a leading "-<digit>" (e.g. "-1") are not valid identifier
+	// starts, so such selectors trigger the document fallback.
+	if s[0] == '-' && (len(s) == 1 || s[1] >= '0' && s[1] <= '9') {
+		return false
 	}
 	return true
 }

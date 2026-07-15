@@ -76,7 +76,7 @@ func TestBasicShapes(t *testing.T) {
 }
 
 func TestPathCommands(t *testing.T) {
-	g := mustConvert(t, `<svg viewBox="0 0 100 100"><path d="M0 0 L10 0 C10 1 11 2 12 3 Q13 4 15 6 z" fill="none" stroke="#000"/></svg>`)
+	g := mustConvert(t, `<svg viewBox="0 0 100 100"><path d="M1 1 L11 1 C11 2 12 3 13 4 Q14 5 16 7 z" fill="none" stroke="#000"/></svg>`)
 	verbs := []pptx.PathVerb{pptx.MoveTo, pptx.LineTo, pptx.CubicTo, pptx.QuadTo, pptx.ClosePath}
 	cmds := g.Geoms[0].Paths[0].Cmds
 	for i, v := range verbs {
@@ -86,7 +86,7 @@ func TestPathCommands(t *testing.T) {
 	}
 	g = mustConvert(t, `<svg viewBox="0 0 100 100"><path d="m1 1 l9 0 c1 1 2 2 3 3" fill="none" stroke="black"/></svg>`)
 	near(t, g.Geoms[0].Paths[0].Cmds[1].Pts[0].X, 10*9525)
-	g = mustConvert(t, `<svg viewBox="0 0 100 100"><path d="M10 10 A10 10 0 0 1 30 10" fill="none" stroke="black"/></svg>`)
+	g = mustConvert(t, `<svg viewBox="0 0 100 100"><path d="M10 40 A10 10 0 0 1 30 40" fill="none" stroke="black"/></svg>`)
 	found := false
 	for _, c := range g.Geoms[0].Paths[0].Cmds {
 		if c.Verb == pptx.CubicTo {
@@ -160,8 +160,9 @@ func TestColorsFallbackAndFillRule(t *testing.T) {
 		t.Fatal("expected fallback for filled evenodd donut")
 	}
 	// The same holed path with no fill (stroke only) converts, since winding
-	// does not affect an unfilled outline.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><path fill="none" stroke="black" fill-rule="evenodd" d="M0 0L10 0L10 10L0 10z M2 2L2 8L8 8L8 2z"/></svg>`)); !ok {
+	// does not affect an unfilled outline (inset so the stroke stays inside the
+	// viewport).
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><path fill="none" stroke="black" fill-rule="evenodd" d="M1 1L9 1L9 9L1 9z M3 3L3 7L7 7L7 3z"/></svg>`)); !ok {
 		t.Fatal("expected unfilled evenodd donut to convert")
 	}
 }
@@ -630,9 +631,14 @@ func TestReviewBatch10(t *testing.T) {
 	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><line x1="1" y1="5" x2="9" y2="5" stroke="black" stroke-width="1000"/></svg>`)); ok {
 		t.Error("huge stroke crossing the viewport should fall back")
 	}
-	// A thin edge border still converts (minor stroke overhang accepted).
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect x="0" y="0" width="10" height="10" fill="none" stroke="black" stroke-width="1" stroke-linejoin="round"/></svg>`)); !ok {
-		t.Error("thin edge border should still convert")
+	// An edge-aligned stroked border paints half its width outside the viewport,
+	// which a PowerPoint group would show beyond the image rect; fall back.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect x="0" y="0" width="10" height="10" fill="none" stroke="black" stroke-width="1" stroke-linejoin="round"/></svg>`)); ok {
+		t.Error("edge-aligned stroked border should fall back (stroke overhang)")
+	}
+	// An inset border whose stroke stays within the viewport still converts.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" fill="none" stroke="black" stroke-width="1" stroke-linejoin="round"/></svg>`)); !ok {
+		t.Error("inset border within the viewport should convert")
 	}
 	// Invisible text before visible text shifts position -> fallback.
 	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="1" y="10" fill="none" font-size="10">XX<tspan fill="red">Hi</tspan></text></svg>`)); ok {
@@ -707,6 +713,33 @@ func TestReviewBatch12(t *testing.T) {
 	// falls back (vertical bounds use the max run size).
 	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 20"><text x="1" y="18" fill="red" font-size="5"><tspan font-size="200">Big</tspan></text></svg>`)); ok {
 		t.Error("oversized tspan overflowing the viewport should fall back")
+	}
+}
+
+func TestReviewBatch17(t *testing.T) {
+	// A DOCTYPE may carry ATTLIST defaults or an external DTD the parser doesn't
+	// apply; converting could differ from a faithful render, so fall back.
+	if _, ok := Convert([]byte(`<!DOCTYPE svg [ <!ATTLIST rect fill CDATA "red"> ]><svg viewBox="0 0 10 10"><rect width="10" height="10"/></svg>`)); ok {
+		t.Error("SVG with a DOCTYPE should fall back")
+	}
+	// An invalid selector (a class starting with a digit) is ignored by CSS, so
+	// the stylesheet parse must fail rather than apply it to class="1".
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><style>.1{display:none}</style><rect class="1" width="10" height="10" fill="red"/></svg>`)); ok {
+		t.Error("digit-leading class selector should fall back")
+	}
+	// A leading-hyphen-digit identifier is likewise invalid.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><style>.-1{display:none}</style><rect class="-1" width="10" height="10" fill="red"/></svg>`)); ok {
+		t.Error("hyphen-digit class selector should fall back")
+	}
+	// A valid identifier selector still applies.
+	g := mustConvert(t, `<svg viewBox="0 0 10 10"><style>.a{fill:red}</style><rect class="a" width="1" height="1"/></svg>`)
+	if g.Geoms[0].Fill.Color != "ff0000" {
+		t.Fatalf("valid class selector should apply, got %#v", g.Geoms[0].Fill)
+	}
+	// An edge-aligned stroke paints half its width outside the viewport, which a
+	// PowerPoint group can't clip; fall back.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><line x1="0" y1="5" x2="10" y2="5" stroke="black" stroke-width="1"/></svg>`)); ok {
+		t.Error("edge-touching stroke should fall back (half-width overhang)")
 	}
 }
 
