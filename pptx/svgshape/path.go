@@ -18,6 +18,7 @@ func parsePath(d string, budget int, mapPt pathMapper) (pptx.GeomPath, bool, boo
 	cur, start := point{}, point{}
 	var lastC, lastQ point
 	lastWasC, lastWasQ := false, false
+	started := false
 	for p.more() {
 		if len(cmds) > budget {
 			return pptx.GeomPath{}, false, false
@@ -27,6 +28,11 @@ func parsePath(d string, budget int, mapPt pathMapper) (pptx.GeomPath, bool, boo
 		if p.isCommand() {
 			cmd = p.nextCommand()
 			consumedCmd = true
+			// A valid path must begin with a moveto command.
+			if !started && cmd != 'M' && cmd != 'm' {
+				return pptx.GeomPath{}, false, false
+			}
+			started = true
 		} else if cmd == 0 {
 			return pptx.GeomPath{}, false, false
 		}

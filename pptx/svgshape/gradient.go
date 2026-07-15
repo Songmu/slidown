@@ -141,11 +141,17 @@ func parseGradCoord(s string) (float64, bool) {
 func (c *conv) gradientStops(n *node) ([]pptx.GradientStop, bool) {
 	var out []pptx.GradientStop
 	prevOff := 0.0
+	// Resolve the gradient element's own style so a stop's currentColor picks up
+	// the gradient's color context instead of defaulting to black.
+	base, ok := c.resolveStyle(n, defaultStyle())
+	if !ok {
+		return nil, false
+	}
 	for _, ch := range n.Children {
 		if ch.Name != "stop" {
 			continue
 		}
-		st, ok := c.resolveStyle(ch, defaultStyle())
+		st, ok := c.resolveStyle(ch, base)
 		if !ok {
 			return nil, false
 		}
@@ -166,6 +172,9 @@ func (c *conv) gradientStops(n *node) ([]pptx.GradientStop, bool) {
 		}
 		if color == "" {
 			color = "black"
+		}
+		if strings.EqualFold(strings.TrimSpace(color), "currentcolor") {
+			color = st.get("color")
 		}
 		op := ch.Attrs["stop-opacity"]
 		if v := st.get("stop-opacity"); v != "" {

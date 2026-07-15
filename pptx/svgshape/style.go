@@ -287,6 +287,14 @@ func (c *conv) paint(st style, m matrix, forceFillNone bool) (pptx.Fill, *pptx.S
 		if !ok {
 			return fill, nil, false
 		}
+		if w == 0 {
+			// stroke-width:0 paints no stroke.
+			return fill, nil, true
+		}
+		if w < 0 {
+			// A negative stroke width is invalid; fall back.
+			return fill, nil, false
+		}
 		cap := map[string]string{"butt": "flat", "round": "rnd", "square": "sq"}[strings.ToLower(st.get("stroke-linecap"))]
 		if cap == "" {
 			return fill, nil, false
@@ -330,10 +338,13 @@ func parseUnit(s string, def float64) (float64, bool) {
 	}
 	if strings.HasSuffix(strings.TrimSpace(s), "%") {
 		v, err := strconv.ParseFloat(strings.TrimSuffix(strings.TrimSpace(s), "%"), 64)
-		return math.Max(0, math.Min(1, v/100)), err == nil
+		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+			return 0, false
+		}
+		return math.Max(0, math.Min(1, v/100)), true
 	}
 	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
-	if err != nil {
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
 		return 0, false
 	}
 	return math.Max(0, math.Min(1, v)), true

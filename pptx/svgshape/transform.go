@@ -29,6 +29,12 @@ func (m matrix) avgScale() float64 {
 // Non-similarity transforms (non-uniform scale, skew) stretch a stroke outline
 // anisotropically, which a single uniform stroke width can't reproduce.
 func (m matrix) isSimilarity() bool {
+	// A singular (zero-determinant) matrix collapses geometry to nothing; treat
+	// it as non-similar so stroked shapes take the native-image fallback rather
+	// than emitting a spurious outline.
+	if math.Abs(m.a*m.d-m.b*m.c) < 1e-12 {
+		return false
+	}
 	orthogonal := math.Abs(m.a*m.c+m.b*m.d) < 1e-9
 	equalLen := math.Abs((m.a*m.a+m.b*m.b)-(m.c*m.c+m.d*m.d)) < 1e-9
 	return orthogonal && equalLen

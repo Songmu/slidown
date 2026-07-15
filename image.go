@@ -248,7 +248,16 @@ func svgExplicitSize(b []byte) (w, h float64, ok bool) {
 	if okw && okh && wv > 0 && hv > 0 {
 		return wv, hv, true
 	}
-	if vw, vh, ok := parseViewBoxWH(vb); ok {
+	vw, vh, okvb := parseViewBoxWH(vb)
+	// When only one dimension is declared, derive the other from the viewBox
+	// aspect ratio so the SVG keeps its declared size.
+	if okw && wv > 0 && okvb {
+		return wv, wv * vh / vw, true
+	}
+	if okh && hv > 0 && okvb {
+		return vw * hv / vh, hv, true
+	}
+	if okvb {
 		return vw, vh, true
 	}
 	return 0, 0, false
@@ -438,8 +447,9 @@ func (i *Image) parseSVG() (*oksvg.SvgIcon, error) {
 	return icon, nil
 }
 
-// svgRootSizeAttr matches a width= or height= attribute on the root svg tag.
-var svgRootSizeAttr = regexp.MustCompile(`(?i)\b(width|height)\s*=\s*"([^"]*)"`)
+// svgRootSizeAttr matches a width= or height= attribute on the root svg tag,
+// with either single- or double-quoted values.
+var svgRootSizeAttr = regexp.MustCompile(`(?i)\b(width|height)\s*=\s*(?:"([^"]*)"|'([^']*)')`)
 
 // normalizeSVGRootSize rewrites the root <svg> element's width/height values to
 // plain pixel numbers (resolving absolute units) or drops them (for
@@ -459,7 +469,11 @@ func normalizeSVGRootSize(b []byte) ([]byte, bool) {
 	tag := b[start : end+1]
 	newTag := svgRootSizeAttr.ReplaceAllFunc(tag, func(m []byte) []byte {
 		sub := svgRootSizeAttr.FindSubmatch(m)
-		name, val := string(sub[1]), string(sub[2])
+		name := string(sub[1])
+		val := string(sub[2])
+		if val == "" {
+			val = string(sub[3])
+		}
 		if px, ok := parseCSSLength(val); ok {
 			return []byte(fmt.Sprintf(`%s="%g"`, name, px))
 		}

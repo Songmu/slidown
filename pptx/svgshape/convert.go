@@ -210,6 +210,15 @@ func (c *conv) collectDefsAndCSS(n *node) bool {
 		return false
 	}
 	if n.Name == "style" {
+		// Only unconditional CSS stylesheets are applied. A non-CSS type or a
+		// media query the converter can't evaluate would be applied
+		// unconditionally here, so fall back instead.
+		if ty := strings.TrimSpace(strings.ToLower(n.Attrs["type"])); ty != "" && ty != "text/css" {
+			return false
+		}
+		if md := strings.TrimSpace(strings.ToLower(n.Attrs["media"])); md != "" && md != "all" && md != "screen" {
+			return false
+		}
 		rules, ok := parseCSS(n.Text)
 		if !ok {
 			return false
@@ -500,14 +509,10 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 		// rotated/skewed; fall back for rotation/skew.
 		gs := &pptx.GeomShape{Name: shapeName(n, "Shape", c.geomCount+1), X: 0, Y: 0, W: c.chW, H: c.chH, PathW: c.chW, PathH: c.chH, Paths: []pptx.GeomPath{gp}, Fill: fill, Stroke: stroke, EvenOdd: evenOdd}
 		// SVG clips painting to the root viewport by default, but a PowerPoint
-		// group does not clip its children; fall back when a shape's painted
-		// bounds (geometry plus half the stroke width) extend beyond the viewBox
-		// so nothing renders outside the placed rectangle.
-		// SVG clips painting to the root viewport by default, but a PowerPoint
 		// group does not clip its children; fall back when a shape's geometry
-		// extends beyond the viewBox. (A stroke may still overhang the edge by
-		// up to half its width, as is common for border shapes; that minor
-		// overflow is accepted.)
+		// extends beyond the viewBox. A stroke may still overhang the edge by up
+		// to half its width, as is common for border shapes; that minor overflow
+		// is accepted (geometry-only check).
 		if bx0, by0, bx1, by1, ok := geomPathBounds(gs); ok {
 			const tol = 16 // EMU, absorbs rounding of edge-aligned content
 			if bx0 < -tol || by0 < -tol || bx1 > c.chW+tol || by1 > c.chH+tol {
@@ -637,7 +642,7 @@ func parseLength(s string, allowPercent bool) (float64, bool) {
 		}
 	}
 	v, err := strconv.ParseFloat(s, 64)
-	if err != nil {
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
 		return 0, false
 	}
 	switch unit {

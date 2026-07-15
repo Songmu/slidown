@@ -11,6 +11,7 @@ package render
 import (
 	"bytes"
 	"image"
+	"image/png"
 
 	"github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/pptx"
@@ -242,16 +243,66 @@ func buildSVGPicture(img *slidown.Image, x, y, w, h int64) *pptx.Picture {
 	if ratio > 0 {
 		scale = 2 * ratio
 	}
+	// The embedded native SVG can't resolve external/relative resources (e.g.
+	// <image href="asset.png">) once relocated into the package, and the raster
+	// fallback also omits them; embed only the raster in that case rather than a
+	// broken native SVG.
+	svgData := img.Bytes()
+	if svgReferencesExternalResource(svgData) {
+		svgData = nil
+	}
 	png, err := img.RasterPNG(scale)
 	if err != nil || len(png) == 0 {
-		return nil
+		if svgData == nil {
+			// No native SVG and no usable raster: nothing to embed.
+			return nil
+		}
+		// Keep the native SVG (modern PowerPoint renders it) with a 1x1
+		// transparent PNG so older viewers get a valid, if blank, fallback.
+		png = transparentPNG()
 	}
 	return &pptx.Picture{
 		Data:    png,
 		Ext:     "png",
-		SVGData: img.Bytes(),
+		SVGData: svgData,
 		X:       x, Y: y, W: w, H: h,
 	}
+}
+
+// svgReferencesExternalResource reports whether the SVG references a resource
+// the package can't resolve after embedding: an <image>/<use>/<feImage> with a
+// non-data, non-fragment href.
+func svgReferencesExternalResource(b []byte) bool {
+	lower := bytes.ToLower(b)
+	for _, attr := range [][]byte{[]byte("href"), []byte("xlink:href")} {
+		i := 0
+		for {
+			idx := bytes.Index(lower[i:], attr)
+			if idx < 0 {
+				break
+			}
+			i += idx + len(attr)
+			rest := bytes.TrimLeft(lower[i:], " =\"'")
+			if len(rest) == 0 {
+				break
+			}
+			// A fragment (#id) or data: URI is self-contained; anything else is
+			// an external/relative reference.
+			if rest[0] != '#' && !bytes.HasPrefix(rest, []byte("data:")) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// transparentPNG returns a 1x1 fully transparent PNG used as a raster fallback
+// placeholder when rasterization fails but a native SVG is available.
+func transparentPNG() []byte {
+	m := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	var buf bytes.Buffer
+	_ = png.Encode(&buf, m)
+	return buf.Bytes()
 }
 
 // distributeImagePlaceholders binds images to the layout's picture placeholders

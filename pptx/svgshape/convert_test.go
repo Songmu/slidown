@@ -486,3 +486,30 @@ func TestReviewBatch5(t *testing.T) {
 		}
 	}
 }
+
+func TestReviewBatch6(t *testing.T) {
+	// A gradient stop's currentColor resolves to the gradient's color context.
+	g := mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg" color="#ff0000"><stop offset="0" stop-color="currentColor"/><stop offset="1" stop-color="#0000ff"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`)
+	if g.Geoms[0].Fill.Gradient.Stops[0].Color != "ff0000" {
+		t.Fatalf("stop currentColor should resolve to gradient color, got %s", g.Geoms[0].Fill.Gradient.Stops[0].Color)
+	}
+	// stroke-width:0 paints no stroke but the shape still converts.
+	g = mustConvert(t, `<svg viewBox="0 0 10 10"><rect width="5" height="5" fill="red" stroke="black" stroke-width="0"/></svg>`)
+	if g.Geoms[0].Stroke != nil {
+		t.Fatalf("stroke-width:0 should yield no stroke")
+	}
+
+	for name, svg := range map[string]string{
+		"path starts with L":    `<svg viewBox="0 0 10 10"><path d="L5 5" fill="red"/></svg>`,
+		"zero scale stroked":    `<svg viewBox="0 0 10 10"><rect width="5" height="5" fill="none" stroke="black" stroke-width="1" transform="scale(0)"/></svg>`,
+		"NaN opacity":           `<svg viewBox="0 0 10 10"><rect width="5" height="5" fill="red" opacity="NaN"/></svg>`,
+		"NaN gradient coord":    `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg" x1="NaN"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`,
+		"negative stroke width": `<svg viewBox="0 0 10 10"><rect width="5" height="5" fill="none" stroke="black" stroke-width="-1"/></svg>`,
+		"style media print":     `<svg viewBox="0 0 10 10"><style media="print">rect{fill:red}</style><rect width="1" height="1"/></svg>`,
+		"style non-css type":    `<svg viewBox="0 0 10 10"><style type="text/less">rect{fill:red}</style><rect width="1" height="1"/></svg>`,
+	} {
+		if _, ok := Convert([]byte(svg)); ok {
+			t.Errorf("%s: expected fallback", name)
+		}
+	}
+}

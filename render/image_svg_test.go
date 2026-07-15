@@ -3,11 +3,14 @@ package render
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"io"
 	"strings"
 	"testing"
 
 	"github.com/Songmu/slidown"
+	"github.com/Songmu/slidown/md"
+	"github.com/Songmu/slidown/pptx"
 )
 
 func renderSlidesToParts(t *testing.T, slides slidown.Slides) map[string][]byte {
@@ -108,5 +111,65 @@ func TestRenderSVGFallsBackToNativePicture(t *testing.T) {
 	}
 	if !hasSVGMedia {
 		t.Errorf("expected an embedded .svg media part; have: %v", keys(parts))
+	}
+}
+
+// TestSVGPlaceholderBinding verifies that an SVG bound to a layout picture
+// placeholder is embedded as a native SVG picture (asvg:svgBlip + both PNG and
+// SVG media parts) carrying the <p:ph> binding.
+func TestSVGPlaceholderBinding(t *testing.T) {
+	tmplPath := buildTemplateFile(t)
+	tmpl, err := pptx.LoadTemplate(tmplPath)
+	if err != nil {
+		t.Fatalf("LoadTemplate: %v", err)
+	}
+	layout := tmpl.ContentLayout()
+	if layout == nil {
+		t.Fatal("template has no content layout")
+	}
+	layout.Placeholders = append(layout.Placeholders, &pptx.PlaceholderInfo{
+		Type: "pic", Idx: 20, Name: "Picture Placeholder",
+		HasGeom: true, X: 1000000, Y: 1000000, W: 2000000, H: 2000000,
+	})
+
+	parsed, err := md.Parse("", []byte("# Pic\n"), nil)
+	if err != nil {
+		t.Fatalf("md.Parse: %v", err)
+	}
+	slides, err := parsed.ToSlides(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ToSlides: %v", err)
+	}
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#4C9AFF"/></svg>`
+	slides[0].Images = []*slidown.Image{newSVGImage(t, svg)}
+
+	var buf bytes.Buffer
+	if _, err := ToPresentationWithTemplate(slides, tmpl).WriteTo(&buf); err != nil {
+		t.Fatalf("WriteTo: %v", err)
+	}
+	parts := zipParts(t, buf.Bytes())
+	slideXML := string(parts["ppt/slides/slide1.xml"])
+	if !strings.Contains(slideXML, `<p:ph type="pic" idx="20"/>`) {
+		t.Errorf("expected SVG bound to pic placeholder, got: %s", slideXML)
+	}
+	if !strings.Contains(slideXML, "asvg:svgBlip") {
+		t.Errorf("expected native SVG blip, got: %s", slideXML)
+	}
+	if !strings.Contains(slideXML, "<p:pic>") {
+		t.Errorf("expected a picture element for the placeholder SVG")
+	}
+	var hasPNG, hasSVG bool
+	for name := range parts {
+		if strings.HasPrefix(name, "ppt/media/") {
+			if strings.HasSuffix(name, ".png") {
+				hasPNG = true
+			}
+			if strings.HasSuffix(name, ".svg") {
+				hasSVG = true
+			}
+		}
+	}
+	if !hasPNG || !hasSVG {
+		t.Errorf("expected both PNG and SVG media parts; png=%v svg=%v", hasPNG, hasSVG)
 	}
 }
