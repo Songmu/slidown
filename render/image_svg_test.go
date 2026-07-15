@@ -344,6 +344,22 @@ func TestRenderSVGExternalDTDRasterOnly(t *testing.T) {
 	}
 }
 
+// SVG text with an explicit font-family applies it to every script, so the
+// slide emits the typeface for the East Asian (<a:ea>) and complex-script
+// (<a:cs>) slots too, not just <a:latin> (which CJK/Arabic text would ignore).
+func TestRenderSVGTextFontAllScripts(t *testing.T) {
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 40"><text x="1" y="20" font-size="10" fill="blue" font-family="Meiryo">Hi</text></svg>`
+	parts := renderSlidesToParts(t, slidown.Slides{
+		{Titles: []string{"f"}, Images: []*slidown.Image{newSVGImage(t, svg)}},
+	})
+	slide := string(parts["ppt/slides/slide1.xml"])
+	for _, want := range []string{`<a:latin typeface="Meiryo"`, `<a:ea typeface="Meiryo"`, `<a:cs typeface="Meiryo"`} {
+		if !strings.Contains(slide, want) {
+			t.Errorf("expected %s in slide, got: %s", want, slide)
+		}
+	}
+}
+
 // SVG text whose runs are separated by whitespace must keep that separator in
 // the generated slide XML via xml:space="preserve".
 func TestRenderSVGTextPreservesSeparator(t *testing.T) {

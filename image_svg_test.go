@@ -347,6 +347,23 @@ func TestSVGRootSizeLenient(t *testing.T) {
 	}
 }
 
+func TestSVGCSSSizeOverridesAttr(t *testing.T) {
+	// SVG 2 CSS width/height override the presentation attributes, so a
+	// width="0" with style="width:100px" is sized 100x50, not dropped as zero.
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" width="0" height="50" style="width:100px" viewBox="0 0 100 50"></svg>`
+	img, err := newImageFromBuffer(bytes.NewReader([]byte(svg)))
+	if err != nil {
+		t.Fatalf("newImageFromBuffer: %v", err)
+	}
+	w, h, err := img.Dimensions()
+	if err != nil {
+		t.Fatalf("Dimensions: %v", err)
+	}
+	if w != 100 || h != 50 {
+		t.Fatalf("CSS width override: Dimensions = %dx%d, want 100x50", w, h)
+	}
+}
+
 func TestSVGRelativeUnitDimensions(t *testing.T) {
 	// A relative height (1em = 16px at the default font) must be resolved, so a
 	// 32px x 1em SVG reports 32x16 rather than substituting the viewBox axis.

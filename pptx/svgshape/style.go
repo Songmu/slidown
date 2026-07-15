@@ -255,15 +255,27 @@ func (c *conv) resolveStyle(n *node, inherited style) (style, bool) {
 			delete(st, k)
 		}
 	}
+	inheritValue := func(k string) string {
+		if v := inherited.get(k); v != "" {
+			return v
+		}
+		// A non-inherited property whose parent didn't set it has its initial
+		// value as its computed value (e.g. stop-color computes to black), so
+		// "inherit" must expose that rather than an empty value.
+		if v, ok := initialStyleValue[k]; ok {
+			return v
+		}
+		return defaultStyle().get(k)
+	}
 	for k, v := range st {
 		switch strings.ToLower(v) {
 		case "inherit":
-			st[k] = inherited.get(k)
+			st[k] = inheritValue(k)
 		case "unset", "revert":
 			if nonInheritedProps[k] {
 				setInitial(k)
 			} else {
-				st[k] = inherited.get(k)
+				st[k] = inheritValue(k)
 			}
 		case "initial":
 			setInitial(k)
@@ -301,10 +313,21 @@ var initialStyleValue = map[string]string{
 }
 
 // enumStyleValues lists the valid keyword values for the enumerated properties
-// the converter relies on for correct rendering.
+// the converter relies on for correct rendering. An unrecognized value is an
+// invalid declaration that would otherwise silently change rendering (e.g.
+// un-hide a display:none element), so it forces the fallback.
 var enumStyleValues = map[string]map[string]bool{
 	"fill-rule":  {"nonzero": true, "evenodd": true},
 	"visibility": {"visible": true, "hidden": true, "collapse": true},
+	"display": {
+		"inline": true, "block": true, "none": true, "inline-block": true,
+		"list-item": true, "run-in": true, "flow": true, "flow-root": true,
+		"table": true, "inline-table": true, "table-row-group": true,
+		"table-header-group": true, "table-footer-group": true, "table-row": true,
+		"table-column-group": true, "table-column": true, "table-cell": true,
+		"table-caption": true, "flex": true, "inline-flex": true, "grid": true,
+		"inline-grid": true, "contents": true,
+	},
 }
 
 // matchedRule pairs a rule's declarations with the specificity of the most

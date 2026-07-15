@@ -716,6 +716,37 @@ func TestReviewBatch12(t *testing.T) {
 	}
 }
 
+func TestReviewBatch21(t *testing.T) {
+	// A wrong-case <STOP> (lowercased to "stop" during parsing) is not a real
+	// gradient stop and must be ignored, leaving only the two valid stops.
+	g := mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="red"/><STOP offset="0.5" stop-color="lime"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)
+	stops := g.Geoms[0].Fill.Gradient.Stops
+	for _, s := range stops {
+		if s.Color == "00ff00" {
+			t.Fatalf("wrong-case <STOP> must not inject a gradient stop")
+		}
+	}
+	// A wrong-case <TSPAN> child inside <text> can't be a real tspan; fall back.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 40"><text x="1" y="20" font-size="10" fill="blue">A<TSPAN>B</TSPAN></text></svg>`)); ok {
+		t.Error("wrong-case <TSPAN> child should fall back")
+	}
+	// An invalid inline display value must not un-hide a display:none element;
+	// the invalid declaration forces the fallback.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect width="1" height="1" display="none" style="display:bogus"/></svg>`)); ok {
+		t.Error("invalid display value should fall back")
+	}
+	// stop-color:inherit resolves to the parent's computed initial value
+	// (black), not the lower-priority red presentation attribute.
+	g = mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="red" style="stop-color:inherit"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)
+	if g.Geoms[0].Fill.Gradient.Stops[0].Color != "000000" {
+		t.Fatalf("stop-color:inherit should be initial black, got %#v", g.Geoms[0].Fill.Gradient.Stops[0])
+	}
+	// A valid display value still converts.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect width="1" height="1" fill="red" style="display:inline"/></svg>`)); !ok {
+		t.Error("valid display:inline should convert")
+	}
+}
+
 func TestReviewBatch20(t *testing.T) {
 	// No-viewBox: a relative height (1em) is resolved for the child viewport, so
 	// a 32px x 1em SVG has a 32x16 child space (not 32x150), matching Dimensions.

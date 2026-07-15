@@ -165,7 +165,7 @@ func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]
 			return false
 		}
 		if txt != "" {
-			runs = append(runs, &pptx.Run{Text: txt, FontSize: fpt, Color: col, FontFamily: fam})
+			runs = append(runs, &pptx.Run{Text: txt, FontSize: fpt, Color: col, FontFamily: fam, FontAllScripts: fam != ""})
 		}
 		return true
 	}
@@ -173,6 +173,12 @@ func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]
 		return nil, false
 	}
 	for _, ch := range n.Children {
+		// Names were lowercased during parsing, so a foreign-namespace or
+		// wrong-case child could match "tspan"; such non-SVG elements can't be
+		// faithfully placed, so fall back.
+		if ch.foreign || ch.badCase {
+			return nil, false
+		}
 		if ch.Name == "textpath" {
 			return nil, false
 		}

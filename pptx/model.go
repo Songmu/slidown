@@ -338,6 +338,10 @@ type Run struct {
 	BgColor string
 	// FontFamily is an explicit latin typeface; empty means inherit.
 	FontFamily string
+	// FontAllScripts, when set with FontFamily, applies that typeface to the
+	// East Asian (<a:ea>) and complex-script (<a:cs>) slots too, not just latin.
+	// SVG font-family applies to every script, so SVG runs set this.
+	FontAllScripts bool
 	// Baseline is "", "super", or "sub"; non-empty values render superscript/subscript.
 	Baseline string
 	// PreserveSpace, when true, emits xml:space="preserve" on the run's <a:t> so

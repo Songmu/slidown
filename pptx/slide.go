@@ -536,8 +536,15 @@ func renderRun(r *Run, relIdx *int, rels *[]slideRel) string {
 	// follow fill/highlight and precede hlinkClick, so emit fonts before Link.
 	if r.FontFamily != "" {
 		inner.WriteString(fmt.Sprintf(`<a:latin typeface="%s"/>`, escapeXML(r.FontFamily)))
+		if r.FontAllScripts {
+			// SVG font-family applies to all scripts, so emit the same typeface
+			// for East Asian and complex-script runs (CJK, Arabic, ...).
+			inner.WriteString(fmt.Sprintf(`<a:ea typeface="%s"/>`, escapeXML(r.FontFamily)))
+		}
 		if r.Code {
 			inner.WriteString(`<a:cs typeface="Noto Sans Mono"/>`)
+		} else if r.FontAllScripts {
+			inner.WriteString(fmt.Sprintf(`<a:cs typeface="%s"/>`, escapeXML(r.FontFamily)))
 		}
 	} else if r.Code {
 		inner.WriteString(`<a:latin typeface="Noto Sans Mono" pitchFamily="49" charset="0"/><a:cs typeface="Noto Sans Mono"/>`)

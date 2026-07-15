@@ -410,6 +410,7 @@ func svgRootSize(b []byte) (width, height, viewBox string) {
 		if !strings.EqualFold(se.Name.Local, "svg") {
 			return "", "", ""
 		}
+		var styleAttr string
 		for _, a := range se.Attr {
 			// Only unqualified, case-correct SVG sizing attributes affect the
 			// intrinsic size. A namespaced attribute (e.g. foo:width) shares the
@@ -424,10 +425,41 @@ func svgRootSize(b []byte) (width, height, viewBox string) {
 				height = a.Value
 			case "viewBox":
 				viewBox = a.Value
+			case "style":
+				styleAttr = a.Value
 			}
+		}
+		// SVG 2 CSS width/height geometry properties override the presentation
+		// attributes, so an inline style takes precedence.
+		if v := cssDeclValue(styleAttr, "width"); v != "" {
+			width = v
+		}
+		if v := cssDeclValue(styleAttr, "height"); v != "" {
+			height = v
 		}
 		return width, height, viewBox
 	}
+}
+
+// cssDeclValue returns the value of a CSS declaration (e.g. "width") from an
+// inline style string, with any !important flag stripped. Returns "" when the
+// property is absent.
+func cssDeclValue(style, prop string) string {
+	for _, decl := range strings.Split(style, ";") {
+		k, v, ok := strings.Cut(decl, ":")
+		if !ok {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(k), prop) {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		if idx := strings.Index(strings.ToLower(v), "!important"); idx >= 0 {
+			v = strings.TrimSpace(v[:idx])
+		}
+		return v
+	}
+	return ""
 }
 
 // parseViewBoxWH extracts the width and height from a viewBox="minX minY w h".

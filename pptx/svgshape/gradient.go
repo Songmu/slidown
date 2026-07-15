@@ -199,6 +199,12 @@ func (c *conv) gradientStops(n *node) ([]pptx.GradientStop, bool) {
 		return nil, false
 	}
 	for _, ch := range n.Children {
+		// Names were lowercased during parsing, so a foreign-namespace or
+		// wrong-case child could match "stop"; skip such non-SVG elements so
+		// they can't inject a gradient stop.
+		if ch.foreign || ch.badCase {
+			continue
+		}
 		if ch.Name != "stop" {
 			continue
 		}
