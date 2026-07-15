@@ -318,7 +318,12 @@ func svgReferencesExternalResource(b []byte) bool {
 		case xml.StartElement:
 			name := strings.ToLower(t.Name.Local)
 			inStyle = name == "style"
-			resource := name == "image" || name == "use" || name == "feimage"
+			// Any element other than a navigational <a> can reference a
+			// rendering resource via href (image, use, feImage, linear/radial
+			// gradients, pattern, textPath, mpath, ...). An external href on any
+			// of them cannot be resolved by PowerPoint or the raster fallback,
+			// so treat it as unsafe to embed as native SVG.
+			resource := name != "a"
 			for _, a := range t.Attr {
 				if resource && strings.EqualFold(a.Name.Local, "href") {
 					if isExternalRef(a.Value) {

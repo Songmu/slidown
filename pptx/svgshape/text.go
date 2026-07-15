@@ -110,9 +110,11 @@ func (c *conv) text(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 		if runUnits > maxUnits {
 			maxUnits = runUnits
 		}
-		// Estimate width per run using its own size with a generous ~0.75em
-		// upper bound per character so wide glyphs are unlikely to overflow.
-		estW += float64(len([]rune(r.Text))) * runUnits * 0.75 * emuPerUnit
+		// Estimate width per run using its own size with a full-em (1.0em)
+		// per-character upper bound, since the widest glyphs (e.g. "W",
+		// full-width/CJK characters) approach one em; this keeps the extent an
+		// over-estimate so near-edge text falls back instead of overflowing.
+		estW += float64(len([]rune(r.Text))) * runUnits * emuPerUnit
 	}
 	boxY := yemu - round(maxUnits*emuPerUnit)
 	boxH := round(maxUnits * emuPerUnit * 1.5)
@@ -141,9 +143,10 @@ func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]
 			return true
 		}
 		if col == "" {
-			if strings.TrimSpace(txt) != "" {
-				pendingInvisible = true
-			}
+			// A whitespace-only invisible run still advances the SVG text
+			// position, so treat any non-empty invisible run as pending; a
+			// later visible run then triggers the native-image fallback.
+			pendingInvisible = true
 			return true
 		}
 		if pendingInvisible {

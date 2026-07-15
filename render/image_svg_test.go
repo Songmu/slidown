@@ -235,6 +235,25 @@ func TestRenderSVGExternalURLRasterOnly(t *testing.T) {
 	}
 }
 
+// A gradient that inherits from an external SVG via href (`<linearGradient
+// href="ext.svg#g">`) is rejected by the shape converter and must be embedded
+// raster-only: PowerPoint and the raster fallback can't resolve the external
+// gradient, so the native svgBlip (which would carry a dangling reference) is
+// omitted.
+func TestRenderSVGExternalGradientHrefRasterOnly(t *testing.T) {
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 10 10"><defs><linearGradient id="g" xlink:href="ext.svg#base"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`
+	parts := renderSlidesToParts(t, slidown.Slides{
+		{Titles: []string{"grad"}, Images: []*slidown.Image{newSVGImage(t, svg)}},
+	})
+	slide := string(parts["ppt/slides/slide1.xml"])
+	if !strings.Contains(slide, "<p:pic>") {
+		t.Errorf("expected a best-effort raster picture for the external-gradient SVG")
+	}
+	if strings.Contains(slide, "asvg:svgBlip") {
+		t.Errorf("did not expect a native SVG blip for an external-gradient-href SVG: %s", slide)
+	}
+}
+
 // SVG text whose runs are separated by whitespace must keep that separator in
 // the generated slide XML via xml:space="preserve".
 func TestRenderSVGTextPreservesSeparator(t *testing.T) {

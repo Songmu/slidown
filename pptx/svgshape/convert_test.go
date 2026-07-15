@@ -404,7 +404,7 @@ func TestReviewBatch3(t *testing.T) {
 		t.Fatalf("fill:none text with colored tspan should render tspan: %#v", g.Texts)
 	}
 	// Whitespace between a text node and a tspan is preserved as a separator.
-	g = mustConvert(t, `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="blue" font-size="10">Hello <tspan>world</tspan></text></svg>`)
+	g = mustConvert(t, `<svg viewBox="0 0 200 100"><text x="1" y="20" fill="blue" font-size="10">Hello <tspan>world</tspan></text></svg>`)
 	runs := g.Texts[0].Paragraphs[0].Runs
 	var joined string
 	for _, r := range runs {
@@ -633,7 +633,7 @@ func TestReviewBatch10(t *testing.T) {
 	}
 	// Whitespace across a run boundary collapses to a single separator and is
 	// preserved on the run.
-	g := mustConvert(t, `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="blue" font-size="10">Hello <tspan> world</tspan></text></svg>`)
+	g := mustConvert(t, `<svg viewBox="0 0 200 100"><text x="1" y="10" fill="blue" font-size="10">Hello <tspan> world</tspan></text></svg>`)
 	runs := g.Texts[0].Paragraphs[0].Runs
 	var joined string
 	for _, r := range runs {
@@ -700,5 +700,24 @@ func TestReviewBatch12(t *testing.T) {
 	// falls back (vertical bounds use the max run size).
 	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 20"><text x="1" y="18" fill="red" font-size="5"><tspan font-size="200">Big</tspan></text></svg>`)); ok {
 		t.Error("oversized tspan overflowing the viewport should fall back")
+	}
+}
+
+func TestReviewBatch13(t *testing.T) {
+	// A whitespace-only invisible run advances the SVG text position, so a
+	// later visible run must trigger the fallback rather than emit adjacent
+	// text ("A B" collapsed to "AB").
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 40"><text x="1" y="20" fill="blue" font-size="10"><tspan>A</tspan><tspan fill="none"> </tspan><tspan>B</tspan></text></svg>`)); ok {
+		t.Error("whitespace-only invisible run before a visible run should fall back")
+	}
+	// Text that fits well within the viewport still converts under the
+	// full-em width upper bound.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 200 40"><text x="1" y="20" fill="blue" font-size="10">Hi</text></svg>`)); !ok {
+		t.Error("short text within the viewport should still convert")
+	}
+	// Wide text near the right edge overflows under the full-em bound and falls
+	// back instead of clipping.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 50 20"><text x="1" y="15" fill="blue" font-size="10">WWWWW</text></svg>`)); ok {
+		t.Error("wide text near the right edge should fall back")
 	}
 }
