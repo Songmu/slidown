@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.0.8](https://github.com/Songmu/slidown/compare/v0.0.7...v0.0.8) - 2026-07-15
+
+### Other Changes
+- chore(deps): bump the dependencies group with 3 updates by @dependabot[bot] in https://github.com/Songmu/slidown/pull/74
+- chore(deps): bump Songmu/tagpr from 1.20.0 to 1.20.1 in the dependencies group by @dependabot[bot] in https://github.com/Songmu/slidown/pull/75
+- Convert SVG images to native pptx shapes with image fallback by @Songmu in https://github.com/Songmu/slidown/pull/73
+
 ## [v0.0.7](https://github.com/Songmu/slidown/compare/v0.0.6...v0.0.7) - 2026-07-10
 
 ### Other Changes
