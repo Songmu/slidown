@@ -59,6 +59,10 @@ type node struct {
 	textB *strings.Builder
 	// foreign marks an element in a non-SVG namespace, which is not rendered.
 	foreign bool
+	// badCase marks a known SVG element whose name used an invalid case (SVG/XML
+	// is case-sensitive). Such an element is not the real SVG element, so it must
+	// not be converted; it forces the whole-document fallback.
+	badCase bool
 	// textAfterChild is set when character data appears after a child element
 	// within this node (mixed content like <text>A<tspan/>C</text>), which the
 	// parser flattens into Text and Children separately, losing order.
@@ -99,7 +103,7 @@ func Convert(svg []byte) (g *pptx.GroupShape, ok bool) {
 		return nil, false
 	}
 	r, err := parseXML(svg)
-	if err != nil || r == nil || r.Name != "svg" || r.foreign {
+	if err != nil || r == nil || r.Name != "svg" || r.foreign || r.badCase {
 		return nil, false
 	}
 	c := &conv{root: r, defs: map[string]*node{}, gradients: map[string]*pptx.Gradient{}, resolvingUse: map[string]bool{}}
@@ -140,6 +144,12 @@ func parseXML(data []byte) (*node, error) {
 				return nil, errTooComplex
 			}
 			n := &node{Name: strings.ToLower(t.Name.Local), rawName: t.Name.Local, Attrs: map[string]string{}}
+			// SVG/XML element names are case-sensitive; a known element spelled
+			// with the wrong case (e.g. <RECT>, <lineargradient>) is not that
+			// element and must not be converted into geometry/gradients.
+			if canon, known := canonicalSVGElement[n.Name]; known && t.Name.Local != canon {
+				n.badCase = true
+			}
 			// Elements in a foreign namespace are not SVG content and are not
 			// rendered; mark them so the walk skips their subtree.
 			n.foreign = t.Name.Space != "" && t.Name.Space != svgNS
@@ -147,7 +157,15 @@ func parseXML(data []byte) (*node, error) {
 				key := strings.ToLower(a.Name.Local)
 				switch {
 				case a.Name.Space == "" || a.Name.Space == svgNS:
-					n.Attrs[key] = strings.TrimSpace(a.Value)
+					// Attribute names are case-sensitive too. A known SVG
+					// attribute in the wrong case (e.g. FILL, WIDTH, VIEWBOX) is
+					// unknown; keep it under its raw name so hasUnsupportedAttrs
+					// forces the fallback instead of silently activating it.
+					if canon, known := canonicalSVGAttr[key]; known && a.Name.Local != canon {
+						n.Attrs[a.Name.Local] = strings.TrimSpace(a.Value)
+					} else {
+						n.Attrs[key] = strings.TrimSpace(a.Value)
+					}
 				case a.Name.Space == xlinkNS && key == "href":
 					n.Attrs["xlink:href"] = strings.TrimSpace(a.Value)
 				case a.Name.Space == xmlNS && key == "space":
@@ -242,9 +260,9 @@ func (c *conv) initViewport() bool {
 }
 
 func (c *conv) collectDefsAndCSS(n *node) bool {
-	if n != c.root && n.foreign {
-		// Foreign-namespace subtrees aren't SVG; don't interpret their <style>,
-		// ids, or element names as SVG content.
+	if n != c.root && (n.foreign || n.badCase) {
+		// Foreign-namespace or wrong-case elements aren't the real SVG element;
+		// don't interpret their <style>, ids, or element names as SVG content.
 		return true
 	}
 	if n != c.root && isFallbackElement(n.Name) {
@@ -472,6 +490,10 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 	if !root && n.foreign {
 		// Foreign-namespace content is not rendered by SVG.
 		return true
+	}
+	if !root && n.badCase {
+		// A wrong-case known element can't be faithfully interpreted; fall back.
+		return false
 	}
 	if !root && n.Name == "style" {
 		return true
@@ -783,6 +805,46 @@ var allowedAttrs = map[string]bool{
 	// gradients
 	"offset": true, "gradientunits": true, "gradienttransform": true,
 	"spreadmethod": true, "fx": true, "fy": true, "fr": true,
+}
+
+// canonicalSVGElement maps a lowercased element name to its case-sensitive
+// canonical SVG spelling, for the elements the converter interprets. An element
+// whose name matches case-insensitively but not exactly is not the real SVG
+// element and must not be converted.
+var canonicalSVGElement = map[string]string{
+	"svg": "svg", "g": "g", "defs": "defs", "symbol": "symbol", "use": "use",
+	"path": "path", "rect": "rect", "circle": "circle", "ellipse": "ellipse",
+	"line": "line", "polyline": "polyline", "polygon": "polygon",
+	"text": "text", "tspan": "tspan", "style": "style",
+	"lineargradient": "linearGradient", "radialgradient": "radialGradient", "stop": "stop",
+}
+
+// canonicalSVGAttr maps a lowercased attribute name to its case-sensitive
+// canonical SVG spelling, derived from the attributes the converter recognizes.
+var canonicalSVGAttr = buildCanonicalAttrs()
+
+func buildCanonicalAttrs() map[string]string {
+	m := map[string]string{}
+	for k := range allowedAttrs {
+		m[k] = k
+	}
+	for k := range inheritedProps {
+		m[k] = k
+	}
+	m["stop-color"] = "stop-color"
+	m["stop-opacity"] = "stop-opacity"
+	// camelCase SVG attributes whose canonical spelling differs from lowercase.
+	for lc, canon := range map[string]string{
+		"viewbox":             "viewBox",
+		"preserveaspectratio": "preserveAspectRatio",
+		"baseprofile":         "baseProfile",
+		"gradientunits":       "gradientUnits",
+		"gradienttransform":   "gradientTransform",
+		"spreadmethod":        "spreadMethod",
+	} {
+		m[lc] = canon
+	}
+	return m
 }
 
 // hasUnsupportedAttrs reports whether an element carries any attribute the

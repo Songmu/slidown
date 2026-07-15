@@ -710,6 +710,41 @@ func TestReviewBatch12(t *testing.T) {
 	}
 }
 
+func TestReviewBatch16(t *testing.T) {
+	// A known SVG element in the wrong case is not that element and must not be
+	// converted into geometry/gradients.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><RECT width="10" height="10" fill="red"/></svg>`)); ok {
+		t.Error("wrong-case <RECT> should fall back")
+	}
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><defs><lineargradient id="g"><stop offset="0" stop-color="red"/></lineargradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)); ok {
+		t.Error("wrong-case <lineargradient> should fall back")
+	}
+	// A known SVG attribute in the wrong case is unknown and must not activate.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect width="10" height="10" FILL="red"/></svg>`)); ok {
+		t.Error("wrong-case FILL attribute should fall back")
+	}
+	// The correct case still converts.
+	g := mustConvert(t, `<svg viewBox="0 0 10 10"><rect width="10" height="10" fill="red"/></svg>`)
+	if g.Geoms[0].Fill.Color != "ff0000" {
+		t.Fatalf("correct-case rect/fill should convert, got %#v", g.Geoms[0].Fill)
+	}
+	// A camelCase attribute (spreadMethod) still works in its canonical case,
+	// but its wrong-case form is rejected.
+	g = mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="g" spreadMethod="pad" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)
+	if g.Geoms[0].Fill.Kind != pptx.FillGradient {
+		t.Fatalf("canonical spreadMethod should convert to a gradient, got %#v", g.Geoms[0].Fill)
+	}
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><defs><linearGradient id="g" SPREADMETHOD="pad" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)); ok {
+		t.Error("wrong-case SPREADMETHOD should fall back")
+	}
+	// A quoted font-family containing a comma is one family, not split on the
+	// comma.
+	g = mustConvert(t, `<svg viewBox="0 0 200 40"><text x="1" y="20" fill="blue" font-size="10" font-family='"ACME, Inc.", sans-serif'>Hi</text></svg>`)
+	if fam := g.Texts[0].Paragraphs[0].Runs[0].FontFamily; fam != "ACME, Inc." {
+		t.Fatalf("quoted family with comma mis-parsed, got %q", fam)
+	}
+}
+
 func TestReviewBatch15(t *testing.T) {
 	// A font-size below the DrawingML 1pt minimum can't be represented.
 	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="1" y="10" font-size="0.5">Hi</text></svg>`)); ok {

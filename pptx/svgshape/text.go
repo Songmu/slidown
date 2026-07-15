@@ -332,6 +332,15 @@ func firstFamily(s string) string {
 	if s == "" {
 		return ""
 	}
+	// A quoted family name may itself contain commas (e.g. "ACME, Inc."), so a
+	// leading string must be read up to its closing quote rather than split on
+	// the first comma.
+	if s[0] == '"' || s[0] == '\'' {
+		if end := strings.IndexByte(s[1:], s[0]); end >= 0 {
+			return s[1 : 1+end]
+		}
+		return "" // unterminated quote: not representable
+	}
 	p := strings.Split(s, ",")[0]
-	return strings.Trim(strings.TrimSpace(p), "'\"")
+	return strings.TrimSpace(p)
 }

@@ -322,6 +322,35 @@ func TestRenderSVGMalformedTreatedAsExternal(t *testing.T) {
 	}
 }
 
+// hasExternalStyleRef must not panic and must still detect an external url()
+// when the value contains a multi-byte character whose lowercase form differs
+// in byte length (e.g. U+0130), which previously desynced parallel offsets.
+func TestHasExternalStyleRefUnicode(t *testing.T) {
+	if !hasExternalStyleRef("content:'\u0130'; fill:url(http://example.com/a.svg#g)") {
+		t.Errorf("external url() after a multi-byte character should be detected")
+	}
+	if hasExternalStyleRef("content:'\u0130'; fill:url(#local)") {
+		t.Errorf("local url() must not be treated as external")
+	}
+}
+
+// An SVG with a multi-byte character in a prolog comment and non-pixel root
+// units still rasterizes (offset-preserving ASCII case folding in
+// normalizeSVGRootSize keeps the byte offsets valid).
+func TestRenderSVGUnicodeCommentInchUnits(t *testing.T) {
+	svg := "<!-- \u0130 --><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1in\" height=\"1in\" viewBox=\"0 0 96 96\"><rect width=\"96\" height=\"96\" fill=\"red\" clip-path=\"url(#c)\"/></svg>"
+	img, err := slidown.NewImageFromCodeBlock(bytes.NewReader([]byte(svg)))
+	if err != nil {
+		t.Fatalf("NewImageFromCodeBlock: %v", err)
+	}
+	parts := renderSlidesToParts(t, slidown.Slides{
+		{Titles: []string{"u"}, Images: []*slidown.Image{img}},
+	})
+	if !strings.Contains(string(parts["ppt/slides/slide1.xml"]), "<p:pic>") {
+		t.Errorf("expected a raster picture for the unicode-comment inch-unit SVG")
+	}
+}
+
 // An unsupported SVG whose external url() reference is hidden behind CSS
 // escapes (\75 rl -> url) must still be embedded raster-only.
 func TestRenderSVGEscapedURLRasterOnly(t *testing.T) {

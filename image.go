@@ -601,6 +601,20 @@ func (i *Image) parseSVG() (*oksvg.SvgIcon, error) {
 	return icon, nil
 }
 
+// asciiLowerBytes lowercases only ASCII A-Z, preserving byte length so offsets
+// into the result map 1:1 onto the input (unlike bytes.ToLower for multi-byte
+// UTF-8 characters).
+func asciiLowerBytes(b []byte) []byte {
+	out := make([]byte, len(b))
+	for i, c := range b {
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		out[i] = c
+	}
+	return out
+}
+
 // svgRootSizeAttr matches a width= or height= attribute on the root svg tag.
 // The leading whitespace (group 1) keeps it from matching hyphenated names like
 // stroke-width; values may be single- or double-quoted.
@@ -611,7 +625,9 @@ var svgRootSizeAttr = regexp.MustCompile(`(?i)(\s)(width|height)\s*=\s*(?:"([^"]
 // percentages/unknown units so oksvg falls back to the viewBox). Returns
 // ok=false when there is no root <svg> tag to adjust.
 func normalizeSVGRootSize(b []byte) ([]byte, bool) {
-	lower := bytes.ToLower(b)
+	// ASCII-only fold: bytes.ToLower can change UTF-8 byte lengths, which would
+	// make the offsets computed here invalid for slicing the original b.
+	lower := asciiLowerBytes(b)
 	// Single-pass scan for the first "<svg" start tag that isn't inside an XML
 	// comment (a prolog comment may contain the literal text "<svg>").
 	start := -1

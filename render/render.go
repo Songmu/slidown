@@ -464,6 +464,8 @@ var importStringRE = regexp.MustCompile(`(?i)@import\s+(?:"([^"]*)"|'([^']*)')`)
 // hasExternalURLRef reports whether s contains a url(...) reference whose target
 // is external (not a #fragment or data: URI).
 func hasExternalURLRef(s string) bool {
+	// Scan the lowercased copy only: strings.ToLower can change a string's byte
+	// length, so offsets into it must not be used to slice the original.
 	lower := strings.ToLower(s)
 	for {
 		i := strings.Index(lower, "url(")
@@ -471,8 +473,6 @@ func hasExternalURLRef(s string) bool {
 			return false
 		}
 		rest := lower[i+4:]
-		s = s[i+4:]
-		lower = rest
 		j := strings.IndexByte(rest, ')')
 		if j < 0 {
 			return false
@@ -481,8 +481,7 @@ func hasExternalURLRef(s string) bool {
 		if target != "" && !strings.HasPrefix(target, "#") && !strings.HasPrefix(target, "data:") {
 			return true
 		}
-		lower = lower[j+1:]
-		s = s[j+1:]
+		lower = rest[j+1:]
 	}
 }
 
