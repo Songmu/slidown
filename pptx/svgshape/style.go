@@ -110,8 +110,9 @@ func parseCSS(s string) ([]cssRule, bool) {
 				// their spelling and compare exactly.
 				sels = append(sels, sel)
 			} else if isIdent(sel) {
-				// Element-name selectors compare against the lowercased node name.
-				sels = append(sels, strings.ToLower(sel))
+				// Element-name selectors are case-sensitive in SVG/XML; keep
+				// their original spelling and compare exactly.
+				sels = append(sels, sel)
 			} else {
 				return nil, false
 			}
@@ -167,8 +168,12 @@ func (c *conv) resolveStyle(n *node, inherited style) (style, bool) {
 	st := inherited.clone()
 	// opacity and display are not inherited: opacity composites per
 	// element/group, and display applies only to the element it is set on.
+	// stop-color/stop-opacity are not inherited either and must not leak from a
+	// parent (e.g. a gradient) into each <stop>.
 	st["opacity"] = "1"
 	delete(st, "display")
+	delete(st, "stop-color")
+	delete(st, "stop-opacity")
 	parentColor := inherited.get("color")
 	for _, p := range paintProps {
 		if v := n.Attrs[p]; v != "" {
@@ -176,6 +181,11 @@ func (c *conv) resolveStyle(n *node, inherited style) (style, bool) {
 		}
 	}
 	matched := c.matchedCSS(n)
+	if c.cssWork > maxCSSWork {
+		// Bound the total selector-matching work across the whole document so a
+		// large stylesheet crossed with many elements can't exhaust CPU.
+		return nil, false
+	}
 	sort.SliceStable(matched, func(i, j int) bool { return matched[i].spec < matched[j].spec })
 	for _, r := range matched {
 		for k, v := range r.decl {
@@ -196,10 +206,15 @@ func (c *conv) resolveStyle(n *node, inherited style) (style, bool) {
 	if strings.EqualFold(st["color"], "currentColor") {
 		st["color"] = parentColor
 	}
-	// Resolve the CSS-wide "inherit" keyword to the parent's value.
+	// Resolve the CSS-wide keywords. "inherit", "unset" and "revert" all take the
+	// parent's value for these (all inherited) properties; "initial" restores the
+	// default by removing the key so downstream get() falls back.
 	for k, v := range st {
-		if strings.EqualFold(v, "inherit") {
+		switch strings.ToLower(v) {
+		case "inherit", "unset", "revert":
 			st[k] = inherited.get(k)
+		case "initial":
+			delete(st, k)
 		}
 	}
 	for k, v := range st {
@@ -222,6 +237,7 @@ func (c *conv) matchedCSS(n *node) []matchedRule {
 	for _, r := range c.css {
 		best := -1
 		for _, sel := range r.sels {
+			c.cssWork++
 			if matchSelector(n, sel) {
 				if s := selSpec(sel); s > best {
 					best = s
@@ -246,7 +262,8 @@ func matchSelector(n *node, sel string) bool {
 		}
 		return false
 	}
-	return strings.ToLower(n.Name) == sel
+	// Type selector: case-sensitive match against the element's original name.
+	return n.rawName == sel
 }
 
 // selSpec returns the specificity of a single selector: id (100) > class (10) >

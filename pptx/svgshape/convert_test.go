@@ -643,3 +643,30 @@ func TestReviewBatch10(t *testing.T) {
 		t.Fatalf("cross-run whitespace should collapse to one space, got %q", joined)
 	}
 }
+
+func TestReviewBatch11(t *testing.T) {
+	// Foreign-namespace root named "svg" is rejected (not an empty success).
+	if _, ok := Convert([]byte(`<svg xmlns="urn:example"><rect width="1" height="1"/></svg>`)); ok {
+		t.Error("foreign-namespace root should fall back")
+	}
+	// stop-color set on the gradient must not leak into a stop lacking one.
+	g := mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg" style="stop-color:#00ff00"><stop offset="0" stop-color="#ff0000"/><stop offset="1" stop-color="#0000ff"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`)
+	if g.Geoms[0].Fill.Gradient.Stops[0].Color != "ff0000" {
+		t.Fatalf("gradient stop-color leaked, got %s", g.Geoms[0].Fill.Gradient.Stops[0].Color)
+	}
+	// visibility:unset under a hidden parent stays hidden.
+	g = mustConvert(t, `<svg viewBox="0 0 10 10"><g visibility="hidden"><rect width="1" height="1" fill="red" visibility="unset"/></g><rect width="1" height="1" fill="green"/></svg>`)
+	if len(g.Geoms) != 1 || g.Geoms[0].Fill.Color != "008000" {
+		t.Fatalf("visibility:unset should inherit hidden: %#v", g.Geoms)
+	}
+	// A type selector is case-sensitive: RECT must not match <rect>.
+	g = mustConvert(t, `<svg viewBox="0 0 10 10"><style>RECT{fill:#0000ff}</style><rect width="1" height="1" fill="green"/></svg>`)
+	if g.Geoms[0].Fill.Color != "008000" {
+		t.Fatalf("RECT should not match <rect>, got %s", g.Geoms[0].Fill.Color)
+	}
+	// camelCase type selector still matches the camelCase element.
+	g = mustConvert(t, `<svg viewBox="0 0 10 10"><style>rect{fill:#00ff00}</style><rect width="1" height="1"/></svg>`)
+	if g.Geoms[0].Fill.Color != "00ff00" {
+		t.Fatalf("lowercase type selector should match, got %s", g.Geoms[0].Fill.Color)
+	}
+}

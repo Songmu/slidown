@@ -269,3 +269,24 @@ func TestRenderSVGMalformedTreatedAsExternal(t *testing.T) {
 		t.Errorf("malformed SVG should not embed a native svgBlip: %s", slide)
 	}
 }
+
+// An SVG with a string-form @import or an xml-stylesheet PI references an
+// external stylesheet and must be embedded raster-only (no native svgBlip).
+func TestRenderSVGExternalStylesheetRasterOnly(t *testing.T) {
+	for _, svg := range []string{
+		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><style>@import "theme.css";</style><rect width="10" height="10" clip-path="url(#c)"/></svg>`,
+		`<?xml-stylesheet href="theme.css" type="text/css"?><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" clip-path="url(#c)"/></svg>`,
+	} {
+		img, err := slidown.NewImageFromCodeBlock(bytes.NewReader([]byte(svg)))
+		if err != nil {
+			t.Fatalf("NewImageFromCodeBlock: %v", err)
+		}
+		parts := renderSlidesToParts(t, slidown.Slides{
+			{Titles: []string{"s"}, Images: []*slidown.Image{img}},
+		})
+		slide := string(parts["ppt/slides/slide1.xml"])
+		if strings.Contains(slide, "asvg:svgBlip") {
+			t.Errorf("external stylesheet SVG should not embed native svgBlip: %s", svg)
+		}
+	}
+}

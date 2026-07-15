@@ -220,17 +220,23 @@ func (i *Image) Dimensions() (w, h int, err error) {
 		// Prefer the SVG's declared width/height (its intrinsic size); the
 		// viewBox is only the coordinate window and may have a different aspect
 		// ratio, which would mis-size the native fallback picture.
+		var fw, fh float64
 		if ew, eh, ok := svgExplicitSize(i.b); ok {
-			w = roundDimension(ew, 300)
-			h = roundDimension(eh, 150)
+			fw, fh = ew, eh
 		} else {
 			icon, err := i.parseSVG()
 			if err != nil {
 				return 0, 0, fmt.Errorf("failed to parse SVG: %w", err)
 			}
-			w = roundDimension(icon.ViewBox.W, 300)
-			h = roundDimension(icon.ViewBox.H, 150)
+			fw, fh = icon.ViewBox.W, icon.ViewBox.H
+			if fw <= 0 {
+				fw = 300
+			}
+			if fh <= 0 {
+				fh = 150
+			}
 		}
+		w, h = capDimensions(fw, fh)
 	} else {
 		cfg, _, err := image.DecodeConfig(bytes.NewReader(i.b))
 		if err != nil {
@@ -240,6 +246,32 @@ func (i *Image) Dimensions() (w, h int, err error) {
 	}
 	i.width, i.height, i.dimensionsOK = w, h, true
 	return w, h, nil
+}
+
+// capDimensions rounds intrinsic SVG dimensions to ints, guarding NaN/Inf and
+// non-positive values, and caps very large sizes with one shared scale factor
+// so the aspect ratio is preserved.
+func capDimensions(w, h float64) (int, int) {
+	const maxDimension = 100000 // px
+	if math.IsNaN(w) || math.IsInf(w, 0) || w <= 0 {
+		w = 300
+	}
+	if math.IsNaN(h) || math.IsInf(h, 0) || h <= 0 {
+		h = 150
+	}
+	if mx := math.Max(w, h); mx > maxDimension {
+		f := maxDimension / mx
+		w *= f
+		h *= f
+	}
+	iw, ih := int(math.Round(w)), int(math.Round(h))
+	if iw < 1 {
+		iw = 1
+	}
+	if ih < 1 {
+		ih = 1
+	}
+	return iw, ih
 }
 
 // svgHasExplicitZeroSize reports whether the root <svg> sets width or height to
@@ -361,24 +393,6 @@ func parseCSSLength(s string) (float64, bool) {
 	return v * mul, true
 }
 
-func roundDimension(v, fallback float64) int {
-	// Guard against NaN/Inf and non-positive sizes, and cap absurdly large
-	// viewBox values so downstream EMU math (px * 9525) can't overflow or drive
-	// huge rasterization allocations.
-	const maxDimension = 100000 // px; ~10.4m at 96dpi, far beyond any real slide
-	if math.IsNaN(v) || math.IsInf(v, 0) || v <= 0 {
-		v = fallback
-	}
-	n := int(math.Round(v))
-	if n < 1 {
-		return 1
-	}
-	if n > maxDimension {
-		return maxDimension
-	}
-	return n
-}
-
 // RasterPNG renders the image to PNG bytes. The scale factor applies only to
 // SVGs (rendered at scale × their intrinsic size); for raster inputs (PNG/JPEG/
 // GIF) scale is ignored and the source is re-encoded as PNG at its native size.
@@ -489,21 +503,23 @@ var svgRootSizeAttr = regexp.MustCompile(`(?i)(\s)(width|height)\s*=\s*(?:"([^"]
 // ok=false when there is no root <svg> tag to adjust.
 func normalizeSVGRootSize(b []byte) ([]byte, bool) {
 	lower := bytes.ToLower(b)
-	// Find the first "<svg" that is a real start element, i.e. not inside an XML
+	// Single-pass scan for the first "<svg" start tag that isn't inside an XML
 	// comment (a prolog comment may contain the literal text "<svg>").
 	start := -1
-	for off := 0; ; {
-		idx := bytes.Index(lower[off:], []byte("<svg"))
-		if idx < 0 {
+	for i := 0; i < len(lower); {
+		if bytes.HasPrefix(lower[i:], []byte("<!--")) {
+			j := bytes.Index(lower[i+4:], []byte("-->"))
+			if j < 0 {
+				break // unterminated comment: no real root before it ends
+			}
+			i += 4 + j + 3
+			continue
+		}
+		if bytes.HasPrefix(lower[i:], []byte("<svg")) {
+			start = i
 			break
 		}
-		abs := off + idx
-		// Inside a comment when there are more "<!--" than "-->" before abs.
-		if bytes.Count(lower[:abs], []byte("<!--")) == bytes.Count(lower[:abs], []byte("-->")) {
-			start = abs
-			break
-		}
-		off = abs + len("<svg")
+		i++
 	}
 	if start < 0 {
 		return nil, false

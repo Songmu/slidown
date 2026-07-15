@@ -15,6 +15,7 @@ import (
 	"image"
 	"image/png"
 	"io"
+	"regexp"
 	"strings"
 
 	"github.com/Songmu/slidown"
@@ -222,8 +223,10 @@ func imageNatEMU(img *slidown.Image) (natW, natH int64, format string, ok bool) 
 
 // buildSVGPicture builds a native SVG picture: the raster PNG fallback lives in
 // Data (rendered at roughly the placed size for crispness) while SVGData holds
-// the original SVG so PowerPoint 2016+ renders the vector version. Returns nil
-// when the SVG cannot be rasterized.
+// the original SVG so PowerPoint 2016+ renders the vector version. For SVGs that
+// reference external/relative resources, SVGData is omitted (best-effort raster
+// only). It returns nil only when the image's dimensions can't be resolved, or
+// when rasterization fails and no native SVG can be embedded either.
 func buildSVGPicture(img *slidown.Image, x, y, w, h int64) *pptx.Picture {
 	natW, natH, _, ok := imageNatEMU(img)
 	if !ok {
@@ -304,6 +307,14 @@ func svgReferencesExternalResource(b []byte) bool {
 			return true
 		}
 		switch t := tok.(type) {
+		case xml.ProcInst:
+			// An xml-stylesheet PI can pull in an external stylesheet; treat a
+			// non-self-contained href as an external reference.
+			if strings.EqualFold(t.Target, "xml-stylesheet") {
+				if href := piHref(string(t.Inst)); href == "" || isExternalRef(href) {
+					return true
+				}
+			}
 		case xml.StartElement:
 			name := strings.ToLower(t.Name.Local)
 			inStyle = name == "style"
@@ -314,12 +325,12 @@ func svgReferencesExternalResource(b []byte) bool {
 						return true
 					}
 				}
-				if hasExternalURLRef(a.Value) {
+				if hasExternalStyleRef(a.Value) {
 					return true
 				}
 			}
 		case xml.CharData:
-			if inStyle && hasExternalURLRef(string(t)) {
+			if inStyle && hasExternalStyleRef(string(t)) {
 				return true
 			}
 		case xml.EndElement:
@@ -328,12 +339,47 @@ func svgReferencesExternalResource(b []byte) bool {
 	}
 }
 
+// piHref extracts the href pseudo-attribute value from an xml-stylesheet PI's
+// instruction text (e.g. `type="text/css" href="theme.css"`).
+func piHref(inst string) string {
+	m := regexp.MustCompile(`(?i)href\s*=\s*(?:"([^"]*)"|'([^']*)')`).FindStringSubmatch(inst)
+	if m == nil {
+		return ""
+	}
+	if m[1] != "" {
+		return m[1]
+	}
+	return m[2]
+}
+
 // isExternalRef reports whether a reference target is external (not a #fragment
 // or data: URI).
 func isExternalRef(v string) bool {
 	v = strings.TrimSpace(v)
 	return v != "" && !strings.HasPrefix(v, "#") && !strings.HasPrefix(strings.ToLower(v), "data:")
 }
+
+// hasExternalStyleRef reports whether a style/attribute value references an
+// external resource: a url(...) target or a string-form @import (which carries
+// no url()).
+func hasExternalStyleRef(s string) bool {
+	if hasExternalURLRef(s) {
+		return true
+	}
+	for _, m := range importStringRE.FindAllStringSubmatch(s, -1) {
+		target := m[1]
+		if target == "" {
+			target = m[2]
+		}
+		if isExternalRef(target) {
+			return true
+		}
+	}
+	return false
+}
+
+// importStringRE matches a string-form CSS import, e.g. @import "theme.css".
+var importStringRE = regexp.MustCompile(`(?i)@import\s+(?:"([^"]*)"|'([^']*)')`)
 
 // hasExternalURLRef reports whether s contains a url(...) reference whose target
 // is external (not a #fragment or data: URI).

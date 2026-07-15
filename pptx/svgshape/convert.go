@@ -34,6 +34,10 @@ const (
 	// per element) can't cause CPU/memory exhaustion.
 	maxCSSRules     = 10000
 	maxCSSSelectors = 20000
+	// maxCSSWork bounds the total selector-matching comparisons (rules/selectors
+	// scanned per element) so a stylesheet crossed with many elements can't
+	// exhaust CPU.
+	maxCSSWork = 20000000
 	// maxInputBytes caps the raw SVG size so pathological inputs are rejected
 	// before any parsing/allocation work.
 	maxInputBytes = 20 << 20 // 20 MiB
@@ -43,7 +47,10 @@ const (
 var errTooComplex = errors.New("svg too complex")
 
 type node struct {
-	Name     string
+	Name string
+	// rawName is the element's original (case-preserving) local name, used for
+	// case-sensitive CSS type-selector matching (SVG/XML is case-sensitive).
+	rawName  string
 	Attrs    map[string]string
 	Children []*node
 	Text     string
@@ -80,6 +87,7 @@ type conv struct {
 	cmdCount     int
 	depth        int
 	visits       int
+	cssWork      int
 	resolvingUse map[string]bool
 }
 
@@ -90,7 +98,7 @@ func Convert(svg []byte) (g *pptx.GroupShape, ok bool) {
 		return nil, false
 	}
 	r, err := parseXML(svg)
-	if err != nil || r == nil || r.Name != "svg" {
+	if err != nil || r == nil || r.Name != "svg" || r.foreign {
 		return nil, false
 	}
 	c := &conv{root: r, defs: map[string]*node{}, gradients: map[string]*pptx.Gradient{}, resolvingUse: map[string]bool{}}
@@ -130,7 +138,7 @@ func parseXML(data []byte) (*node, error) {
 			if nodeCount > maxShapes {
 				return nil, errTooComplex
 			}
-			n := &node{Name: strings.ToLower(t.Name.Local), Attrs: map[string]string{}}
+			n := &node{Name: strings.ToLower(t.Name.Local), rawName: t.Name.Local, Attrs: map[string]string{}}
 			// Elements in a foreign namespace are not SVG content and are not
 			// rendered; mark them so the walk skips their subtree.
 			n.foreign = t.Name.Space != "" && t.Name.Space != svgNS
