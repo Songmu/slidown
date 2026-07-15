@@ -198,3 +198,25 @@ func TestSVGJSONRoundTrip(t *testing.T) {
 		t.Fatalf("mimeType = %q, want %q", got.mimeType, MIMETypeImageSVG)
 	}
 }
+
+// Two SVGs differing only in <text> content must yield different slide
+// fingerprints; the best-effort raster hash can't distinguish them, so SVG
+// signatures use the raw checksum instead.
+func TestSVGFingerprintUsesChecksum(t *testing.T) {
+	mk := func(label string) *Slide {
+		svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20"><text x="0" y="15">` + label + `</text></svg>`
+		img, err := NewImageFromCodeBlock(bytes.NewReader([]byte(svg)))
+		if err != nil {
+			t.Fatalf("NewImageFromCodeBlock: %v", err)
+		}
+		return &Slide{Titles: []string{"t"}, Images: []*Image{img}}
+	}
+	a := mk("Alpha").Fingerprint()
+	b := mk("Beta").Fingerprint()
+	if a == b {
+		t.Fatalf("fingerprints should differ for SVGs with different text content: %s", a)
+	}
+	if mk("Alpha").Fingerprint() != a {
+		t.Fatalf("fingerprint should be stable for identical SVG content")
+	}
+}

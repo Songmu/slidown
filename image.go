@@ -375,9 +375,16 @@ func (i *Image) RasterPNG(scale float64) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// maxSVGRasterBytes bounds the raw SVG size passed to the oksvg rasterizer so a
+// pathological input can't drive uncapped parsing/allocation.
+const maxSVGRasterBytes = 20 << 20 // 20 MiB
+
 func (i *Image) parseSVG() (*oksvg.SvgIcon, error) {
 	if i.svgIcon != nil {
 		return i.svgIcon, nil
+	}
+	if len(i.b) > maxSVGRasterBytes {
+		return nil, fmt.Errorf("svg too large to rasterize: %d bytes", len(i.b))
 	}
 	icon, err := oksvg.ReadIconStream(bytes.NewReader(i.b))
 	if err != nil {

@@ -316,6 +316,12 @@ func (c *conv) paint(st style, m matrix, forceFillNone bool) (pptx.Fill, *pptx.S
 			return fill, nil, false
 		}
 	}
+	// Element opacity < 1 composites the fill and stroke together, but this
+	// model multiplies it into each independently. That only matches when at
+	// most one of fill/stroke is present; otherwise fall back.
+	if op < 1 && fill.Kind != pptx.FillNone && stroke != nil {
+		return fill, nil, false
+	}
 	return fill, stroke, true
 }
 func parseUnit(s string, def float64) (float64, bool) {

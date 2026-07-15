@@ -109,7 +109,13 @@ func (s *Slide) signature() slideSignature {
 		var is imageSignature
 		if img != nil {
 			is.Link = img.link
-			if ph, err := img.PHash(); err == nil {
+			// SVG rasterization is best-effort (it omits text and other
+			// features), so a perceptual hash can collide for SVGs that differ
+			// only in such content. Use the exact raw checksum for SVGs so any
+			// source change is detected and stale slides aren't reused.
+			if img.IsSVG() {
+				is.Checksum = img.Checksum()
+			} else if ph, err := img.PHash(); err == nil {
 				is.PHash = ph.GetHash()
 			} else {
 				is.Checksum = img.Checksum()

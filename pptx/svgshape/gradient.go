@@ -87,6 +87,11 @@ func (c *conv) gradient(id string, seen map[string]bool) (*pptx.Gradient, bool) 
 					return nil, false
 				}
 			}
+			// A zero-length gradient vector paints a solid last-stop color; the
+			// direction-only <a:lin> can't express that, so fall back.
+			if math.Abs(coords["x2"]-coords["x1"]) < 1e-9 && math.Abs(coords["y2"]-coords["y1"]) < 1e-9 {
+				return nil, false
+			}
 			gr.Angle = math.Atan2(coords["y2"]-coords["y1"], coords["x2"]-coords["x1"]) * 180 / math.Pi
 			if gr.Angle < 0 {
 				gr.Angle += 360

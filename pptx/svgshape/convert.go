@@ -36,11 +36,18 @@ type node struct {
 	Attrs    map[string]string
 	Children []*node
 	Text     string
+	// foreign marks an element in a non-SVG namespace, which is not rendered.
+	foreign bool
 	// textAfterChild is set when character data appears after a child element
 	// within this node (mixed content like <text>A<tspan/>C</text>), which the
 	// parser flattens into Text and Children separately, losing order.
 	textAfterChild bool
 }
+
+const (
+	svgNS   = "http://www.w3.org/2000/svg"
+	xlinkNS = "http://www.w3.org/1999/xlink"
+)
 
 type conv struct {
 	root         *node
@@ -108,12 +115,20 @@ func parseXML(data []byte) (*node, error) {
 				return nil, errTooComplex
 			}
 			n := &node{Name: strings.ToLower(t.Name.Local), Attrs: map[string]string{}}
+			// Elements in a foreign namespace are not SVG content and are not
+			// rendered; mark them so the walk skips their subtree.
+			n.foreign = t.Name.Space != "" && t.Name.Space != svgNS
 			for _, a := range t.Attr {
 				key := strings.ToLower(a.Name.Local)
-				if a.Name.Space != "" && key == "href" {
-					key = strings.ToLower(a.Name.Space) + ":href"
+				switch {
+				case a.Name.Space == "" || a.Name.Space == svgNS:
+					n.Attrs[key] = strings.TrimSpace(a.Value)
+				case a.Name.Space == xlinkNS && key == "href":
+					n.Attrs["xlink:href"] = strings.TrimSpace(a.Value)
+				default:
+					// Foreign-namespaced attribute (e.g. an extension); ignore
+					// rather than misinterpret it as an SVG presentation attr.
 				}
-				n.Attrs[key] = strings.TrimSpace(a.Value)
 			}
 			if len(stack) == 0 {
 				root = n
@@ -128,7 +143,11 @@ func parseXML(data []byte) (*node, error) {
 		case xml.CharData:
 			if len(stack) > 0 {
 				top := stack[len(stack)-1]
-				if len(top.Children) > 0 && strings.TrimSpace(string(t)) != "" {
+				// Any character data after a child element is order-significant
+				// in mixed content (including a whitespace separator between
+				// tspans); flag it so text conversion falls back rather than
+				// reordering.
+				if len(top.Children) > 0 {
 					top.textAfterChild = true
 				}
 				top.Text += string([]byte(t))
@@ -231,32 +250,8 @@ func containerOpacity(st style) (float64, bool) {
 // bbox origin is 0,0 and sets the shape/path extent to the bbox size. Returns
 // false when the bbox is degenerate.
 func tightenGradientBounds(gs *pptx.GeomShape) bool {
-	first := true
-	var minX, minY, maxX, maxY int64
-	for _, p := range gs.Paths {
-		for _, cmd := range p.Cmds {
-			for _, pt := range cmd.Pts {
-				if first {
-					minX, minY, maxX, maxY = pt.X, pt.Y, pt.X, pt.Y
-					first = false
-					continue
-				}
-				if pt.X < minX {
-					minX = pt.X
-				}
-				if pt.Y < minY {
-					minY = pt.Y
-				}
-				if pt.X > maxX {
-					maxX = pt.X
-				}
-				if pt.Y > maxY {
-					maxY = pt.Y
-				}
-			}
-		}
-	}
-	if first {
+	minX, minY, maxX, maxY, ok := geomPathBounds(gs)
+	if !ok {
 		return false
 	}
 	w, h := maxX-minX, maxY-minY
@@ -276,6 +271,116 @@ func tightenGradientBounds(gs *pptx.GeomShape) bool {
 	return true
 }
 
+// geomPathBounds returns the tight bounding box of a path in EMU, evaluating
+// Bezier extrema (not just control points, which can lie outside the curve).
+func geomPathBounds(gs *pptx.GeomShape) (minX, minY, maxX, maxY int64, ok bool) {
+	first := true
+	var cur pptx.PathPoint
+	acc := func(p pptx.PathPoint) {
+		if first {
+			minX, minY, maxX, maxY = p.X, p.Y, p.X, p.Y
+			first = false
+			return
+		}
+		if p.X < minX {
+			minX = p.X
+		}
+		if p.Y < minY {
+			minY = p.Y
+		}
+		if p.X > maxX {
+			maxX = p.X
+		}
+		if p.Y > maxY {
+			maxY = p.Y
+		}
+	}
+	accF := func(x, y float64) { acc(pptx.PathPoint{X: int64(math.Round(x)), Y: int64(math.Round(y))}) }
+	for _, p := range gs.Paths {
+		for _, cmd := range p.Cmds {
+			switch cmd.Verb {
+			case pptx.MoveTo, pptx.LineTo:
+				if len(cmd.Pts) >= 1 {
+					cur = cmd.Pts[0]
+					acc(cur)
+				}
+			case pptx.CubicTo:
+				if len(cmd.Pts) >= 3 {
+					p0, p1, p2, p3 := cur, cmd.Pts[0], cmd.Pts[1], cmd.Pts[2]
+					acc(p3)
+					for _, t := range cubicExtrema(float64(p0.X), float64(p1.X), float64(p2.X), float64(p3.X)) {
+						accF(cubicAt(float64(p0.X), float64(p1.X), float64(p2.X), float64(p3.X), t), cubicAt(float64(p0.Y), float64(p1.Y), float64(p2.Y), float64(p3.Y), t))
+					}
+					for _, t := range cubicExtrema(float64(p0.Y), float64(p1.Y), float64(p2.Y), float64(p3.Y)) {
+						accF(cubicAt(float64(p0.X), float64(p1.X), float64(p2.X), float64(p3.X), t), cubicAt(float64(p0.Y), float64(p1.Y), float64(p2.Y), float64(p3.Y), t))
+					}
+					cur = p3
+				}
+			case pptx.QuadTo:
+				if len(cmd.Pts) >= 2 {
+					p0, p1, p2 := cur, cmd.Pts[0], cmd.Pts[1]
+					acc(p2)
+					for _, t := range quadExtrema(float64(p0.X), float64(p1.X), float64(p2.X)) {
+						accF(quadAt(float64(p0.X), float64(p1.X), float64(p2.X), t), quadAt(float64(p0.Y), float64(p1.Y), float64(p2.Y), t))
+					}
+					for _, t := range quadExtrema(float64(p0.Y), float64(p1.Y), float64(p2.Y)) {
+						accF(quadAt(float64(p0.X), float64(p1.X), float64(p2.X), t), quadAt(float64(p0.Y), float64(p1.Y), float64(p2.Y), t))
+					}
+					cur = p2
+				}
+			}
+		}
+	}
+	return minX, minY, maxX, maxY, !first
+}
+
+func cubicAt(p0, p1, p2, p3, t float64) float64 {
+	u := 1 - t
+	return u*u*u*p0 + 3*u*u*t*p1 + 3*u*t*t*p2 + t*t*t*p3
+}
+
+func cubicExtrema(p0, p1, p2, p3 float64) []float64 {
+	// B'(t) = 3[(p1-p0)(1-t)^2 + 2(p2-p1)(1-t)t + (p3-p2)t^2]; solve a t^2+b t+c=0.
+	a := -p0 + 3*p1 - 3*p2 + p3
+	b := 2 * (p0 - 2*p1 + p2)
+	cc := p1 - p0
+	var out []float64
+	if math.Abs(a) < 1e-12 {
+		if math.Abs(b) > 1e-12 {
+			out = appendRoot(out, -cc/b)
+		}
+		return out
+	}
+	disc := b*b - 4*a*cc
+	if disc < 0 {
+		return out
+	}
+	sq := math.Sqrt(disc)
+	out = appendRoot(out, (-b+sq)/(2*a))
+	out = appendRoot(out, (-b-sq)/(2*a))
+	return out
+}
+
+func quadAt(p0, p1, p2, t float64) float64 {
+	u := 1 - t
+	return u*u*p0 + 2*u*t*p1 + t*t*p2
+}
+
+func quadExtrema(p0, p1, p2 float64) []float64 {
+	den := p0 - 2*p1 + p2
+	if math.Abs(den) < 1e-12 {
+		return nil
+	}
+	return appendRoot(nil, (p0-p1)/den)
+}
+
+func appendRoot(out []float64, t float64) []float64 {
+	if t > 0 && t < 1 {
+		return append(out, t)
+	}
+	return out
+}
+
 func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root bool) bool {
 	c.depth++
 	defer func() { c.depth-- }()
@@ -284,6 +389,10 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 	}
 	if !root && isFallbackElement(n.Name) {
 		return false
+	}
+	if !root && n.foreign {
+		// Foreign-namespace content is not rendered by SVG.
+		return true
 	}
 	if !root && n.Name == "style" {
 		return true
@@ -373,6 +482,16 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 		// viewBox) to match SVG objectBoundingBox, and its direction can't be
 		// rotated/skewed; fall back for rotation/skew.
 		gs := &pptx.GeomShape{Name: shapeName(n, "Shape", c.geomCount+1), X: 0, Y: 0, W: c.chW, H: c.chH, PathW: c.chW, PathH: c.chH, Paths: []pptx.GeomPath{gp}, Fill: fill, Stroke: stroke, EvenOdd: evenOdd}
+		// SVG clips painting to the root viewport by default, but a PowerPoint
+		// group does not clip its children; fall back when a shape's tight
+		// bounds extend beyond the viewBox so nothing renders outside the
+		// placed rectangle.
+		if bx0, by0, bx1, by1, ok := geomPathBounds(gs); ok {
+			const tol = 16 // EMU, absorbs rounding of edge-aligned content
+			if bx0 < -tol || by0 < -tol || bx1 > c.chW+tol || by1 > c.chH+tol {
+				return false
+			}
+		}
 		if fill.Kind == pptx.FillGradient {
 			if m.b != 0 || m.c != 0 {
 				return false
@@ -388,9 +507,6 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 	case "use":
 		return c.expandUse(n, st, m, g)
 	case "text":
-		if visibilityHidden(st) {
-			return true
-		}
 		return c.text(n, st, m, g)
 	default:
 		if root {
@@ -524,20 +640,44 @@ func shapeName(n *node, prefix string, i int) string {
 func isFallbackElement(name string) bool {
 	return name == "clippath" || name == "mask" || name == "pattern" || name == "filter" || name == "image" || name == "foreignobject" || name == "textpath" || name == "switch" || name == "set" || strings.HasPrefix(name, "animate")
 }
+
+// allowedAttrs is the set of attribute local-names the converter understands
+// (structural geometry + supported presentation attributes). Any other
+// rendering-affecting attribute triggers the whole-SVG fallback rather than
+// being silently ignored (e.g. vector-effect, font-weight, letter-spacing).
+var allowedAttrs = map[string]bool{
+	// structural / geometry
+	"id": true, "class": true, "style": true, "transform": true,
+	"x": true, "y": true, "width": true, "height": true,
+	"cx": true, "cy": true, "r": true, "rx": true, "ry": true,
+	"d": true, "points": true, "x1": true, "y1": true, "x2": true, "y2": true,
+	"href": true, "xlink:href": true,
+	"viewbox": true, "preserveaspectratio": true, "version": true,
+	"baseprofile": true, "space": true, "lang": true, "overflow": true,
+	"role": true, "focusable": true, "tabindex": true,
+	// gradients
+	"offset": true, "gradientunits": true, "gradienttransform": true,
+	"spreadmethod": true, "fx": true, "fy": true, "fr": true,
+}
+
+// hasUnsupportedAttrs reports whether an element carries any attribute the
+// converter can't faithfully honor. Supported style properties (inheritedProps,
+// stop-color/stop-opacity) and structural attributes are allowed; xmlns/xml:*,
+// aria-*, data-* and event handlers are harmless and ignored; everything else
+// forces a fallback.
 func hasUnsupportedAttrs(n *node) bool {
-	// clip-path, mask and filter applied via presentation attributes reference
-	// features DrawingML can't reproduce. The referenced element usually also
-	// triggers isFallbackElement, but checking the attributes directly is cheap
-	// defense-in-depth (e.g. external or otherwise-missed references).
-	for _, a := range []string{"filter", "clip-path", "mask"} {
-		if _, ok := n.Attrs[a]; ok {
-			return true
+	for k := range n.Attrs {
+		if allowedAttrs[k] || inheritedProps[k] || k == "stop-color" || k == "stop-opacity" {
+			continue
 		}
-	}
-	if _, m := n.Attrs["marker"]; m {
+		if strings.HasPrefix(k, "xmlns") || strings.HasPrefix(k, "xml:") ||
+			strings.HasPrefix(k, "aria-") || strings.HasPrefix(k, "data-") ||
+			strings.HasPrefix(k, "on") {
+			continue
+		}
 		return true
 	}
-	return n.Attrs["marker-start"] != "" || n.Attrs["marker-mid"] != "" || n.Attrs["marker-end"] != ""
+	return false
 }
 
 func parseNumberList(s string) ([]float64, bool) { return scanNumbers(s) }

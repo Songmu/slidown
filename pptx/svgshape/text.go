@@ -67,6 +67,12 @@ func (c *conv) text(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 			return false
 		}
 	}
+	// The text element's own visibility hides its direct text, but a descendant
+	// tspan may override it, so this is applied per run rather than skipping the
+	// whole element.
+	if visibilityHidden(st) {
+		color = ""
+	}
 	family := firstFamily(st.get("font-family"))
 	runs, ok := c.textRuns(n, st, fs*0.75, color, family)
 	if !ok {
@@ -122,6 +128,10 @@ func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]
 		child, ok := c.resolveStyle(ch, st)
 		if !ok {
 			return nil, false
+		}
+		// A tspan hidden via display/visibility renders nothing.
+		if displayNone(child) || visibilityHidden(child) {
+			continue
 		}
 		cpt := pt
 		if fs := child.get("font-size"); fs != "" {

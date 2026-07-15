@@ -101,9 +101,9 @@ func TestTransformsAndGroups(t *testing.T) {
 	g := mustConvert(t, `<svg viewBox="0 0 100 100"><rect transform="translate(10,20) scale(2)" x="1" y="1" width="1" height="1" fill="red"/></svg>`)
 	near(t, g.Geoms[0].Paths[0].Cmds[0].Pts[0].X, 12*9525)
 	near(t, g.Geoms[0].Paths[0].Cmds[0].Pts[0].Y, 22*9525)
-	g = mustConvert(t, `<svg viewBox="0 0 100 100"><rect transform="rotate(90)" x="1" y="0" width="1" height="1" fill="red"/></svg>`)
-	near(t, g.Geoms[0].Paths[0].Cmds[0].Pts[0].X, 0)
-	near(t, g.Geoms[0].Paths[0].Cmds[0].Pts[0].Y, 1*9525)
+	g = mustConvert(t, `<svg viewBox="0 0 100 100"><rect transform="translate(1,1) rotate(90)" x="1" y="0" width="1" height="1" fill="red"/></svg>`)
+	near(t, g.Geoms[0].Paths[0].Cmds[0].Pts[0].X, 1*9525)
+	near(t, g.Geoms[0].Paths[0].Cmds[0].Pts[0].Y, 2*9525)
 	g = mustConvert(t, `<svg viewBox="0 0 100 100"><rect transform="matrix(1 0 0 1 5 6)" x="1" y="1" width="1" height="1" fill="red"/></svg>`)
 	near(t, g.Geoms[0].Paths[0].Cmds[0].Pts[0].X, 6*9525)
 	near(t, g.Geoms[0].Paths[0].Cmds[0].Pts[0].Y, 7*9525)
@@ -420,6 +420,46 @@ func TestReviewBatch3(t *testing.T) {
 		"tspan positioned":          `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="red" font-size="10"><tspan x="5">Hi</tspan></text></svg>`,
 		"tspan nested":              `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="red" font-size="10"><tspan><tspan>Hi</tspan></tspan></text></svg>`,
 		"explicit miterlimit":       `<svg viewBox="0 0 10 10"><rect width="2" height="2" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter" stroke-miterlimit="10"/></svg>`,
+	} {
+		if _, ok := Convert([]byte(svg)); ok {
+			t.Errorf("%s: expected fallback", name)
+		}
+	}
+}
+
+func TestReviewBatch4(t *testing.T) {
+	// Foreign-namespace element is not rendered.
+	g := mustConvert(t, `<svg xmlns="http://www.w3.org/2000/svg" xmlns:foo="urn:example" viewBox="0 0 10 10"><foo:rect x="0" y="0" width="1" height="1" fill="red"/><rect width="1" height="1" fill="green"/></svg>`)
+	if len(g.Geoms) != 1 || g.Geoms[0].Fill.Color != "008000" {
+		t.Fatalf("foreign element should not render: %#v", g.Geoms)
+	}
+	// Whitespace-only text between tspans is order-significant -> fallback.
+	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10"><tspan>Hello</tspan> <tspan>world</tspan></text></svg>`)); ok {
+		t.Error("whitespace between tspans should fall back")
+	}
+	// tspan display:none is skipped; visible sibling renders.
+	g = mustConvert(t, `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10"><tspan display="none">x</tspan><tspan>ok</tspan></text></svg>`)
+	if len(g.Texts) != 1 || len(g.Texts[0].Paragraphs[0].Runs) != 1 || g.Texts[0].Paragraphs[0].Runs[0].Text != "ok" {
+		t.Fatalf("tspan display:none not skipped: %#v", g.Texts)
+	}
+	// Hidden text with a visibility:visible tspan still renders the child.
+	g = mustConvert(t, `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10" visibility="hidden"><tspan visibility="visible">seen</tspan></text></svg>`)
+	if len(g.Texts) != 1 || len(g.Texts[0].Paragraphs[0].Runs) != 1 || g.Texts[0].Paragraphs[0].Runs[0].Text != "seen" {
+		t.Fatalf("visible tspan under hidden text lost: %#v", g.Texts)
+	}
+	// Bezier bounds: a gradient-filled circle uses tight bounds ~= its bbox.
+	g = mustConvert(t, `<svg viewBox="0 0 100 100"><defs><linearGradient id="lg"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><circle cx="50" cy="50" r="10" fill="url(#lg)"/></svg>`)
+	gs := g.Geoms[0]
+	if d := gs.W - round(20*emuPerUnit); d < -round(1*emuPerUnit) || d > round(1*emuPerUnit) {
+		t.Fatalf("gradient circle bounds should be ~20 units wide, got W=%d", gs.W)
+	}
+
+	for name, svg := range map[string]string{
+		"unsupported presentation attr": `<svg viewBox="0 0 10 10"><rect width="1" height="1" fill="red" vector-effect="non-scaling-stroke"/></svg>`,
+		"font-weight attr":              `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10" font-weight="bold">Hi</text></svg>`,
+		"zero-length gradient":          `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg" x1="0.5" y1="0.5" x2="0.5" y2="0.5"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`,
+		"opacity fill and stroke":       `<svg viewBox="0 0 10 10"><rect width="5" height="5" fill="red" stroke="blue" stroke-width="1" opacity="0.5"/></svg>`,
+		"circle outside viewport":       `<svg viewBox="0 0 10 10"><circle cx="0" cy="5" r="3" fill="red"/></svg>`,
 	} {
 		if _, ok := Convert([]byte(svg)); ok {
 			t.Errorf("%s: expected fallback", name)
