@@ -6,7 +6,7 @@ require (
 	github.com/corona10/goimagehash v1.1.0
 	github.com/fswatcher/fswatcher v0.1.1-0.20260620132924-abd043702c24
 	github.com/goccy/go-yaml v1.19.2
-	github.com/google/cel-go v0.29.2
+	github.com/google/cel-go v0.30.0
 	github.com/google/go-cmp v0.7.0
 	github.com/k1LoW/errors v1.2.0
 	github.com/k1LoW/exec v0.5.0
@@ -14,7 +14,7 @@ require (
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
 	github.com/tenntenn/golden v0.5.5
-	github.com/yuin/goldmark v1.8.4
+	github.com/yuin/goldmark v1.8.5
 	golang.org/x/sync v0.22.0
 )
 
