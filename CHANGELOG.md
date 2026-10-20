@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.0.9](https://github.com/Songmu/slidown/compare/v0.0.8...v0.0.9) - 2026-10-20
+
+### Other Changes
+- chore(deps): bump the dependencies group across 1 directory with 6 updates by @dependabot[bot] in https://github.com/Songmu/slidown/pull/82
+- chore(deps): bump the dependencies group across 1 directory with 3 updates by @dependabot[bot] in https://github.com/Songmu/slidown/pull/84
+
 ## [v0.0.8](https://github.com/Songmu/slidown/compare/v0.0.7...v0.0.8) - 2026-07-15
 
 ### Other Changes
