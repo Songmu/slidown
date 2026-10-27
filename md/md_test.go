@@ -9,7 +9,9 @@ import (
 	"regexp"
 	"testing"
 
+	"github.com/Songmu/slidown"
 	"github.com/tenntenn/golden"
+	"github.com/yuin/goldmark/text"
 )
 
 var modtimeReg = regexp.MustCompile(`\n\s+"ModTime": ".*?",`)
@@ -108,6 +110,70 @@ func TestValidateKeys(t *testing.T) {
 			_, err := Parse("../testdata", []byte(tt.src), nil)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestParseContentRichHeadingBodies(t *testing.T) {
+	src := "before\n\n## **Title**\n\nbetween\n\n### *Subtitle*\n\n#### Deep\n\n***\n\nafter\n"
+	got, err := ParseContent("", []byte(src), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &Content{
+		Titles:         []string{"Title"},
+		TitleBodies:    []*slidown.Body{{Paragraphs: []*slidown.Paragraph{{Fragments: []*slidown.Fragment{{Value: "Title", Bold: true}}}}}},
+		Subtitles:      []string{"Subtitle"},
+		SubtitleBodies: []*slidown.Body{{Paragraphs: []*slidown.Paragraph{{Fragments: []*slidown.Fragment{{Value: "Subtitle", Italic: true}}}}}},
+		Bodies: []*slidown.Body{
+			{Paragraphs: []*slidown.Paragraph{{Fragments: []*slidown.Fragment{{Value: "before"}}}}},
+			{Paragraphs: []*slidown.Paragraph{{Fragments: []*slidown.Fragment{{Value: "between"}}}}},
+			{Paragraphs: []*slidown.Paragraph{{Fragments: []*slidown.Fragment{{Value: "Deep", Bold: true}}}}},
+			{Paragraphs: []*slidown.Paragraph{{Fragments: []*slidown.Fragment{{Value: "after"}}}}},
+		},
+		Headings: map[int][]string{2: {"Title"}, 3: {"Subtitle"}, 4: {"Deep"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ParseContent() = %#v, want %#v", got, want)
+	}
+}
+
+func TestParseContentNestedListMarker(t *testing.T) {
+	got, err := ParseContent("", []byte("- outer\n  1. inner\n- sibling\n"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The outer sibling retains the marker of the last list entered.
+	want := []*slidown.Body{{Paragraphs: []*slidown.Paragraph{
+		{Fragments: []*slidown.Fragment{{Value: "outer"}}, Bullet: slidown.BulletDash},
+		{Fragments: []*slidown.Fragment{{Value: "inner"}}, Bullet: slidown.BulletNumbered, Nesting: 1},
+		{Fragments: []*slidown.Fragment{{Value: "sibling"}}, Bullet: slidown.BulletNumbered},
+	}}}
+	if !reflect.DeepEqual(got.Bodies, want) {
+		t.Errorf("Bodies = %#v, want %#v", got.Bodies, want)
+	}
+}
+
+func TestWalkContentsStopsOnImageError(t *testing.T) {
+	tests := map[string]string{
+		"heading":    "# ![missing](missing.png)\n",
+		"paragraph":  "![missing](missing.png)\n",
+		"list":       "- ![missing](missing.png)\n",
+		"table":      "| image |\n| --- |\n| ![missing](missing.png) |\n",
+		"blockquote": "> ![missing](missing.png)\n",
+	}
+	for name, src := range tests {
+		t.Run(name, func(t *testing.T) {
+			b := []byte(src + "\n# Not reached\n")
+			doc := newParser().Parser().Parse(text.NewReader(b))
+			content := &Content{Headings: make(map[int][]string)}
+			err := walkContents(doc, "", b, content, 1, false)
+			if err == nil {
+				t.Fatal("walkContents() succeeded with a missing image")
+			}
+			if len(content.Titles) != 0 {
+				t.Errorf("walk continued after image error: titles = %v", content.Titles)
 			}
 		})
 	}

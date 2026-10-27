@@ -348,203 +348,229 @@ func walkContents(doc ast.Node, baseDir string, b []byte, content *Content, titl
 	if len(content.Bodies) == 0 {
 		content.Bodies = append(content.Bodies, &slidown.Body{})
 	}
-	currentBody := content.Bodies[len(content.Bodies)-1]
-	currentListMarker := slidown.BulletNone
-	if err := ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
-		if entering {
-			switch v := n.(type) {
-			case *ast.Heading:
-				var text strings.Builder
-				seedFragment := slidown.Fragment{}
-				if v.Level > titleLevel+1 {
-					// Heading elements that are not at the level of titles or subtitles are embedded in the body,
-					// so they are bold by default.
-					seedFragment.Bold = true
-				}
-				// don't support images in headings for now
-				frags, _, err := toFragments(baseDir, b, v, seedFragment)
-				if err != nil {
-					return ast.WalkStop, err
-				}
-				modelFrags := toModelFragments(frags, breaks)
-				for _, frag := range modelFrags {
-					if frag.Value != "" {
-						text.WriteString(frag.Value)
-					}
-				}
-				content.Headings[v.Level] = append(content.Headings[v.Level], text.String())
+	walker := contentWalker{
+		content:           content,
+		baseDir:           baseDir,
+		source:            b,
+		titleLevel:        titleLevel,
+		breaks:            breaks,
+		currentBody:       content.Bodies[len(content.Bodies)-1],
+		currentListMarker: slidown.BulletNone,
+	}
+	return ast.Walk(doc, walker.walk)
+}
 
-				switch v.Level {
-				case titleLevel:
-					content.Titles = append(content.Titles, text.String())
-					content.TitleBodies = append(content.TitleBodies, &slidown.Body{
-						Paragraphs: []*slidown.Paragraph{{
-							Fragments: modelFrags,
-						}},
-					})
-					if len(currentBody.Paragraphs) > 0 {
-						currentBody = &slidown.Body{}
-						content.Bodies = append(content.Bodies, currentBody)
-					}
-				case titleLevel + 1:
-					content.Subtitles = append(content.Subtitles, text.String())
-					content.SubtitleBodies = append(content.SubtitleBodies, &slidown.Body{
-						Paragraphs: []*slidown.Paragraph{{
-							Fragments: modelFrags,
-						}},
-					})
-					if len(currentBody.Paragraphs) > 0 {
-						currentBody = &slidown.Body{}
-						content.Bodies = append(content.Bodies, currentBody)
-					}
-				default:
-					currentBody.Paragraphs = append(currentBody.Paragraphs, &slidown.Paragraph{
-						Fragments: modelFrags,
-						Bullet:    slidown.BulletNone,
-						Nesting:   0,
-					})
-				}
-			case *ast.ThematicBreak:
-				if len(currentBody.Paragraphs) > 0 {
-					currentBody = &slidown.Body{}
-					content.Bodies = append(content.Bodies, currentBody)
-				}
-			case *ast.List:
-				currentListMarker = toBullet(v.Marker)
-			case *ast.ListItem:
-				tb := v.FirstChild()
-				frags, images, err := toFragments(baseDir, b, tb, slidown.Fragment{})
-				if err != nil {
-					return ast.WalkStop, err
-				}
-				// Calculate nesting level based on indentation
-				// Assuming 2 spaces per indentation level and subtracting 1 for the base level
-				nesting := 0
-				vv := v
-				for {
-					pv := vv.Parent()
-					if pv == nil || pv.Kind() != ast.KindList {
-						break
-					}
-					ppv := pv.Parent()
-					if ppv != nil && ppv.Kind() == ast.KindListItem {
-						nesting++
-						listItem, ok := ppv.(*ast.ListItem)
-						if !ok {
-							break
-						}
-						vv = listItem
-					} else {
-						break
-					}
-				}
-				content.Images = append(content.Images, images...)
-				if len(frags) == 0 {
-					return ast.WalkContinue, nil
-				}
-				currentBody.Paragraphs = append(currentBody.Paragraphs, &slidown.Paragraph{
-					Fragments: toModelFragments(frags, breaks),
-					Bullet:    currentListMarker,
-					Nesting:   nesting,
-				})
-			case *ast.Paragraph:
-				// Skip paragraphs that are direct children of list items to avoid duplication
-				if v.Parent() != nil && v.Parent().Kind() == ast.KindListItem {
-					return ast.WalkSkipChildren, nil
-				}
-				frags, images, err := toFragments(baseDir, b, v, slidown.Fragment{})
-				if err != nil {
-					return ast.WalkStop, err
-				}
-				content.Images = append(content.Images, images...)
-				if len(frags) == 0 {
-					return ast.WalkContinue, nil
-				}
-				currentBody.Paragraphs = append(currentBody.Paragraphs, &slidown.Paragraph{
-					Fragments: toModelFragments(frags, breaks),
-					Bullet:    slidown.BulletNone,
-					Nesting:   0,
-				})
-			case *ast.HTMLBlock:
-				if v.HTMLBlockType == ast.HTMLBlockType2 {
-					block := strings.TrimSpace(strings.TrimSuffix(
-						strings.TrimPrefix(strings.TrimSpace(string(v.Lines().Value(b))), "<!--"), "-->"))
-					config := &Config{}
-					if err := json.Unmarshal([]byte(block), config); err == nil {
-						content.Layout = config.Layout
-						content.Freeze = config.Freeze
-						content.Ignore = config.Ignore
-						content.Skip = config.Skip
-						content.Key = config.Key
-						return ast.WalkContinue, nil
-					}
-					content.Comments = append(content.Comments, block)
-				} else {
-					trimmed := string(bytes.TrimSpace(v.Lines().Value(b)))
-					// Normalize single <br> tag to newline character.
-					// In cases of multiple <br> tags, goldmark can handle them.
-					// NOTE: This handling for this single <br> is likely a workaround. If the Markdown parser's behavior is changed, it should be removed.
-					if trimmed == "<br>" || trimmed == "<br/>" || trimmed == "<br />" {
-						trimmed = "\n"
-					}
-					currentBody.Paragraphs = append(currentBody.Paragraphs, &slidown.Paragraph{
-						Fragments: []*slidown.Fragment{{
-							Value: trimmed,
-							Bold:  false,
-						}},
-						Bullet:  slidown.BulletNone,
-						Nesting: 0,
-					})
-				}
-			case *ast.CodeBlock:
-				c := v.Lines().Value(b)
-				content.CodeBlocks = append(content.CodeBlocks, &CodeBlock{
-					Content: string(c),
-				})
-			case *ast.FencedCodeBlock:
-				lang := v.Language(b)
-				c := v.Lines().Value(b)
-				content.CodeBlocks = append(content.CodeBlocks, &CodeBlock{
-					Language: string(lang),
-					Content:  string(c),
-				})
-			case *east.Table:
-				table, err := parseTable(v, baseDir, b, breaks)
-				if err != nil {
-					return ast.WalkStop, err
-				}
-				content.Tables = append(content.Tables, table)
-				return ast.WalkSkipChildren, nil
-			case *ast.Blockquote:
-				blockQuoteContent := &Content{
-					Headings: make(map[int][]string),
-				}
-				for v := n.FirstChild(); v != nil; v = v.NextSibling() {
-					if err := walkContents(v, baseDir, b, blockQuoteContent, 1, breaks); err != nil {
-						return ast.WalkStop, err
-					}
-				}
-				content.CodeBlocks = append(content.CodeBlocks, blockQuoteContent.CodeBlocks...)
-				content.Images = append(content.Images, blockQuoteContent.Images...)
-				for _, body := range blockQuoteContent.Bodies {
-					if len(body.Paragraphs) > 0 {
-						content.BlockQuotes = append(content.BlockQuotes, &slidown.BlockQuote{
-							Paragraphs: body.Paragraphs,
-							Nesting:    0,
-						})
-					}
-				}
-				// Flatten nested block quotes
-				for _, blockQuote := range blockQuoteContent.BlockQuotes {
-					blockQuote.Nesting++
-					content.BlockQuotes = append(content.BlockQuotes, blockQuote)
-				}
-				return ast.WalkSkipChildren, nil
-			}
-		}
+type contentWalker struct {
+	content           *Content
+	baseDir           string
+	source            []byte
+	titleLevel        int
+	breaks            bool
+	currentBody       *slidown.Body
+	currentListMarker slidown.Bullet
+}
+
+func (w *contentWalker) walk(n ast.Node, entering bool) (ast.WalkStatus, error) {
+	if !entering {
 		return ast.WalkContinue, nil
-	}); err != nil {
+	}
+	var err error
+	switch v := n.(type) {
+	case *ast.Heading:
+		err = w.addHeading(v)
+	case *ast.ThematicBreak:
+		w.splitBody()
+	case *ast.List:
+		// Keep the most recently entered list's marker, even after leaving a nested list.
+		w.currentListMarker = toBullet(v.Marker)
+	case *ast.ListItem:
+		err = w.addTextParagraph(v.FirstChild(), w.currentListMarker, listItemNesting(v))
+	case *ast.Paragraph:
+		// List items already consume their first child's fragments.
+		if v.Parent() != nil && v.Parent().Kind() == ast.KindListItem {
+			return ast.WalkSkipChildren, nil
+		}
+		err = w.addTextParagraph(v, slidown.BulletNone, 0)
+	case *ast.HTMLBlock:
+		w.addHTMLBlock(v)
+	case *ast.CodeBlock:
+		w.content.CodeBlocks = append(w.content.CodeBlocks, &CodeBlock{
+			Content: string(v.Lines().Value(w.source)),
+		})
+	case *ast.FencedCodeBlock:
+		w.content.CodeBlocks = append(w.content.CodeBlocks, &CodeBlock{
+			Language: string(v.Language(w.source)),
+			Content:  string(v.Lines().Value(w.source)),
+		})
+	case *east.Table:
+		table, err := parseTable(v, w.baseDir, w.source, w.breaks)
+		if err != nil {
+			return ast.WalkStop, err
+		}
+		w.content.Tables = append(w.content.Tables, table)
+		return ast.WalkSkipChildren, nil
+	case *ast.Blockquote:
+		if err := w.addBlockquote(v); err != nil {
+			return ast.WalkStop, err
+		}
+		return ast.WalkSkipChildren, nil
+	}
+	if err != nil {
+		return ast.WalkStop, err
+	}
+	return ast.WalkContinue, nil
+}
+
+func (w *contentWalker) splitBody() {
+	if len(w.currentBody.Paragraphs) > 0 {
+		w.currentBody = &slidown.Body{}
+		w.content.Bodies = append(w.content.Bodies, w.currentBody)
+	}
+}
+
+func (w *contentWalker) addHeading(v *ast.Heading) error {
+	var text strings.Builder
+	seedFragment := slidown.Fragment{}
+	if v.Level > w.titleLevel+1 {
+		// Heading elements that are not at the level of titles or subtitles are embedded in the body,
+		// so they are bold by default.
+		seedFragment.Bold = true
+	}
+	// don't support images in headings for now
+	frags, _, err := toFragments(w.baseDir, w.source, v, seedFragment)
+	if err != nil {
 		return err
+	}
+	modelFrags := toModelFragments(frags, w.breaks)
+	for _, frag := range modelFrags {
+		if frag.Value != "" {
+			text.WriteString(frag.Value)
+		}
+	}
+	w.content.Headings[v.Level] = append(w.content.Headings[v.Level], text.String())
+
+	switch v.Level {
+	case w.titleLevel:
+		w.content.Titles = append(w.content.Titles, text.String())
+		w.content.TitleBodies = append(w.content.TitleBodies, &slidown.Body{
+			Paragraphs: []*slidown.Paragraph{{
+				Fragments: modelFrags,
+			}},
+		})
+		w.splitBody()
+	case w.titleLevel + 1:
+		w.content.Subtitles = append(w.content.Subtitles, text.String())
+		w.content.SubtitleBodies = append(w.content.SubtitleBodies, &slidown.Body{
+			Paragraphs: []*slidown.Paragraph{{
+				Fragments: modelFrags,
+			}},
+		})
+		w.splitBody()
+	default:
+		w.currentBody.Paragraphs = append(w.currentBody.Paragraphs, &slidown.Paragraph{
+			Fragments: modelFrags,
+			Bullet:    slidown.BulletNone,
+			Nesting:   0,
+		})
+	}
+	return nil
+}
+
+func (w *contentWalker) addTextParagraph(n ast.Node, bullet slidown.Bullet, nesting int) error {
+	frags, images, err := toFragments(w.baseDir, w.source, n, slidown.Fragment{})
+	if err != nil {
+		return err
+	}
+	w.content.Images = append(w.content.Images, images...)
+	if len(frags) == 0 {
+		return nil
+	}
+	w.currentBody.Paragraphs = append(w.currentBody.Paragraphs, &slidown.Paragraph{
+		Fragments: toModelFragments(frags, w.breaks),
+		Bullet:    bullet,
+		Nesting:   nesting,
+	})
+	return nil
+}
+
+func listItemNesting(item *ast.ListItem) int {
+	nesting := 0
+	for {
+		list := item.Parent()
+		if list == nil || list.Kind() != ast.KindList {
+			break
+		}
+		parentItem := list.Parent()
+		if parentItem == nil || parentItem.Kind() != ast.KindListItem {
+			break
+		}
+		nesting++
+		ancestor, ok := parentItem.(*ast.ListItem)
+		if !ok {
+			break
+		}
+		item = ancestor
+	}
+	return nesting
+}
+
+func (w *contentWalker) addHTMLBlock(v *ast.HTMLBlock) {
+	if v.HTMLBlockType == ast.HTMLBlockType2 {
+		block := strings.TrimSpace(strings.TrimSuffix(
+			strings.TrimPrefix(strings.TrimSpace(string(v.Lines().Value(w.source))), "<!--"), "-->"))
+		config := &Config{}
+		if err := json.Unmarshal([]byte(block), config); err == nil {
+			w.content.Layout = config.Layout
+			w.content.Freeze = config.Freeze
+			w.content.Ignore = config.Ignore
+			w.content.Skip = config.Skip
+			w.content.Key = config.Key
+			return
+		}
+		w.content.Comments = append(w.content.Comments, block)
+		return
+	}
+	trimmed := string(bytes.TrimSpace(v.Lines().Value(w.source)))
+	// Normalize single <br> tag to newline character.
+	// In cases of multiple <br> tags, goldmark can handle them.
+	// NOTE: This handling for this single <br> is likely a workaround. If the Markdown parser's behavior is changed, it should be removed.
+	if trimmed == "<br>" || trimmed == "<br/>" || trimmed == "<br />" {
+		trimmed = "\n"
+	}
+	w.currentBody.Paragraphs = append(w.currentBody.Paragraphs, &slidown.Paragraph{
+		Fragments: []*slidown.Fragment{{
+			Value: trimmed,
+			Bold:  false,
+		}},
+		Bullet:  slidown.BulletNone,
+		Nesting: 0,
+	})
+}
+
+func (w *contentWalker) addBlockquote(v *ast.Blockquote) error {
+	blockQuoteContent := &Content{
+		Headings: make(map[int][]string),
+	}
+	// Each child gets fresh walk state while sharing the quotation's accumulated content.
+	for child := v.FirstChild(); child != nil; child = child.NextSibling() {
+		if err := walkContents(child, w.baseDir, w.source, blockQuoteContent, 1, w.breaks); err != nil {
+			return err
+		}
+	}
+	w.content.CodeBlocks = append(w.content.CodeBlocks, blockQuoteContent.CodeBlocks...)
+	w.content.Images = append(w.content.Images, blockQuoteContent.Images...)
+	for _, body := range blockQuoteContent.Bodies {
+		if len(body.Paragraphs) > 0 {
+			w.content.BlockQuotes = append(w.content.BlockQuotes, &slidown.BlockQuote{
+				Paragraphs: body.Paragraphs,
+				Nesting:    0,
+			})
+		}
+	}
+	// Flatten nested block quotes
+	for _, blockQuote := range blockQuoteContent.BlockQuotes {
+		blockQuote.Nesting++
+		w.content.BlockQuotes = append(w.content.BlockQuotes, blockQuote)
 	}
 	return nil
 }
