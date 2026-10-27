@@ -406,94 +406,13 @@ func (c *conv) paint(st style, m matrix, forceFillNone bool) (pptx.Fill, *pptx.S
 	if !ok {
 		return pptx.Fill{}, nil, false
 	}
-	fill := pptx.Fill{Kind: pptx.FillNone}
-	fillVal := resolvePaint(st, st.get("fill"))
-	if !forceFillNone && fillVal != "none" && fillVal != "" {
-		fo, ok := parseUnit(st.get("fill-opacity"), 1)
-		if !ok {
-			return fill, nil, false
-		}
-		if strings.HasPrefix(fillVal, "url(") {
-			id := urlID(fillVal)
-			gr := c.gradients[id]
-			if id == "" || gr == nil {
-				return fill, nil, false
-			}
-			fill = pptx.Fill{Kind: pptx.FillGradient, Alpha: op * fo, Gradient: gr}
-		} else {
-			col, ok := parseColor(fillVal)
-			if !ok {
-				return fill, nil, false
-			}
-			fill = pptx.Fill{Kind: pptx.FillSolid, Color: col, Alpha: op * fo}
-		}
+	fill, ok := c.paintFill(st, op, forceFillNone)
+	if !ok {
+		return fill, nil, false
 	}
-	var stroke *pptx.Stroke
-	strokeVal := resolvePaint(st, st.get("stroke"))
-	if strokeVal != "none" && strokeVal != "" {
-		// A non-similarity transform (non-uniform scale or skew) stretches the
-		// stroke outline anisotropically, which a single uniform stroke width
-		// can't reproduce, so fall back to the native SVG picture.
-		if !m.isSimilarity() {
-			return fill, nil, false
-		}
-		col, ok := parseColor(strokeVal)
-		if !ok {
-			return fill, nil, false
-		}
-		so, ok := parseUnit(st.get("stroke-opacity"), 1)
-		if !ok {
-			return fill, nil, false
-		}
-		w, ok := parseLength(st.get("stroke-width"), false)
-		if !ok {
-			return fill, nil, false
-		}
-		if w == 0 {
-			// stroke-width:0 paints no stroke.
-			return fill, nil, true
-		}
-		if w < 0 {
-			// A negative stroke width is invalid; fall back.
-			return fill, nil, false
-		}
-		cap := map[string]string{"butt": "flat", "round": "rnd", "square": "sq"}[strings.ToLower(st.get("stroke-linecap"))]
-		if cap == "" {
-			return fill, nil, false
-		}
-		join := strings.ToLower(st.get("stroke-linejoin"))
-		if join == "" {
-			join = "miter"
-		}
-		if join != "round" && join != "bevel" && join != "miter" {
-			return fill, nil, false
-		}
-		// DrawingML a:ln@w is limited to 20,116,800 EMU; a wider (or non-finite)
-		// scaled stroke can't be represented, so fall back rather than emit an
-		// out-of-range or overflowed width.
-		const maxLineWidthEMU = 20116800.0
-		we := w * emuPerUnit * m.avgScale()
-		if math.IsNaN(we) || math.IsInf(we, 0) || we > maxLineWidthEMU {
-			return fill, nil, false
-		}
-		strokeWidthEMU := round(we)
-		// The writer emits SVG's default miter limit (4); an explicit different
-		// limit isn't modeled, so fall back for miter joins that set one.
-		if join == "miter" {
-			if ml := strings.TrimSpace(st.get("stroke-miterlimit")); ml != "" {
-				v, ok := parseLength(ml, false)
-				if !ok || math.Abs(v-4) > 1e-9 {
-					return fill, nil, false
-				}
-			}
-		}
-		stroke = &pptx.Stroke{Color: col, Alpha: op * so, Width: strokeWidthEMU, Cap: cap, Join: join}
-		// Arbitrary dash patterns can't be mapped to a single OOXML preset
-		// faithfully, so fall back to the native SVG picture rather than
-		// silently rendering a different dash.
-		if da := strings.TrimSpace(st.get("stroke-dasharray")); da != "" && da != "none" {
-			return fill, nil, false
-		}
+	stroke, ok := paintStroke(st, m, op)
+	if !ok {
+		return fill, nil, false
 	}
 	// Element opacity < 1 composites the fill and stroke together, but this
 	// model multiplies it into each independently. That only matches when at
@@ -502,6 +421,110 @@ func (c *conv) paint(st style, m matrix, forceFillNone bool) (pptx.Fill, *pptx.S
 		return fill, nil, false
 	}
 	return fill, stroke, true
+}
+
+func (c *conv) paintFill(st style, op float64, forceFillNone bool) (pptx.Fill, bool) {
+	fill := pptx.Fill{Kind: pptx.FillNone}
+	fillVal := resolvePaint(st, st.get("fill"))
+	if forceFillNone || fillVal == "none" || fillVal == "" {
+		return fill, true
+	}
+	fo, ok := parseUnit(st.get("fill-opacity"), 1)
+	if !ok {
+		return fill, false
+	}
+	if strings.HasPrefix(fillVal, "url(") {
+		id := urlID(fillVal)
+		gr := c.gradients[id]
+		if id == "" || gr == nil {
+			return fill, false
+		}
+		return pptx.Fill{Kind: pptx.FillGradient, Alpha: op * fo, Gradient: gr}, true
+	}
+	col, ok := parseColor(fillVal)
+	if !ok {
+		return fill, false
+	}
+	return pptx.Fill{Kind: pptx.FillSolid, Color: col, Alpha: op * fo}, true
+}
+
+func paintStroke(st style, m matrix, op float64) (*pptx.Stroke, bool) {
+	strokeVal := resolvePaint(st, st.get("stroke"))
+	if strokeVal == "none" || strokeVal == "" {
+		return nil, true
+	}
+	// A non-similarity transform (non-uniform scale or skew) stretches the
+	// stroke outline anisotropically, which a single uniform stroke width
+	// can't reproduce, so fall back to the native SVG picture.
+	if !m.isSimilarity() {
+		return nil, false
+	}
+	col, ok := parseColor(strokeVal)
+	if !ok {
+		return nil, false
+	}
+	so, ok := parseUnit(st.get("stroke-opacity"), 1)
+	if !ok {
+		return nil, false
+	}
+	w, ok := parseLength(st.get("stroke-width"), false)
+	if !ok {
+		return nil, false
+	}
+	if w == 0 {
+		// Zero width skips outline restrictions and combined fill/stroke opacity.
+		return nil, true
+	}
+	if w < 0 {
+		// A negative stroke width is invalid; fall back.
+		return nil, false
+	}
+	stroke, ok := strokeOutline(st, m, w)
+	if !ok {
+		return nil, false
+	}
+	stroke.Color, stroke.Alpha = col, op*so
+	// Arbitrary dash patterns can't be mapped to a single OOXML preset
+	// faithfully, so fall back to the native SVG picture rather than
+	// silently rendering a different dash.
+	if da := strings.TrimSpace(st.get("stroke-dasharray")); da != "" && da != "none" {
+		return nil, false
+	}
+	return stroke, true
+}
+
+func strokeOutline(st style, m matrix, w float64) (*pptx.Stroke, bool) {
+	cap := map[string]string{"butt": "flat", "round": "rnd", "square": "sq"}[strings.ToLower(st.get("stroke-linecap"))]
+	if cap == "" {
+		return nil, false
+	}
+	join := strings.ToLower(st.get("stroke-linejoin"))
+	if join == "" {
+		join = "miter"
+	}
+	if join != "round" && join != "bevel" && join != "miter" {
+		return nil, false
+	}
+	// DrawingML a:ln@w is limited to 20,116,800 EMU; a wider (or non-finite)
+	// scaled stroke can't be represented, so fall back rather than emit an
+	// out-of-range or overflowed width.
+	const maxLineWidthEMU = 20116800.0
+	we := w * emuPerUnit * m.avgScale()
+	if math.IsNaN(we) || math.IsInf(we, 0) || we > maxLineWidthEMU {
+		return nil, false
+	}
+	strokeWidthEMU := round(we)
+	// The writer emits SVG's default miter limit (4); an explicit different
+	// limit isn't modeled, so fall back for miter joins that set one.
+	if join == "miter" {
+		if ml := strings.TrimSpace(st.get("stroke-miterlimit")); ml != "" {
+			v, ok := parseLength(ml, false)
+			if !ok || math.Abs(v-4) > 1e-9 {
+				return nil, false
+			}
+		}
+	}
+	return &pptx.Stroke{Width: strokeWidthEMU, Cap: cap, Join: join}, true
 }
 func parseUnit(s string, def float64) (float64, bool) {
 	if strings.TrimSpace(s) == "" {
