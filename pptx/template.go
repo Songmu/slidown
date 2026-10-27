@@ -510,7 +510,7 @@ func (t *Template) loadDefaultStyleRelationships(parts map[string][]byte) error 
 		}
 		attrs := styleAttrValueRE.FindAllStringSubmatchIndex(t.defaultTextStyle[start:int(dec.InputOffset())], -1)
 		for i, attr := range elem.Attr {
-			if attr.Name.Space != nsRelationships {
+			if attr.Name.Space != nsRelationships || attr.Value == "" {
 				continue
 			}
 			id, ok := remapped[attr.Value]

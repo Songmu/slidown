@@ -99,9 +99,9 @@ func TestTemplatePreservesDefaultStylePictureBullets(t *testing.T) {
 		t.Fatal(err)
 	}
 	style := `<p:defaultTextStyle xmlns:s="` + nsRelationships + `">` +
-		`<a:lvl1pPr><a:buBlip><a:blip s:embed='rId1'/></a:buBlip></a:lvl1pPr>` +
+		`<a:lvl1pPr><a:buBlip><a:blip s:embed='rId1' s:link=""/></a:buBlip></a:lvl1pPr>` +
 		`<a:lvl2pPr><a:buBlip><a:blip s:embed="rId1"/></a:buBlip></a:lvl2pPr>` +
-		`<a:lvl3pPr><a:buBlip><a:blip s:link="rId900"/></a:buBlip></a:lvl3pPr>` +
+		`<a:lvl3pPr><a:buBlip><a:blip s:embed="" s:link="rId900"/></a:buBlip></a:lvl3pPr>` +
 		`</p:defaultTextStyle>`
 	pres := strings.ReplaceAll(string(parts["ppt/presentation.xml"]), `r:id="rId1"`, `r:id="rId7"`)
 	parts["ppt/presentation.xml"] = []byte(strings.Replace(pres, `</p:presentation>`, style+`</p:presentation>`, 1))
