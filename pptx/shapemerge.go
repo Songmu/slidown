@@ -50,30 +50,7 @@ func parseSlideShapes(slideXML []byte) (shapes []shapeInfo, rootAttrs []xml.Attr
 	var stack []xml.Name
 	var prev int64
 	firstElem := true
-	capturing := false
-	depthAtSp := 0
-	var cur shapeInfo
-	var phType, phIdx, role, sk string
-	var sawPh bool
-
-	finalize := func(end int64) {
-		cur.end = int(end)
-		cur.raw = slideXML[cur.start:cur.end]
-		// Placeholders keep their stable slot key, while non-placeholder text
-		// boxes can be keyed by a stamped shape key (sk) so they can be preserved
-		// across rebuilds even when absent from freshly generated slide XML.
-		if sawPh {
-			cur.slotKey = slotKey(effectiveType(role, phType), atoi(phIdx))
-		}
-		cur.key = cur.slotKey
-		if cur.key == "" {
-			cur.key = sk
-		}
-		// Namespace-aware detection above is authoritative; the substring scan is
-		// a conservative backstop (a false positive only skips an optimisation).
-		cur.hasRels = cur.hasRels || rawHasRels(cur.raw)
-		shapes = append(shapes, cur)
-	}
+	var capture *slideShapeCapture
 
 	for {
 		tok, e := dec.Token()
@@ -93,47 +70,18 @@ func parseSlideShapes(slideXML []byte) (shapes []shapeInfo, rootAttrs []xml.Attr
 			parentIsSpTree := len(stack) > 0 && stack[len(stack)-1] == xnSpTree
 			stack = append(stack, t.Name)
 			switch {
-			case !capturing && t.Name == xnSp && parentIsSpTree:
-				capturing = true
-				depthAtSp = len(stack)
-				cur = shapeInfo{start: int(prev)}
-				phType, phIdx, role, sk = "", "", "", ""
-				sawPh = false
-			case capturing:
-				for _, a := range t.Attr {
-					if a.Name.Space == nsRelationships {
-						cur.hasRels = true
-					}
+			case capture == nil && t.Name == xnSp && parentIsSpTree:
+				capture = &slideShapeCapture{
+					shape: shapeInfo{start: int(prev)},
+					depth: len(stack),
 				}
-				switch t.Name {
-				case xnCNvPr:
-					if cur.cNvPrID == "" {
-						cur.cNvPrID = attrValue(t.Attr, "id")
-					}
-				case xnPh:
-					sawPh = true
-					if phType == "" {
-						phType = attrValue(t.Attr, "type")
-					}
-					if phIdx == "" {
-						phIdx = attrValue(t.Attr, "idx")
-					}
-				case xnSlidownS:
-					if role == "" {
-						role = attrValue(t.Attr, "role")
-					}
-					if cur.fp == "" {
-						cur.fp = attrValue(t.Attr, "fp")
-					}
-					if sk == "" {
-						sk = attrValue(t.Attr, "sk")
-					}
-				}
+			case capture != nil:
+				capture.readElement(t)
 			}
 		case xml.EndElement:
-			if capturing && t.Name == xnSp && len(stack) == depthAtSp {
-				finalize(off)
-				capturing = false
+			if capture != nil && t.Name == xnSp && len(stack) == capture.depth {
+				shapes = append(shapes, capture.finish(slideXML, int(off)))
+				capture = nil
 			}
 			if len(stack) > 0 {
 				stack = stack[:len(stack)-1]
@@ -142,6 +90,62 @@ func parseSlideShapes(slideXML []byte) (shapes []shapeInfo, rootAttrs []xml.Attr
 		prev = off
 	}
 	return shapes, rootAttrs, nil
+}
+
+type slideShapeCapture struct {
+	shape                    shapeInfo
+	depth                    int
+	phType, phIdx, role, key string
+	sawPlaceholder           bool
+}
+
+func (c *slideShapeCapture) readElement(t xml.StartElement) {
+	for _, a := range t.Attr {
+		if a.Name.Space == nsRelationships {
+			c.shape.hasRels = true
+		}
+	}
+	switch t.Name {
+	case xnCNvPr:
+		if c.shape.cNvPrID == "" {
+			c.shape.cNvPrID = attrValue(t.Attr, "id")
+		}
+	case xnPh:
+		c.sawPlaceholder = true
+		if c.phType == "" {
+			c.phType = attrValue(t.Attr, "type")
+		}
+		if c.phIdx == "" {
+			c.phIdx = attrValue(t.Attr, "idx")
+		}
+	case xnSlidownS:
+		if c.role == "" {
+			c.role = attrValue(t.Attr, "role")
+		}
+		if c.shape.fp == "" {
+			c.shape.fp = attrValue(t.Attr, "fp")
+		}
+		if c.key == "" {
+			c.key = attrValue(t.Attr, "sk")
+		}
+	}
+}
+
+func (c *slideShapeCapture) finish(slideXML []byte, end int) shapeInfo {
+	s := c.shape
+	s.end = end
+	s.raw = slideXML[s.start:s.end]
+	// Placeholder slots take precedence over stamped non-placeholder keys.
+	if c.sawPlaceholder {
+		s.slotKey = slotKey(effectiveType(c.role, c.phType), atoi(c.phIdx))
+	}
+	s.key = s.slotKey
+	if s.key == "" {
+		s.key = c.key
+	}
+	// A false positive only skips reuse, so retain the conservative backstop.
+	s.hasRels = s.hasRels || rawHasRels(s.raw)
+	return s
 }
 
 // attrValue returns the value of the first attribute with the given local name,
@@ -214,41 +218,65 @@ func mergeSlideShapes(newSld, oldSld []byte) ([]byte, bool) {
 		return newSld, false
 	}
 
-	// Index rel-free existing shapes by slot key, dropping any slot key that is
-	// ambiguous (appears more than once) so a merge never picks the wrong one.
-	oldByKey := map[string]shapeInfo{}
-	ambiguous := map[string]bool{}
-	for _, s := range oldShapes {
+	index := indexReusableShapes(oldShapes)
+	repls, used := index.replacements(newShapes)
+	carry := index.carriedShapes(newSld, newShapes, used)
+	if len(repls) == 0 && len(carry) == 0 {
+		return newSld, false
+	}
+
+	merged := spliceShapeReplacements(newSld, repls)
+	if len(carry) > 0 {
+		withCarry, ok := appendShapesToSpTree(merged, carry)
+		if ok {
+			merged = withCarry
+		}
+	}
+	return unionRootNamespaces(merged, newRoot, oldRoot), true
+}
+
+type shapeReuseIndex struct {
+	shapes    []shapeInfo
+	byKey     map[string]shapeInfo
+	ambiguous map[string]bool
+}
+
+func indexReusableShapes(shapes []shapeInfo) shapeReuseIndex {
+	index := shapeReuseIndex{
+		shapes:    shapes,
+		byKey:     map[string]shapeInfo{},
+		ambiguous: map[string]bool{},
+	}
+	// Ambiguous keys must never select an arbitrary existing shape.
+	for _, s := range shapes {
 		if s.hasRels || s.key == "" {
 			continue
 		}
-		if _, seen := oldByKey[s.key]; seen {
-			ambiguous[s.key] = true
+		if _, seen := index.byKey[s.key]; seen {
+			index.ambiguous[s.key] = true
 			continue
 		}
-		oldByKey[s.key] = s
+		index.byKey[s.key] = s
 	}
+	return index
+}
 
-	type replacement struct {
-		start, end int
-		data       []byte
-	}
-	var repls []replacement
+type shapeReplacement struct {
+	start, end int
+	data       []byte
+}
+
+func (index shapeReuseIndex) replacements(newShapes []shapeInfo) ([]shapeReplacement, map[string]bool) {
+	var repls []shapeReplacement
 	used := map[string]bool{}
-	newKeys := map[string]bool{}
-	for _, ns := range newShapes {
-		if ns.key != "" {
-			newKeys[ns.key] = true
-		}
-	}
 	for _, ns := range newShapes {
 		if ns.hasRels || ns.fp == "" || ns.key == "" {
 			continue
 		}
-		if ambiguous[ns.key] || used[ns.key] {
+		if index.ambiguous[ns.key] || used[ns.key] {
 			continue
 		}
-		os, ok := oldByKey[ns.key]
+		os, ok := index.byKey[ns.key]
 		if !ok || os.fp == "" || os.fp != ns.fp {
 			continue
 		}
@@ -256,18 +284,27 @@ func mergeSlideShapes(newSld, oldSld []byte) ([]byte, bool) {
 		if !ok {
 			continue // cannot normalise the shape id; keep the new shape
 		}
-		repls = append(repls, replacement{
+		repls = append(repls, shapeReplacement{
 			start: ns.start,
 			end:   ns.end,
 			data:  data,
 		})
 		used[ns.key] = true
 	}
+	return repls, used
+}
 
+func (index shapeReuseIndex) carriedShapes(newSld []byte, newShapes []shapeInfo, used map[string]bool) []byte {
+	newKeys := map[string]bool{}
+	for _, ns := range newShapes {
+		if ns.key != "" {
+			newKeys[ns.key] = true
+		}
+	}
 	maxID, haveID := maxCNvPrIDFromXML(newSld)
 	var carry []byte
-	for _, os := range oldShapes {
-		if os.hasRels || os.key == "" || os.slotKey != "" || ambiguous[os.key] || newKeys[os.key] || used[os.key] {
+	for _, os := range index.shapes {
+		if os.hasRels || os.key == "" || os.slotKey != "" || index.ambiguous[os.key] || newKeys[os.key] || used[os.key] {
 			continue
 		}
 		if !haveID {
@@ -280,10 +317,10 @@ func mergeSlideShapes(newSld, oldSld []byte) ([]byte, bool) {
 		}
 		carry = append(carry, data...)
 	}
-	if len(repls) == 0 && len(carry) == 0 {
-		return newSld, false
-	}
+	return carry
+}
 
+func spliceShapeReplacements(newSld []byte, repls []shapeReplacement) []byte {
 	sort.Slice(repls, func(i, j int) bool { return repls[i].start < repls[j].start })
 	var out bytes.Buffer
 	pos := 0
@@ -297,14 +334,7 @@ func mergeSlideShapes(newSld, oldSld []byte) ([]byte, bool) {
 	}
 	out.Write(newSld[pos:])
 
-	merged := out.Bytes()
-	if len(carry) > 0 {
-		withCarry, ok := appendShapesToSpTree(merged, carry)
-		if ok {
-			merged = withCarry
-		}
-	}
-	return unionRootNamespaces(merged, newRoot, oldRoot), true
+	return out.Bytes()
 }
 
 // cNvPrAllIDsRe matches any cNvPr element (across all drawable types: sp, pic,
