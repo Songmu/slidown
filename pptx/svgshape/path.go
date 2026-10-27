@@ -2,9 +2,7 @@ package svgshape
 
 import (
 	"math"
-	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/Songmu/slidown/pptx"
 )
@@ -328,9 +326,7 @@ type pathParser struct {
 }
 
 func (p *pathParser) skip() {
-	for p.i < len(p.s) && (unicode.IsSpace(rune(p.s[p.i])) || p.s[p.i] == ',') {
-		p.i++
-	}
+	p.i = skipNumberSeparators(p.s, p.i)
 }
 func (p *pathParser) more() bool { p.skip(); return p.i < len(p.s) }
 func (p *pathParser) isCommand() bool {
@@ -352,40 +348,9 @@ func (p *pathParser) hasNumber() bool {
 }
 func (p *pathParser) num() (float64, bool) {
 	p.skip()
-	start := p.i
-	if p.i < len(p.s) && (p.s[p.i] == '+' || p.s[p.i] == '-') {
-		p.i++
-	}
-	digits := false
-	for p.i < len(p.s) && p.s[p.i] >= '0' && p.s[p.i] <= '9' {
-		p.i++
-		digits = true
-	}
-	if p.i < len(p.s) && p.s[p.i] == '.' {
-		p.i++
-		for p.i < len(p.s) && p.s[p.i] >= '0' && p.s[p.i] <= '9' {
-			p.i++
-			digits = true
-		}
-	}
-	if !digits {
-		return 0, false
-	}
-	if p.i < len(p.s) && (p.s[p.i] == 'e' || p.s[p.i] == 'E') {
-		j := p.i + 1
-		if j < len(p.s) && (p.s[j] == '+' || p.s[j] == '-') {
-			j++
-		}
-		k := j
-		for k < len(p.s) && p.s[k] >= '0' && p.s[k] <= '9' {
-			k++
-		}
-		if k > j {
-			p.i = k
-		}
-	}
-	v, err := strconv.ParseFloat(p.s[start:p.i], 64)
-	return v, err == nil
+	v, end, ok := scanNumber(p.s, p.i)
+	p.i = end
+	return v, ok
 }
 func (p *pathParser) two() (float64, float64, bool) {
 	x, ok := p.num()

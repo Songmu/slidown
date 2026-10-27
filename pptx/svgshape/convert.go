@@ -8,7 +8,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/Songmu/slidown/pptx"
 )
@@ -1197,46 +1196,15 @@ func scanNumbers(s string, maxCount int) ([]float64, bool) {
 	var out []float64
 	i := 0
 	for i < len(s) {
-		for i < len(s) && (unicode.IsSpace(rune(s[i])) || s[i] == ',') {
-			i++
-		}
+		i = skipNumberSeparators(s, i)
 		if i >= len(s) {
 			break
 		}
-		start := i
-		if s[i] == '+' || s[i] == '-' {
-			i++
-		}
-		dot := false
-		for i < len(s) && ((s[i] >= '0' && s[i] <= '9') || s[i] == '.') {
-			if s[i] == '.' {
-				if dot {
-					break
-				}
-				dot = true
-			}
-			i++
-		}
-		if i < len(s) && (s[i] == 'e' || s[i] == 'E') {
-			j := i + 1
-			if j < len(s) && (s[j] == '+' || s[j] == '-') {
-				j++
-			}
-			k := j
-			for k < len(s) && s[k] >= '0' && s[k] <= '9' {
-				k++
-			}
-			if k > j {
-				i = k
-			}
-		}
-		if start == i {
+		v, end, ok := scanNumber(s, i)
+		if !ok {
 			return nil, false
 		}
-		v, err := strconv.ParseFloat(s[start:i], 64)
-		if err != nil {
-			return nil, false
-		}
+		i = end
 		out = append(out, v)
 		if maxCount > 0 && len(out) > maxCount {
 			return nil, false
