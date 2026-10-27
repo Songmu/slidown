@@ -323,11 +323,7 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, 
 		return false, err
 	}
 	if !exists {
-		stamped, err := pptx.StampSlideKeys(newPPTX, keysByPos)
-		if err != nil {
-			return false, err
-		}
-		stamped, err = pptx.StampShapeKeys(stamped)
+		stamped, err := stampPresentationKeys(newPPTX, keysByPos)
 		if err != nil {
 			return false, err
 		}
@@ -346,63 +342,9 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, 
 		return false, err
 	}
 
-	// final holds the freshly reconciled package before stamping. It is computed
-	// by one of the branches below and defaults to the whole-file merge fallback.
-	var final []byte
-
-	// When the output file already exists, preserve the slides that should keep
-	// their existing content: slides whose source did not change (so manual
-	// edits survive) and slides explicitly frozen via configuration. Slides are
-	// matched to their existing counterpart by stable key (falling back to
-	// position), so reuse and freeze survive inserts, deletions and reordering.
-	// Change detection compares each slide's embedded source fingerprint against
-	// the freshly computed one.
-	//
-	// Reuse copies a slide's .rels verbatim from the existing package, which may
-	// reference layouts by file name (e.g. ../slideLayouts/slideLayout7.xml).
-	// This is safe here because an existing output is always rebuilt using
-	// itself as the template (apply refuses --template when the output already
-	// exists), so its design parts are unchanged.
-	if pkg, err := pptx.OpenPackageBytes(existingStamped); err == nil {
-		existing, existingTitle := pkg.SlideMetasAndCoreTitle()
-		// Per-shape signatures for the freshly generated package and the existing
-		// file feed the shape-level similarity gate. Read best-effort: on failure
-		// the new-side map is nil, the gate sees zero overlap and no shape-level
-		// merge is attempted (safe fallback to whole-slide regeneration).
-		newSigs, _ := pptx.ShapeSignaturesByPosition(newPPTX)
-		oldSigs := pkg.ShapeSignaturesByPart()
-		reuse, shapeMerge := alignSlides(sourceSlides, existing, newSigs, oldSigs)
-		switch {
-		case isIdentityReuse(reuse, existing, len(renderedSlides(sourceSlides))):
-			// Every slide is reused in place. The file is already correct unless
-			// a deck-level property that the per-slide fingerprints do not cover
-			// changed — currently the title in docProps/core.xml. When only the
-			// title changed, swap in the freshly generated core.xml while keeping
-			// every other part (slides, media, customXml, …) verbatim. Otherwise
-			// the existing bytes are the base, and the stamping pass below still
-			// runs so key renames/removals are applied even on this fast path.
-			if existingTitle == desiredTitle {
-				final = existingStamped
-			} else {
-				final, err = pkg.ReplaceCoreProps(newPPTX)
-				if err != nil {
-					return false, err
-				}
-			}
-		case len(reuse) > 0 || len(shapeMerge) > 0:
-			if len(reuse) > 0 {
-				final, err = pkg.MergeReusingUnchangedSlides(newPPTX, reuse)
-			} else {
-				final, err = pkg.MergeWith(newPPTX)
-			}
-			if err != nil {
-				return false, err
-			}
-			final, err = pkg.MergeReusingUnchangedShapes(final, shapeMerge)
-			if err != nil {
-				return false, err
-			}
-		}
+	final, err := reconcilePresentation(existingStamped, newPPTX, sourceSlides, desiredTitle)
+	if err != nil {
+		return false, err
 	}
 
 	if final == nil {
@@ -412,11 +354,7 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, 
 		}
 	}
 
-	final, err = pptx.StampSlideKeys(final, keysByPos)
-	if err != nil {
-		return false, err
-	}
-	final, err = pptx.StampShapeKeys(final)
+	final, err = stampPresentationKeys(final, keysByPos)
 	if err != nil {
 		return false, err
 	}
@@ -427,6 +365,51 @@ func writePresentation(out string, newPPTX []byte, sourceSlides slidown.Slides, 
 		return false, err
 	}
 	return true, nil
+}
+
+func stampPresentationKeys(data []byte, keysByPos map[int]string) ([]byte, error) {
+	stamped, err := pptx.StampSlideKeys(data, keysByPos)
+	if err != nil {
+		return nil, err
+	}
+	return pptx.StampShapeKeys(stamped)
+}
+
+// reconcilePresentation returns nil when whole-file merging is needed.
+// Reuse is safe because updates render against the existing output's design,
+// so copied slide relationships still reference the same layouts.
+func reconcilePresentation(existingStamped, newPPTX []byte, sourceSlides slidown.Slides, desiredTitle string) ([]byte, error) {
+	pkg, err := pptx.OpenPackageBytes(existingStamped)
+	if err != nil {
+		return nil, nil
+	}
+	existing, existingTitle := pkg.SlideMetasAndCoreTitle()
+	// Unreadable new signatures give zero overlap and disable shape reuse.
+	newSigs, _ := pptx.ShapeSignaturesByPosition(newPPTX)
+	oldSigs := pkg.ShapeSignaturesByPart()
+	reuse, shapeMerge := alignSlides(sourceSlides, existing, newSigs, oldSigs)
+	if isIdentityReuse(reuse, existing, len(renderedSlides(sourceSlides))) {
+		// Core properties are not covered by per-slide fingerprints. Keys are
+		// stamped by the caller even when every slide is reused in place.
+		if existingTitle == desiredTitle {
+			return existingStamped, nil
+		}
+		return pkg.ReplaceCoreProps(newPPTX)
+	}
+	if len(reuse) == 0 && len(shapeMerge) == 0 {
+		return nil, nil
+	}
+
+	var final []byte
+	if len(reuse) > 0 {
+		final, err = pkg.MergeReusingUnchangedSlides(newPPTX, reuse)
+	} else {
+		final, err = pkg.MergeWith(newPPTX)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return pkg.MergeReusingUnchangedShapes(final, shapeMerge)
 }
 
 // sourceKeysByPosition maps each rendered deck slide's 1-based output position
