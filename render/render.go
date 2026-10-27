@@ -297,59 +297,22 @@ func svgReferencesExternalResource(b []byte) bool {
 	for {
 		tok, err := dec.Token()
 		if err != nil {
-			// Clean end of input: the whole document was scanned and no
-			// external reference was found.
-			if errors.Is(err, io.EOF) {
-				return false
-			}
 			// A malformed/partially-parseable document may hide an external
 			// reference past the parse error; treat it conservatively as unsafe
 			// to embed as a native SVG.
-			return true
+			return !errors.Is(err, io.EOF)
 		}
 		switch t := tok.(type) {
 		case xml.ProcInst:
 			// An xml-stylesheet PI can pull in an external stylesheet; treat a
 			// non-self-contained href as an external reference.
-			if strings.EqualFold(t.Target, "xml-stylesheet") {
-				if href := piHref(string(t.Inst)); href == "" || isExternalRef(href) {
-					return true
-				}
+			if stylesheetInstructionReferencesExternal(t) {
+				return true
 			}
 		case xml.StartElement:
-			name := strings.ToLower(t.Name.Local)
-			inStyle = name == "style"
-			// Any element other than a navigational <a> can reference a
-			// rendering resource via href (image, use, feImage, linear/radial
-			// gradients, pattern, textPath, mpath, ...). An external href on any
-			// of them cannot be resolved by PowerPoint or the raster fallback,
-			// so treat it as unsafe to embed as native SVG.
-			resource := name != "a"
-			for _, a := range t.Attr {
-				if resource && strings.EqualFold(a.Name.Local, "href") {
-					if isExternalRef(a.Value) {
-						return true
-					}
-				}
-				// A <foreignObject> can embed HTML that references resources via
-				// non-href attributes (e.g. <img src>, <object data>); a
-				// non-fragment target there is an external dependency too.
-				if a.Name.Space == "" &&
-					(strings.EqualFold(a.Name.Local, "src") || strings.EqualFold(a.Name.Local, "data")) &&
-					isExternalRef(a.Value) {
-					return true
-				}
-				// xml:base rebases every relative/fragment reference; a
-				// non-fragment base pulls in an external document, so the SVG
-				// can't be embedded self-contained.
-				if strings.EqualFold(a.Name.Local, "base") &&
-					a.Name.Space == "http://www.w3.org/XML/1998/namespace" &&
-					isExternalRef(a.Value) {
-					return true
-				}
-				if hasExternalStyleRef(a.Value) {
-					return true
-				}
+			inStyle = strings.ToLower(t.Name.Local) == "style"
+			if svgElementReferencesExternalResource(t) {
+				return true
 			}
 		case xml.CharData:
 			if inStyle && hasExternalStyleRef(string(t)) {
@@ -366,6 +329,40 @@ func svgReferencesExternalResource(b []byte) bool {
 			inStyle = false
 		}
 	}
+}
+
+func stylesheetInstructionReferencesExternal(t xml.ProcInst) bool {
+	if !strings.EqualFold(t.Target, "xml-stylesheet") {
+		return false
+	}
+	href := piHref(string(t.Inst))
+	return href == "" || isExternalRef(href)
+}
+
+func svgElementReferencesExternalResource(t xml.StartElement) bool {
+	// A navigational <a> href is not a rendering dependency.
+	resource := strings.ToLower(t.Name.Local) != "a"
+	for _, a := range t.Attr {
+		if resource && strings.EqualFold(a.Name.Local, "href") && isExternalRef(a.Value) {
+			return true
+		}
+		// Embedded HTML can reference resources without href.
+		if a.Name.Space == "" &&
+			(strings.EqualFold(a.Name.Local, "src") || strings.EqualFold(a.Name.Local, "data")) &&
+			isExternalRef(a.Value) {
+			return true
+		}
+		// xml:base can turn otherwise local fragments into external references.
+		if strings.EqualFold(a.Name.Local, "base") &&
+			a.Name.Space == "http://www.w3.org/XML/1998/namespace" &&
+			isExternalRef(a.Value) {
+			return true
+		}
+		if hasExternalStyleRef(a.Value) {
+			return true
+		}
+	}
+	return false
 }
 
 // piHref extracts the href pseudo-attribute value from an xml-stylesheet PI's
