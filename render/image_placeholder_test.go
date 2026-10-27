@@ -2,13 +2,11 @@ package render
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/Songmu/slidown"
-	"github.com/Songmu/slidown/md"
 	"github.com/Songmu/slidown/pptx"
 )
 
@@ -48,14 +46,7 @@ func TestImagePlaceholderBinding(t *testing.T) {
 		},
 	)
 
-	parsed, err := md.Parse("", []byte("# Pics\n"), nil)
-	if err != nil {
-		t.Fatalf("md.Parse: %v", err)
-	}
-	slides, err := parsed.ToSlides(context.Background(), "")
-	if err != nil {
-		t.Fatalf("ToSlides: %v", err)
-	}
+	slides := markdownSlides(t, "# Pics\n")
 	if len(slides) != 1 {
 		t.Fatalf("expected 1 slide, got %d", len(slides))
 	}
@@ -119,14 +110,7 @@ func TestTablePlacementIgnoresPlaceholderBoundImages(t *testing.T) {
 	// Title + a table, but no body text; a single image that binds to the pic
 	// placeholder (so no image is flow-laid into the body region).
 	const markdown = "# Pics\n\n| a | b |\n| - | - |\n| 1 | 2 |\n"
-	parsed, err := md.Parse("", []byte(markdown), nil)
-	if err != nil {
-		t.Fatalf("md.Parse: %v", err)
-	}
-	slides, err := parsed.ToSlides(context.Background(), "")
-	if err != nil {
-		t.Fatalf("ToSlides: %v", err)
-	}
+	slides := markdownSlides(t, markdown)
 	slides[0].Images = []*slidown.Image{makeImage(t, 100, 100)}
 
 	var buf bytes.Buffer
@@ -176,14 +160,7 @@ func TestImagePlaceholderFewerImagesThanSlots(t *testing.T) {
 		},
 	)
 
-	parsed, err := md.Parse("", []byte("# Pics\n"), nil)
-	if err != nil {
-		t.Fatalf("md.Parse: %v", err)
-	}
-	slides, err := parsed.ToSlides(context.Background(), "")
-	if err != nil {
-		t.Fatalf("ToSlides: %v", err)
-	}
+	slides := markdownSlides(t, "# Pics\n")
 	slides[0].Images = []*slidown.Image{makeImage(t, 100, 100)}
 
 	var buf bytes.Buffer

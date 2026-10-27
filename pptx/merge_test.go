@@ -1,18 +1,18 @@
 package pptx
 
 import (
-	"archive/zip"
 	"bytes"
-	"io"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Songmu/slidown/internal/testutil"
 )
 
 func TestMergeWithExistingPreservesExtraParts(t *testing.T) {
 	dir := t.TempDir()
 	existingPath := filepath.Join(dir, "existing.pptx")
-	if err := writeZipFile(existingPath, map[string]string{
+	if err := writeZipFile(t, existingPath, map[string]string{
 		"foo/custom.txt":             "keep me",
 		"ppt/slides/slide1.xml":      "old slide",
 		"ppt/slides/slide1.xml.rels": "old rels",
@@ -55,7 +55,7 @@ func TestMergeWithExistingPreservesExtraParts(t *testing.T) {
 func TestMergeWithExistingDropsStaleDesignParts(t *testing.T) {
 	dir := t.TempDir()
 	existingPath := filepath.Join(dir, "existing.pptx")
-	if err := writeZipFile(existingPath, map[string]string{
+	if err := writeZipFile(t, existingPath, map[string]string{
 		// Design parts from a previous, richer template.
 		"ppt/slideLayouts/slideLayout20.xml":            "stale layout",
 		"ppt/slideLayouts/_rels/slideLayout20.xml.rels": "stale layout rels",
@@ -107,26 +107,13 @@ func TestMergeWithExistingDropsStaleDesignParts(t *testing.T) {
 	}
 }
 
-func writeZipFile(path string, entries map[string]string) error {
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	zw := zip.NewWriter(f)
+func writeZipFile(t testing.TB, path string, entries map[string]string) error {
+	t.Helper()
+	parts := make(map[string][]byte, len(entries))
 	for name, data := range entries {
-		w, err := zw.Create(name)
-		if err != nil {
-			return err
-		}
-		if _, err := io.WriteString(w, data); err != nil {
-			return err
-		}
+		parts[name] = []byte(data)
 	}
-	if err := zw.Close(); err != nil {
-		return err
-	}
-	return f.Close()
+	return os.WriteFile(path, testutil.WriteZIP(t, parts, nil), 0o600)
 }
 
 // TestMergeWithExistingNoDuplicateEntries guards against the merge emitting an
@@ -135,7 +122,7 @@ func writeZipFile(path string, entries map[string]string) error {
 func TestMergeWithExistingNoDuplicateEntries(t *testing.T) {
 	dir := t.TempDir()
 	existingPath := filepath.Join(dir, "existing.pptx")
-	if err := writeZipFile(existingPath, map[string]string{
+	if err := writeZipFile(t, existingPath, map[string]string{
 		"ppt/slides/slide1.xml":            "old1",
 		"ppt/slides/slide2.xml":            "old2",
 		"ppt/slides/slide3.xml":            "old3",
@@ -162,13 +149,10 @@ func TestMergeWithExistingNoDuplicateEntries(t *testing.T) {
 		t.Fatalf("MergeWithExisting: %v", err)
 	}
 
-	zr, err := zip.NewReader(bytes.NewReader(merged), int64(len(merged)))
-	if err != nil {
-		t.Fatalf("zip reader: %v", err)
-	}
+	_, order := testutil.ReadZIP(t, merged)
 	seen := map[string]int{}
-	for _, f := range zr.File {
-		seen[f.Name]++
+	for _, name := range order {
+		seen[name]++
 	}
 	for name, n := range seen {
 		if n > 1 {

@@ -1,12 +1,10 @@
 package render
 
 import (
-	"archive/zip"
 	"bytes"
 	"image"
 	"image/color"
 	"image/png"
-	"io"
 	"strings"
 	"testing"
 
@@ -42,21 +40,7 @@ func TestRenderImage(t *testing.T) {
 		},
 	}
 
-	var buf bytes.Buffer
-	if _, err := ToPresentation(slides).WriteTo(&buf); err != nil {
-		t.Fatalf("WriteTo: %v", err)
-	}
-	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
-	if err != nil {
-		t.Fatalf("invalid zip: %v", err)
-	}
-	parts := map[string][]byte{}
-	for _, f := range zr.File {
-		rc, _ := f.Open()
-		b, _ := io.ReadAll(rc)
-		rc.Close()
-		parts[f.Name] = b
-	}
+	parts := renderSlidesToParts(t, slides)
 
 	if _, ok := parts["ppt/media/image1.png"]; !ok {
 		t.Errorf("missing embedded media part; have: %v", keys(parts))
