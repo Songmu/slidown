@@ -154,6 +154,63 @@ func TestMergeReusingUnchangedSlidesNoMediaCollision(t *testing.T) {
 	}
 }
 
+func TestMergeReusingUnchangedSlidesMultipleMediaCollisions(t *testing.T) {
+	oldParts := map[string][]byte{
+		"ppt/slides/slide1.xml": []byte("old slide"),
+		"ppt/slides/_rels/slide1.xml.rels": []byte(`<Relationships>
+<Relationship Target="../media/image1.png"/>
+<Relationship Target="../media/image2.png"/>
+</Relationships>`),
+		"ppt/media/image1.png": []byte("old first image"),
+		"ppt/media/image2.png": []byte("old second image"),
+		// This part is not referenced, but its name must still be reserved.
+		"ppt/media/image3.png": []byte("unreferenced old image"),
+	}
+	oldSnapshot := make(map[string][]byte, len(oldParts))
+	for name, data := range oldParts {
+		oldSnapshot[name] = bytes.Clone(data)
+	}
+	newOrder := []string{"ppt/slides/slide1.xml", "ppt/media/image1.png", "ppt/media/image2.png"}
+	newPPTX, err := zipFromParts(newOrder, map[string][]byte{
+		"ppt/slides/slide1.xml": []byte("new slide"),
+		"ppt/media/image1.png":  []byte("new first image"),
+		"ppt/media/image2.png":  []byte("new second image"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged, err := mergeReusingUnchangedSlides(oldParts, newPPTX, map[int]string{1: "ppt/slides/slide1.xml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts, order, err := readZipPartsFromBytes(merged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTargets := []string{"../media/image4.png", "../media/image5.png"}
+	if got := relTargets(parts["ppt/slides/_rels/slide1.xml.rels"]); !slices.Equal(got, wantTargets) {
+		t.Errorf("media targets = %v, want %v", got, wantTargets)
+	}
+	for i, target := range wantTargets {
+		want := oldSnapshot[fmt.Sprintf("ppt/media/image%d.png", i+1)]
+		if got := parts[path.Clean(path.Join("ppt/slides", target))]; !bytes.Equal(got, want) {
+			t.Errorf("%s content = %q, want %q", target, got, want)
+		}
+	}
+	wantOrder := append(newOrder, "ppt/media/image4.png", "ppt/media/image5.png", "ppt/slides/_rels/slide1.xml.rels")
+	if !slices.Equal(order, wantOrder) {
+		t.Errorf("ZIP order = %v, want %v", order, wantOrder)
+	}
+	if len(oldParts) != len(oldSnapshot) {
+		t.Error("old package part count changed")
+	}
+	for name, want := range oldSnapshot {
+		if got := oldParts[name]; !bytes.Equal(got, want) {
+			t.Errorf("old package part %s changed", name)
+		}
+	}
+}
+
 // TestMergeReusingUnchangedSlidesRestoresNotesInfra reproduces the case where a
 // reused slide kept its note but the regenerated package has no notes at all:
 // the notes master and the content-type overrides must be restored so the
