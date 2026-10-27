@@ -187,67 +187,48 @@ func buildTemplateFileForTest(t *testing.T) string {
 	return templatePath
 }
 
-// applyToFileForTest mirrors apply's template selection via resolveApplyTemplate.
-// The templatePath argument is treated like the --template flag: it only seeds a
-// newly created output file. When the output already exists, this helper clears
-// the flag so the update reuses the existing output as its own template (the real
-// CLI would reject --template in that situation).
+func isolateApplyForTest(t *testing.T) {
+	t.Helper()
+	oldOutput, oldTemplate := applyOutput, applyTemplate
+	oldCommand, oldProfile := applyCodeBlockToImageCmd, profile
+	t.Cleanup(func() {
+		applyOutput, applyTemplate = oldOutput, oldTemplate
+		applyCodeBlockToImageCmd, profile = oldCommand, oldProfile
+	})
+	applyOutput, applyTemplate, applyCodeBlockToImageCmd, profile = "", "", "", ""
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+}
+
+// Explicit templates seed new outputs only; updates reuse the output itself.
 func applyToFileForTest(t *testing.T, mdText, out, templatePath string) bool {
 	t.Helper()
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	cfg, err := config.Load("")
-	if err != nil {
-		t.Fatalf("config.Load: %v", err)
-	}
+	isolateApplyForTest(t)
 	mdPath := filepath.Join(t.TempDir(), "deck.md")
 	if err := os.WriteFile(mdPath, []byte(mdText), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	m, err := md.ParseFile(mdPath, cfg)
-	if err != nil {
-		t.Fatalf("md.ParseFile: %v", err)
-	}
-	slides, err := m.ToSlides(context.Background(), "")
-	if err != nil {
-		t.Fatalf("ToSlides: %v", err)
-	}
-
-	// The passed template is only a seed for a new file; on update it is ignored
-	// and the existing output serves as its own template.
-	flagTemplate := templatePath
+	applyOutput = out
 	if exists, err := pathExists(out); err != nil {
 		t.Fatalf("pathExists: %v", err)
-	} else if exists {
-		flagTemplate = ""
-	}
-	resolved, err := resolveApplyTemplate(out, flagTemplate, "")
-	if err != nil {
-		t.Fatalf("resolveApplyTemplate: %v", err)
-	}
-
-	var pres *pptx.Presentation
-	if resolved != "" {
-		tmpl, err := pptx.LoadTemplate(resolved)
-		if err != nil {
-			t.Fatalf("LoadTemplate: %v", err)
-		}
-		pres = render.ToPresentationWithTemplate(slides, tmpl)
-	} else {
-		pres = render.ToPresentation(slides)
-	}
-	if m.Frontmatter != nil {
-		pres.Title = m.Frontmatter.Title
+	} else if !exists {
+		applyTemplate = templatePath
 	}
 
 	var buf bytes.Buffer
-	if _, err := pres.WriteTo(&buf); err != nil {
-		t.Fatalf("WriteTo: %v", err)
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	if err := applyDeck(context.Background(), cmd, mdPath); err != nil {
+		t.Fatalf("applyDeck: %v", err)
 	}
-	updated, err := writePresentation(out, buf.Bytes(), slides, pres.Title)
-	if err != nil {
-		t.Fatalf("writePresentation: %v", err)
+	switch {
+	case strings.HasPrefix(buf.String(), "Updated "):
+		return true
+	case strings.HasPrefix(buf.String(), "Wrote "):
+		return false
+	default:
+		t.Fatalf("unexpected apply output: %q", buf.String())
+		return false
 	}
-	return updated
 }
 
 // applyFreshForTest applies a deck to a not-yet-existing output and asserts the
@@ -448,47 +429,26 @@ func TestResolveApplyTemplate(t *testing.T) {
 	}
 	missing := filepath.Join(dir, "missing.pptx")
 
-	t.Run("flag on existing output errors", func(t *testing.T) {
-		if _, err := resolveApplyTemplate(existing, "theme.pptx", ""); err == nil {
-			t.Fatal("expected an error when --template is given for an existing output")
-		}
-	})
-	t.Run("flag on new output seeds from flag", func(t *testing.T) {
-		got, err := resolveApplyTemplate(missing, "theme.pptx", "cfg.pptx")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != "theme.pptx" {
-			t.Errorf("got %q, want the flag template", got)
-		}
-	})
-	t.Run("existing output self-templates and ignores config", func(t *testing.T) {
-		got, err := resolveApplyTemplate(existing, "", "cfg.pptx")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != existing {
-			t.Errorf("got %q, want the existing output %q", got, existing)
-		}
-	})
-	t.Run("config seeds a new output", func(t *testing.T) {
-		got, err := resolveApplyTemplate(missing, "", "cfg.pptx")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != "cfg.pptx" {
-			t.Errorf("got %q, want the config template", got)
-		}
-	})
-	t.Run("no template for a new output", func(t *testing.T) {
-		got, err := resolveApplyTemplate(missing, "", "")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != "" {
-			t.Errorf("got %q, want built-in design (empty)", got)
-		}
-	})
+	for _, tc := range []struct {
+		name, output, flag, config, want string
+		wantErr                          bool
+	}{
+		{"flag on existing output errors", existing, "theme.pptx", "", "", true},
+		{"flag seeds new output", missing, "theme.pptx", "cfg.pptx", "theme.pptx", false},
+		{"existing output ignores config", existing, "", "cfg.pptx", existing, false},
+		{"config seeds new output", missing, "", "cfg.pptx", "cfg.pptx", false},
+		{"built-in design", missing, "", "", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveApplyTemplate(tc.output, tc.flag, tc.config)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("resolveApplyTemplate error = %v, wantErr %v", err, tc.wantErr)
+			}
+			if got != tc.want {
+				t.Errorf("template = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }
 
 func TestIsDeckFileEvent(t *testing.T) {
