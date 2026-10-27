@@ -2,6 +2,7 @@ package svgshape
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -95,6 +96,62 @@ func TestPathCommands(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("arc did not become cubic")
+	}
+}
+
+func TestPathInterpretation(t *testing.T) {
+	arcPoints := []point{{0, 0}}
+	for _, cubic := range arcToCubics(0, 0, 10, 10, 0, false, true, 20, 0) {
+		arcPoints = append(arcPoints, cubic[:]...)
+	}
+	cases := []struct {
+		name   string
+		d      string
+		budget int
+		mapped []point
+		ok     bool
+	}{
+		{
+			name: "relative repeated cubic shorthand and line reset",
+			d:    "m10 10 c1 2 3 4 5 6 s2 3 4 5 2 3 4 5 l1 1 s2 3 4 5", budget: 10, ok: true,
+			mapped: []point{{10, 10}, {11, 12}, {13, 14}, {15, 16},
+				{17, 18}, {17, 19}, {19, 21}, {21, 23}, {21, 24}, {23, 26},
+				{24, 27}, {24, 27}, {26, 30}, {28, 32}},
+		},
+		{
+			name: "quadratic shorthand and close reset",
+			d:    "M10 10 Q12 14 14 18 t4 4 4 4 H23 t2 3 z t1 2", budget: 10, ok: true,
+			mapped: []point{{10, 10}, {12, 14}, {14, 18}, {16, 22}, {18, 22},
+				{20, 22}, {22, 26}, {23, 26}, {23, 26}, {25, 29}, {10, 10}, {11, 12}},
+		},
+		{
+			name: "implicit lines stop after first excess command",
+			d:    "M1 2 3 4 5 6 7 8", budget: 1,
+			mapped: []point{{1, 2}, {3, 4}},
+		},
+		{
+			name: "arc maps every cubic before budget rejection",
+			d:    "M0 0 A10 10 0 0 1 20 0", budget: 1,
+			mapped: arcPoints,
+		},
+		{name: "empty", budget: 0, ok: true},
+		{name: "negative empty budget", budget: -1},
+		{name: "stray operand after close", d: "M1 2z3", budget: 10, mapped: []point{{1, 2}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var mapped []point
+			path, forceFillNone, ok := parsePath(tc.d, tc.budget, func(x, y float64) pptx.PathPoint {
+				mapped = append(mapped, point{x, y})
+				return pptx.PathPoint{X: int64(x), Y: int64(y)}
+			})
+			if ok != tc.ok || forceFillNone || !reflect.DeepEqual(mapped, tc.mapped) {
+				t.Fatalf("ok=%v forceFillNone=%v mapped=%v; want ok=%v mapped=%v", ok, forceFillNone, mapped, tc.ok, tc.mapped)
+			}
+			if !ok && !reflect.DeepEqual(path, pptx.GeomPath{}) {
+				t.Fatalf("failed parse returned partial path: %#v", path)
+			}
+		})
 	}
 }
 
