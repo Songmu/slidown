@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.0.9](https://github.com/Songmu/slidown/compare/v0.0.8...v0.0.9) - 2026-10-27
+
+### Other Changes
+- chore(deps): bump the dependencies group across 1 directory with 6 updates by @dependabot[bot] in https://github.com/Songmu/slidown/pull/82
+- chore(deps): bump the dependencies group across 1 directory with 3 updates by @dependabot[bot] in https://github.com/Songmu/slidown/pull/84
+- chore(deps): bump the dependencies group with 4 updates by @dependabot[bot] in https://github.com/Songmu/slidown/pull/87
+- chore(deps): bump golang.org/x/sync from 0.23.0 to 0.24.0 in the dependencies group by @dependabot[bot] in https://github.com/Songmu/slidown/pull/86
+- Fix broken notes relationships when reusing slides by @Songmu in https://github.com/Songmu/slidown/pull/88
+
 ## [v0.0.8](https://github.com/Songmu/slidown/compare/v0.0.7...v0.0.8) - 2026-07-15
 
 ### Other Changes
