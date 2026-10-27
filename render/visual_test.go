@@ -154,7 +154,7 @@ func renderSlidePNGs(t *testing.T, soffice, pdftoppm, name string) [][]byte {
 	}
 
 	profileArg := "-env:UserInstallation=file://" + filepath.Join(dir, "louser")
-	cmd := exec.Command(soffice, "--headless", profileArg, "--convert-to", "pdf", "--outdir", dir, pptxPath)
+	cmd := libreOfficeCommand(soffice, "--headless", profileArg, "--convert-to", "pdf", "--outdir", dir, pptxPath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("soffice conversion failed for %s: %v\n%s", name, err, out)
 	}

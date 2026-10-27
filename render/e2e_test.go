@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/Songmu/slidown/md"
@@ -18,6 +20,76 @@ func findSoffice() string {
 		}
 	}
 	return ""
+}
+
+func libreOfficeCommand(soffice string, args ...string) *exec.Cmd {
+	cmd := exec.Command(soffice, args...)
+	if os.Getenv("FONTCONFIG_FILE") != "" || os.Getenv("FONTCONFIG_PATH") != "" {
+		return cmd
+	}
+	// Headless LibreOffice on macOS may miss the fontconfig installation on PATH.
+	fcMatch, err := exec.LookPath("fc-match")
+	if err != nil {
+		return cmd
+	}
+	config := filepath.Join(filepath.Dir(filepath.Dir(fcMatch)), "etc", "fonts", "fonts.conf")
+	if info, err := os.Stat(config); err == nil && !info.IsDir() {
+		cmd.Env = append(os.Environ(), "FONTCONFIG_FILE="+config)
+	}
+	return cmd
+}
+
+func TestLibreOfficeCommandFontconfig(t *testing.T) {
+	prefix := t.TempDir()
+	binDir := filepath.Join(prefix, "bin")
+	if err := os.Mkdir(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	binary := "fc-match"
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	if err := os.WriteFile(filepath.Join(binDir, binary), []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(prefix, "etc", "fonts", "fonts.conf")
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte("<fontconfig/>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct {
+		name       string
+		path       string
+		configFile string
+		configPath string
+		wantFile   string
+	}{
+		{name: "discover prefix", path: binDir, wantFile: config},
+		{name: "preserve file override", path: binDir, configFile: "custom.conf", wantFile: "custom.conf"},
+		{name: "preserve path override", path: binDir, configPath: "custom-fonts"},
+		{name: "fontconfig unavailable", path: t.TempDir()},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("PATH", tt.path)
+			t.Setenv("FONTCONFIG_FILE", tt.configFile)
+			t.Setenv("FONTCONFIG_PATH", tt.configPath)
+			cmd := libreOfficeCommand("soffice", "--headless")
+			values := make(map[string]string)
+			for _, entry := range cmd.Environ() {
+				key, value, _ := strings.Cut(entry, "=")
+				values[key] = value
+			}
+			if got := values["FONTCONFIG_FILE"]; got != tt.wantFile {
+				t.Errorf("FONTCONFIG_FILE = %q, want %q", got, tt.wantFile)
+			}
+			if got := values["FONTCONFIG_PATH"]; got != tt.configPath {
+				t.Errorf("FONTCONFIG_PATH = %q, want %q", got, tt.configPath)
+			}
+		})
+	}
 }
 
 // TestE2ERendersWithLibreOffice is a visual end-to-end test: it builds a .pptx
@@ -57,7 +129,7 @@ func TestE2ERendersWithLibreOffice(t *testing.T) {
 
 	// Use an isolated user profile dir to avoid clashing with a running instance.
 	profileArg := "-env:UserInstallation=file://" + filepath.Join(dir, "louser")
-	cmd := exec.Command(soffice, "--headless", profileArg, "--convert-to", "pdf", "--outdir", dir, pptxPath)
+	cmd := libreOfficeCommand(soffice, "--headless", profileArg, "--convert-to", "pdf", "--outdir", dir, pptxPath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("soffice conversion failed: %v\n%s", err, out)
 	}
