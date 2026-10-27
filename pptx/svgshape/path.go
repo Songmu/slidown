@@ -11,242 +11,309 @@ import (
 
 type pathMapper func(x, y float64) pptx.PathPoint
 
+type pathState struct {
+	parser             *pathParser
+	cmds               []pptx.PathCmd
+	cmd                byte
+	cur, start         point
+	lastC, lastQ       point
+	lastWasC, lastWasQ bool
+	started            bool
+	budget             int
+	mapPt              pathMapper
+}
+
 func parsePath(d string, budget int, mapPt pathMapper) (pptx.GeomPath, bool, bool) {
-	p := &pathParser{s: d}
-	var cmds []pptx.PathCmd
-	var cmd byte
-	cur, start := point{}, point{}
-	var lastC, lastQ point
-	lastWasC, lastWasQ := false, false
-	started := false
-	for p.more() {
-		if len(cmds) > budget {
-			return pptx.GeomPath{}, false, false
+	s := &pathState{parser: &pathParser{s: d}, budget: budget, mapPt: mapPt}
+	if !s.parse() {
+		return pptx.GeomPath{}, false, false
+	}
+	return pptx.GeomPath{Cmds: s.cmds}, false, true
+}
+
+func (s *pathState) parse() bool {
+	for s.parser.more() {
+		if len(s.cmds) > s.budget {
+			return false
 		}
-		startIdx := p.i
+		startIdx := s.parser.i
 		consumedCmd := false
-		if p.isCommand() {
-			cmd = p.nextCommand()
+		if s.parser.isCommand() {
+			s.cmd = s.parser.nextCommand()
 			consumedCmd = true
 			// A valid path must begin with a moveto command.
-			if !started && cmd != 'M' && cmd != 'm' {
-				return pptx.GeomPath{}, false, false
+			if !s.started && s.cmd != 'M' && s.cmd != 'm' {
+				return false
 			}
-			started = true
+			s.started = true
 			// Every command except close must be followed by operands; an
 			// explicit command with no number is a malformed path.
-			if cmd != 'Z' && cmd != 'z' && !p.hasNumber() {
-				return pptx.GeomPath{}, false, false
+			if s.cmd != 'Z' && s.cmd != 'z' && !s.parser.hasNumber() {
+				return false
 			}
-		} else if cmd == 0 {
-			return pptx.GeomPath{}, false, false
+		} else if s.cmd == 0 {
+			return false
 		}
-		switch cmd {
-		case 'M', 'm':
-			x, y, ok := p.two()
-			if !ok {
-				return pptx.GeomPath{}, false, false
-			}
-			if cmd == 'm' {
-				x += cur.x
-				y += cur.y
-			}
-			cur = point{x, y}
-			start = cur
-			cmds = append(cmds, pptx.PathCmd{Verb: pptx.MoveTo, Pts: []pptx.PathPoint{mapPt(cur.x, cur.y)}})
-			cmd = toggle(cmd, 'L', 'l')
-			lastWasC, lastWasQ = false, false
-		case 'L', 'l':
-			for p.hasNumber() && len(cmds) <= budget {
-				x, y, ok := p.two()
-				if !ok {
-					return pptx.GeomPath{}, false, false
-				}
-				if cmd == 'l' {
-					x += cur.x
-					y += cur.y
-				}
-				cur = point{x, y}
-				cmds = append(cmds, pptx.PathCmd{Verb: pptx.LineTo, Pts: []pptx.PathPoint{mapPt(cur.x, cur.y)}})
-			}
-			lastWasC, lastWasQ = false, false
-		case 'H', 'h':
-			for p.hasNumber() && len(cmds) <= budget {
-				x, ok := p.num()
-				if !ok {
-					return pptx.GeomPath{}, false, false
-				}
-				if cmd == 'h' {
-					x += cur.x
-				}
-				cur.x = x
-				cmds = append(cmds, pptx.PathCmd{Verb: pptx.LineTo, Pts: []pptx.PathPoint{mapPt(cur.x, cur.y)}})
-			}
-			lastWasC, lastWasQ = false, false
-		case 'V', 'v':
-			for p.hasNumber() && len(cmds) <= budget {
-				y, ok := p.num()
-				if !ok {
-					return pptx.GeomPath{}, false, false
-				}
-				if cmd == 'v' {
-					y += cur.y
-				}
-				cur.y = y
-				cmds = append(cmds, pptx.PathCmd{Verb: pptx.LineTo, Pts: []pptx.PathPoint{mapPt(cur.x, cur.y)}})
-			}
-			lastWasC, lastWasQ = false, false
-		case 'C', 'c':
-			for p.hasNumber() && len(cmds) <= budget {
-				x1, y1, ok := p.two()
-				if !ok {
-					return pptx.GeomPath{}, false, false
-				}
-				x2, y2, ok := p.two()
-				if !ok {
-					return pptx.GeomPath{}, false, false
-				}
-				x, y, ok := p.two()
-				if !ok {
-					return pptx.GeomPath{}, false, false
-				}
-				if cmd == 'c' {
-					x1 += cur.x
-					y1 += cur.y
-					x2 += cur.x
-					y2 += cur.y
-					x += cur.x
-					y += cur.y
-				}
-				cmds = append(cmds, pptx.PathCmd{Verb: pptx.CubicTo, Pts: []pptx.PathPoint{mapPt(x1, y1), mapPt(x2, y2), mapPt(x, y)}})
-				cur = point{x, y}
-				lastC = point{x2, y2}
-				lastWasC = true
-				lastWasQ = false
-			}
-		case 'S', 's':
-			for p.hasNumber() && len(cmds) <= budget {
-				c1 := cur
-				if lastWasC {
-					c1 = point{2*cur.x - lastC.x, 2*cur.y - lastC.y}
-				}
-				x2, y2, ok := p.two()
-				if !ok {
-					return pptx.GeomPath{}, false, false
-				}
-				x, y, ok := p.two()
-				if !ok {
-					return pptx.GeomPath{}, false, false
-				}
-				if cmd == 's' {
-					x2 += cur.x
-					y2 += cur.y
-					x += cur.x
-					y += cur.y
-				}
-				cmds = append(cmds, pptx.PathCmd{Verb: pptx.CubicTo, Pts: []pptx.PathPoint{mapPt(c1.x, c1.y), mapPt(x2, y2), mapPt(x, y)}})
-				cur = point{x, y}
-				lastC = point{x2, y2}
-				lastWasC = true
-				lastWasQ = false
-			}
-		case 'Q', 'q':
-			for p.hasNumber() && len(cmds) <= budget {
-				x1, y1, ok := p.two()
-				if !ok {
-					return pptx.GeomPath{}, false, false
-				}
-				x, y, ok := p.two()
-				if !ok {
-					return pptx.GeomPath{}, false, false
-				}
-				if cmd == 'q' {
-					x1 += cur.x
-					y1 += cur.y
-					x += cur.x
-					y += cur.y
-				}
-				cmds = append(cmds, pptx.PathCmd{Verb: pptx.QuadTo, Pts: []pptx.PathPoint{mapPt(x1, y1), mapPt(x, y)}})
-				cur = point{x, y}
-				lastQ = point{x1, y1}
-				lastWasQ = true
-				lastWasC = false
-			}
-		case 'T', 't':
-			for p.hasNumber() && len(cmds) <= budget {
-				c := cur
-				if lastWasQ {
-					c = point{2*cur.x - lastQ.x, 2*cur.y - lastQ.y}
-				}
-				x, y, ok := p.two()
-				if !ok {
-					return pptx.GeomPath{}, false, false
-				}
-				if cmd == 't' {
-					x += cur.x
-					y += cur.y
-				}
-				cmds = append(cmds, pptx.PathCmd{Verb: pptx.QuadTo, Pts: []pptx.PathPoint{mapPt(c.x, c.y), mapPt(x, y)}})
-				cur = point{x, y}
-				lastQ = c
-				lastWasQ = true
-				lastWasC = false
-			}
-		case 'A', 'a':
-			for p.hasNumber() && len(cmds) <= budget {
-				rx, ok := p.num()
-				if !ok {
-					return pptx.GeomPath{}, false, false
-				}
-				ry, ok := p.num()
-				if !ok {
-					return pptx.GeomPath{}, false, false
-				}
-				rot, ok := p.num()
-				if !ok {
-					return pptx.GeomPath{}, false, false
-				}
-				laf, ok := p.flag()
-				if !ok {
-					return pptx.GeomPath{}, false, false
-				}
-				sf, ok := p.flag()
-				if !ok {
-					return pptx.GeomPath{}, false, false
-				}
-				x, y, ok := p.two()
-				if !ok {
-					return pptx.GeomPath{}, false, false
-				}
-				if cmd == 'a' {
-					x += cur.x
-					y += cur.y
-				}
-				cubs := arcToCubics(cur.x, cur.y, rx, ry, rot, laf, sf, x, y)
-				for _, cb := range cubs {
-					cmds = append(cmds, pptx.PathCmd{Verb: pptx.CubicTo, Pts: []pptx.PathPoint{mapPt(cb[0].x, cb[0].y), mapPt(cb[1].x, cb[1].y), mapPt(cb[2].x, cb[2].y)}})
-				}
-				cur = point{x, y}
-				lastWasC, lastWasQ = false, false
-			}
-		case 'Z', 'z':
-			cmds = append(cmds, pptx.PathCmd{Verb: pptx.ClosePath})
-			cur = start
-			lastWasC, lastWasQ = false, false
-		default:
-			return pptx.GeomPath{}, false, false
+		if !s.parseCommand() {
+			return false
 		}
+
 		// Guard against non-progressing iterations (e.g. a persisting command
 		// such as "Z" followed by stray tokens, or an operand-less command that
 		// consumed nothing): without progress the loop would spin forever.
-		if !consumedCmd && p.i == startIdx {
-			return pptx.GeomPath{}, false, false
+		if !consumedCmd && s.parser.i == startIdx {
+			return false
 		}
 	}
-	if len(cmds) > budget {
-		return pptx.GeomPath{}, false, false
+	return len(s.cmds) <= s.budget
+}
+
+func (s *pathState) parseCommand() bool {
+	switch s.cmd {
+	case 'M', 'm':
+		return s.moveTo()
+	case 'L', 'l':
+		return s.lineTo()
+	case 'H', 'h':
+		return s.horizontalTo()
+	case 'V', 'v':
+		return s.verticalTo()
+	case 'C', 'c':
+		return s.cubicTo()
+	case 'S', 's':
+		return s.smoothCubicTo()
+	case 'Q', 'q':
+		return s.quadraticTo()
+	case 'T', 't':
+		return s.smoothQuadraticTo()
+	case 'A', 'a':
+		return s.arcTo()
+	case 'Z', 'z':
+		return s.closePath()
+	default:
+		return false
 	}
-	return pptx.GeomPath{Cmds: cmds}, false, true
+}
+
+func (s *pathState) moveTo() bool {
+	x, y, ok := s.parser.two()
+	if !ok {
+		return false
+	}
+	if s.cmd == 'm' {
+		x += s.cur.x
+		y += s.cur.y
+	}
+	s.cur = point{x, y}
+	s.start = s.cur
+	s.cmds = append(s.cmds, pptx.PathCmd{Verb: pptx.MoveTo, Pts: []pptx.PathPoint{s.mapPt(s.cur.x, s.cur.y)}})
+	s.cmd = toggle(s.cmd, 'L', 'l')
+	s.lastWasC, s.lastWasQ = false, false
+	return true
+}
+
+func (s *pathState) lineTo() bool {
+	for s.parser.hasNumber() && len(s.cmds) <= s.budget {
+		x, y, ok := s.parser.two()
+		if !ok {
+			return false
+		}
+		if s.cmd == 'l' {
+			x += s.cur.x
+			y += s.cur.y
+		}
+		s.cur = point{x, y}
+		s.cmds = append(s.cmds, pptx.PathCmd{Verb: pptx.LineTo, Pts: []pptx.PathPoint{s.mapPt(s.cur.x, s.cur.y)}})
+	}
+	s.lastWasC, s.lastWasQ = false, false
+	return true
+}
+
+func (s *pathState) horizontalTo() bool {
+	for s.parser.hasNumber() && len(s.cmds) <= s.budget {
+		x, ok := s.parser.num()
+		if !ok {
+			return false
+		}
+		if s.cmd == 'h' {
+			x += s.cur.x
+		}
+		s.cur.x = x
+		s.cmds = append(s.cmds, pptx.PathCmd{Verb: pptx.LineTo, Pts: []pptx.PathPoint{s.mapPt(s.cur.x, s.cur.y)}})
+	}
+	s.lastWasC, s.lastWasQ = false, false
+	return true
+}
+
+func (s *pathState) verticalTo() bool {
+	for s.parser.hasNumber() && len(s.cmds) <= s.budget {
+		y, ok := s.parser.num()
+		if !ok {
+			return false
+		}
+		if s.cmd == 'v' {
+			y += s.cur.y
+		}
+		s.cur.y = y
+		s.cmds = append(s.cmds, pptx.PathCmd{Verb: pptx.LineTo, Pts: []pptx.PathPoint{s.mapPt(s.cur.x, s.cur.y)}})
+	}
+	s.lastWasC, s.lastWasQ = false, false
+	return true
+}
+
+func (s *pathState) cubicTo() bool {
+	for s.parser.hasNumber() && len(s.cmds) <= s.budget {
+		x1, y1, ok := s.parser.two()
+		if !ok {
+			return false
+		}
+		x2, y2, ok := s.parser.two()
+		if !ok {
+			return false
+		}
+		x, y, ok := s.parser.two()
+		if !ok {
+			return false
+		}
+		if s.cmd == 'c' {
+			x1 += s.cur.x
+			y1 += s.cur.y
+			x2 += s.cur.x
+			y2 += s.cur.y
+			x += s.cur.x
+			y += s.cur.y
+		}
+		s.cmds = append(s.cmds, pptx.PathCmd{Verb: pptx.CubicTo, Pts: []pptx.PathPoint{s.mapPt(x1, y1), s.mapPt(x2, y2), s.mapPt(x, y)}})
+		s.cur = point{x, y}
+		s.lastC = point{x2, y2}
+		s.lastWasC = true
+		s.lastWasQ = false
+	}
+	return true
+}
+
+func (s *pathState) smoothCubicTo() bool {
+	for s.parser.hasNumber() && len(s.cmds) <= s.budget {
+		c1 := s.cur
+		if s.lastWasC {
+			c1 = point{2*s.cur.x - s.lastC.x, 2*s.cur.y - s.lastC.y}
+		}
+		x2, y2, ok := s.parser.two()
+		if !ok {
+			return false
+		}
+		x, y, ok := s.parser.two()
+		if !ok {
+			return false
+		}
+		if s.cmd == 's' {
+			x2 += s.cur.x
+			y2 += s.cur.y
+			x += s.cur.x
+			y += s.cur.y
+		}
+		s.cmds = append(s.cmds, pptx.PathCmd{Verb: pptx.CubicTo, Pts: []pptx.PathPoint{s.mapPt(c1.x, c1.y), s.mapPt(x2, y2), s.mapPt(x, y)}})
+		s.cur = point{x, y}
+		s.lastC = point{x2, y2}
+		s.lastWasC = true
+		s.lastWasQ = false
+	}
+	return true
+}
+
+func (s *pathState) quadraticTo() bool {
+	for s.parser.hasNumber() && len(s.cmds) <= s.budget {
+		x1, y1, ok := s.parser.two()
+		if !ok {
+			return false
+		}
+		x, y, ok := s.parser.two()
+		if !ok {
+			return false
+		}
+		if s.cmd == 'q' {
+			x1 += s.cur.x
+			y1 += s.cur.y
+			x += s.cur.x
+			y += s.cur.y
+		}
+		s.cmds = append(s.cmds, pptx.PathCmd{Verb: pptx.QuadTo, Pts: []pptx.PathPoint{s.mapPt(x1, y1), s.mapPt(x, y)}})
+		s.cur = point{x, y}
+		s.lastQ = point{x1, y1}
+		s.lastWasQ = true
+		s.lastWasC = false
+	}
+	return true
+}
+
+func (s *pathState) smoothQuadraticTo() bool {
+	for s.parser.hasNumber() && len(s.cmds) <= s.budget {
+		c := s.cur
+		if s.lastWasQ {
+			c = point{2*s.cur.x - s.lastQ.x, 2*s.cur.y - s.lastQ.y}
+		}
+		x, y, ok := s.parser.two()
+		if !ok {
+			return false
+		}
+		if s.cmd == 't' {
+			x += s.cur.x
+			y += s.cur.y
+		}
+		s.cmds = append(s.cmds, pptx.PathCmd{Verb: pptx.QuadTo, Pts: []pptx.PathPoint{s.mapPt(c.x, c.y), s.mapPt(x, y)}})
+		s.cur = point{x, y}
+		s.lastQ = c
+		s.lastWasQ = true
+		s.lastWasC = false
+	}
+	return true
+}
+
+func (s *pathState) arcTo() bool {
+	for s.parser.hasNumber() && len(s.cmds) <= s.budget {
+		rx, ok := s.parser.num()
+		if !ok {
+			return false
+		}
+		ry, ok := s.parser.num()
+		if !ok {
+			return false
+		}
+		rot, ok := s.parser.num()
+		if !ok {
+			return false
+		}
+		laf, ok := s.parser.flag()
+		if !ok {
+			return false
+		}
+		sf, ok := s.parser.flag()
+		if !ok {
+			return false
+		}
+		x, y, ok := s.parser.two()
+		if !ok {
+			return false
+		}
+		if s.cmd == 'a' {
+			x += s.cur.x
+			y += s.cur.y
+		}
+		cubs := arcToCubics(s.cur.x, s.cur.y, rx, ry, rot, laf, sf, x, y)
+		for _, cb := range cubs {
+			s.cmds = append(s.cmds, pptx.PathCmd{Verb: pptx.CubicTo, Pts: []pptx.PathPoint{s.mapPt(cb[0].x, cb[0].y), s.mapPt(cb[1].x, cb[1].y), s.mapPt(cb[2].x, cb[2].y)}})
+		}
+		s.cur = point{x, y}
+		s.lastWasC, s.lastWasQ = false, false
+	}
+	return true
+}
+
+func (s *pathState) closePath() bool {
+	s.cmds = append(s.cmds, pptx.PathCmd{Verb: pptx.ClosePath})
+	s.cur = s.start
+	s.lastWasC, s.lastWasQ = false, false
+	return true
 }
 func toggle(cmd, abs, rel byte) byte {
 	if cmd >= 'a' && cmd <= 'z' {
