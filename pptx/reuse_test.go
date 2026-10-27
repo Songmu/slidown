@@ -2,7 +2,9 @@ package pptx
 
 import (
 	"bytes"
+	"fmt"
 	"path"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -187,6 +189,78 @@ func TestMergeReusingUnchangedSlidesRestoresNotesInfra(t *testing.T) {
 	}
 	if !strings.Contains(ct, `PartName="/ppt/notesMasters/notesMaster1.xml"`) {
 		t.Errorf("[Content_Types].xml missing notesMaster override:\n%s", ct)
+	}
+}
+
+func TestMergeReusingUnchangedSlidesIndependentNotesNumber(t *testing.T) {
+	p := New()
+	p.AddSlide()
+	p.AddSlide().Note = "preserved speaker note"
+	var buf bytes.Buffer
+	if _, err := p.WriteTo(&buf); err != nil {
+		t.Fatal(err)
+	}
+	oldParts, order, err := readZipPartsFromBytes(buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Notes part numbers are independent of their owning slide's number.
+	for i, name := range order {
+		data := bytes.ReplaceAll(oldParts[name], []byte("notesSlide2.xml"), []byte("notesSlide7.xml"))
+		newName := strings.ReplaceAll(name, "notesSlide2.xml", "notesSlide7.xml")
+		delete(oldParts, name)
+		oldParts[newName] = data
+		order[i] = newName
+	}
+	existing, err := zipFromParts(order, oldParts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	existingPath := writeTempPPTX(t, existing)
+
+	fresh := New()
+	fresh.AddSlide().Note = "fresh speaker note"
+	fresh.AddSlide()
+	buf.Reset()
+	if _, err := fresh.WriteTo(&buf); err != nil {
+		t.Fatal(err)
+	}
+	newPPTX := buf.Bytes()
+
+	for _, newPos := range []int{1, 2} {
+		t.Run(fmt.Sprintf("position%d", newPos), func(t *testing.T) {
+			merged, err := MergeReusingUnchangedSlides(existingPath, newPPTX, map[int]string{
+				newPos: "ppt/slides/slide2.xml",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			parts := unzipToMap(t, merged)
+			notesName := fmt.Sprintf("ppt/notesSlides/notesSlide%d.xml", newPos)
+			if !bytes.Equal(parts[notesName], oldParts["ppt/notesSlides/notesSlide7.xml"]) {
+				t.Error("reused notes content was not preserved")
+			}
+			slideRels := parts[fmt.Sprintf("ppt/slides/_rels/slide%d.xml.rels", newPos)]
+			wantNotesTarget := "../notesSlides/" + path.Base(notesName)
+			if !slices.Contains(relTargets(slideRels), wantNotesTarget) {
+				t.Errorf("reused slide does not reference %s", wantNotesTarget)
+			}
+			wantSlideTarget := fmt.Sprintf("../slides/slide%d.xml", newPos)
+			if !slices.Contains(relTargets(parts[relsPath(notesName)]), wantSlideTarget) {
+				t.Errorf("reused notes do not link back to %s", wantSlideTarget)
+			}
+			for name, data := range parts {
+				if !strings.HasSuffix(name, ".rels") {
+					continue
+				}
+				for _, target := range relTargets(data) {
+					resolved := path.Clean(path.Join(path.Dir(path.Dir(name)), target))
+					if _, ok := parts[resolved]; !ok {
+						t.Errorf("%s references missing part %s", name, resolved)
+					}
+				}
+			}
+		})
 	}
 }
 
