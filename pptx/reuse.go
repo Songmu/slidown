@@ -41,26 +41,17 @@ func mergeReusingUnchangedSlides(oldParts map[string][]byte, newPPTX []byte, reu
 		return nil, err
 	}
 
-	result := make(map[string][]byte, len(newParts))
-	for name, data := range newParts {
-		result[name] = data
+	pkg := slideReusePackage{
+		oldParts:        oldParts,
+		parts:           maps.Clone(newParts),
+		order:           append([]string(nil), newOrder...),
+		neededOverrides: map[string]string{},
 	}
-	order := append([]string(nil), newOrder...)
-
-	addPart := func(name string, data []byte) {
-		if _, ok := result[name]; !ok {
-			order = append(order, name)
-		}
-		result[name] = data
+	media := reuseMediaAllocator{
+		oldParts: oldParts,
+		parts:    pkg.parts,
+		nextIdx:  mediaMaxIndex(pkg.parts),
 	}
-
-	// Part name -> content type for restored notes parts that may be missing
-	// from the regenerated [Content_Types].xml.
-	neededOverrides := map[string]string{}
-
-	// nextMediaIdx tracks the next free imageN index to allocate when a reused
-	// slide's media name collides with an already-present part.
-	nextMediaIdx := mediaMaxIndex(result)
 
 	// Iterate in sorted order so that addPart appends to `order` in a
 	// deterministic sequence regardless of map iteration order.
@@ -89,131 +80,161 @@ func mergeReusingUnchangedSlides(oldParts map[string][]byte, newPPTX []byte, reu
 			// generated one in place.
 			continue
 		}
-		addPart(newSlideName, oldSlide)
+		pkg.addPart(newSlideName, oldSlide)
 
 		oldRels, ok := oldParts[fmt.Sprintf("ppt/slides/_rels/slide%d.xml.rels", oldPos)]
 		if !ok {
 			continue
 		}
 
-		// First pass: build a rename map for any media parts whose name is
-		// already taken in result by different bytes.  We must compute this
-		// before writing the rels so the rels can reference the new names.
-		mediaRename := map[string]string{} // old resolved path -> new resolved path
-		for _, target := range relTargets(oldRels) {
-			resolved := path.Clean(path.Join("ppt/slides", target))
-			if !strings.HasPrefix(resolved, "ppt/media/") {
-				continue
-			}
-			oldData, ok := oldParts[resolved]
-			if !ok {
-				continue
-			}
-			if existing, exists := result[resolved]; exists && !bytes.Equal(existing, oldData) {
-				// Collision: the name is already used for different content.
-				// Allocate a fresh name that is guaranteed to be absent.
-				ext := path.Ext(resolved)
-				for {
-					nextMediaIdx++
-					candidate := fmt.Sprintf("ppt/media/image%d%s", nextMediaIdx, ext)
-					if _, exists := result[candidate]; exists {
-						continue
-					}
-					if _, exists := oldParts[candidate]; exists {
-						continue
-					}
-					// Avoid allocating the same candidate for multiple renames in this pass.
-					alreadyAllocated := false
-					for _, v := range mediaRename {
-						if v == candidate {
-							alreadyAllocated = true
-							break
-						}
-					}
-					if alreadyAllocated {
-						continue
-					}
-					mediaRename[resolved] = candidate
-					break
-				}
-			}
-		}
-
-		newRels := oldRels
-		for oldResolved, newResolved := range mediaRename {
-			oldTarget := "../media/" + path.Base(oldResolved)
-			newTarget := "../media/" + path.Base(newResolved)
-			newRels = []byte(strings.ReplaceAll(string(newRels), oldTarget, newTarget))
-		}
-		for _, target := range relTargets(oldRels) {
-			resolved := path.Clean(path.Join("ppt/slides", target))
-			switch {
-			case strings.HasPrefix(resolved, "ppt/media/"):
-				data, ok := oldParts[resolved]
-				if !ok {
-					continue
-				}
-				destName := resolved
-				if newName, ok := mediaRename[resolved]; ok {
-					destName = newName
-				}
-				// Only add if the destination slot is still empty; identical
-				// bytes at the same name are already present and need no action.
-				if _, exists := result[destName]; !exists {
-					order = append(order, destName)
-					result[destName] = data
-				}
-			case strings.HasPrefix(resolved, "ppt/notesSlides/"):
-				oldNotes, ok := oldParts[resolved]
-				if !ok {
-					continue
-				}
-				newNotes := fmt.Sprintf("ppt/notesSlides/notesSlide%d.xml", newPos)
-				addPart(newNotes, oldNotes)
-				neededOverrides[newNotes] = ctNotesSlide
-				// Notes part numbers need not match their owning slide's number.
-				newRels = rewriteRef(newRels, target, "../notesSlides/"+path.Base(newNotes))
-
-				oldNotesRels, ok := oldParts[relsPath(resolved)]
-				if !ok {
-					continue
-				}
-				// The notes slide's back-reference to its slide must follow the
-				// move too.
-				newNotesRels := rewriteRef(oldNotesRels,
-					fmt.Sprintf("slide%d.xml", oldPos),
-					fmt.Sprintf("slide%d.xml", newPos))
-				addPart(relsPath(newNotes), newNotesRels)
-
-				// Restore the notes master the notes slide depends on, so the
-				// reused note does not leave a dangling relationship when the
-				// regenerated package has no notes of its own.
-				for _, nt := range relTargets(oldNotesRels) {
-					master := path.Clean(path.Join("ppt/notesSlides", nt))
-					if !strings.HasPrefix(master, "ppt/notesMasters/") {
-						continue
-					}
-					if mdata, ok := oldParts[master]; ok {
-						addPart(master, mdata)
-						neededOverrides[master] = ctNotesMaster
-					}
-					if mrels, ok := oldParts[relsPath(master)]; ok {
-						addPart(relsPath(master), mrels)
-					}
-				}
-			}
-		}
-		addPart(fmt.Sprintf("ppt/slides/_rels/slide%d.xml.rels", newPos), newRels)
+		mediaRename := media.renames(oldRels)
+		newRels := pkg.restoreRelationships(oldRels, oldPos, newPos, mediaRename)
+		pkg.addPart(fmt.Sprintf("ppt/slides/_rels/slide%d.xml.rels", newPos), newRels)
 	}
 
 	// Ensure [Content_Types].xml declares the restored notes parts; otherwise
 	// they fall back to the default application/xml type and PowerPoint reports
 	// the package as corrupt.
-	if ct, ok := result["[Content_Types].xml"]; ok && len(neededOverrides) > 0 {
-		result["[Content_Types].xml"] = ensureContentTypeOverrides(ct, neededOverrides)
+	if ct, ok := pkg.parts["[Content_Types].xml"]; ok && len(pkg.neededOverrides) > 0 {
+		pkg.parts["[Content_Types].xml"] = ensureContentTypeOverrides(ct, pkg.neededOverrides)
 	}
 
-	return zipFromParts(order, result)
+	return zipFromParts(pkg.order, pkg.parts)
+}
+
+type slideReusePackage struct {
+	oldParts        map[string][]byte
+	parts           map[string][]byte
+	order           []string
+	neededOverrides map[string]string
+}
+
+func (p *slideReusePackage) addPart(name string, data []byte) {
+	if _, ok := p.parts[name]; !ok {
+		p.order = append(p.order, name)
+	}
+	p.parts[name] = data
+}
+
+func (p *slideReusePackage) restoreRelationships(oldRels []byte, oldPos, newPos int, mediaRename map[string]string) []byte {
+	newRels := oldRels
+	for oldResolved, newResolved := range mediaRename {
+		oldTarget := "../media/" + path.Base(oldResolved)
+		newTarget := "../media/" + path.Base(newResolved)
+		newRels = []byte(strings.ReplaceAll(string(newRels), oldTarget, newTarget))
+	}
+	for _, target := range relTargets(oldRels) {
+		resolved := path.Clean(path.Join("ppt/slides", target))
+		switch {
+		case strings.HasPrefix(resolved, "ppt/media/"):
+			p.restoreMedia(resolved, mediaRename)
+		case strings.HasPrefix(resolved, "ppt/notesSlides/"):
+			if newNotes := p.restoreNotes(resolved, oldPos, newPos); newNotes != "" {
+				// Notes part numbers need not match their owning slide's number.
+				newRels = rewriteRef(newRels, target, "../notesSlides/"+path.Base(newNotes))
+			}
+		}
+	}
+	return newRels
+}
+
+func (p *slideReusePackage) restoreMedia(resolved string, mediaRename map[string]string) {
+	data, ok := p.oldParts[resolved]
+	if !ok {
+		return
+	}
+	destName := resolved
+	if newName, ok := mediaRename[resolved]; ok {
+		destName = newName
+	}
+	// Identical bytes at the same name are already present and need no action.
+	if _, exists := p.parts[destName]; !exists {
+		p.addPart(destName, data)
+	}
+}
+
+func (p *slideReusePackage) restoreNotes(resolved string, oldPos, newPos int) string {
+	oldNotes, ok := p.oldParts[resolved]
+	if !ok {
+		return ""
+	}
+	newNotes := fmt.Sprintf("ppt/notesSlides/notesSlide%d.xml", newPos)
+	p.addPart(newNotes, oldNotes)
+	p.neededOverrides[newNotes] = ctNotesSlide
+
+	oldNotesRels, ok := p.oldParts[relsPath(resolved)]
+	if !ok {
+		return newNotes
+	}
+	// The notes slide's back-reference to its slide must follow the move too.
+	newNotesRels := rewriteRef(oldNotesRels,
+		fmt.Sprintf("slide%d.xml", oldPos),
+		fmt.Sprintf("slide%d.xml", newPos))
+	p.addPart(relsPath(newNotes), newNotesRels)
+	p.restoreNotesMasters(oldNotesRels)
+	return newNotes
+}
+
+func (p *slideReusePackage) restoreNotesMasters(oldNotesRels []byte) {
+	// A regenerated package without notes may be missing these dependencies.
+	for _, target := range relTargets(oldNotesRels) {
+		master := path.Clean(path.Join("ppt/notesSlides", target))
+		if !strings.HasPrefix(master, "ppt/notesMasters/") {
+			continue
+		}
+		if data, ok := p.oldParts[master]; ok {
+			p.addPart(master, data)
+			p.neededOverrides[master] = ctNotesMaster
+		}
+		if rels, ok := p.oldParts[relsPath(master)]; ok {
+			p.addPart(relsPath(master), rels)
+		}
+	}
+}
+
+type reuseMediaAllocator struct {
+	oldParts map[string][]byte
+	parts    map[string][]byte
+	nextIdx  int
+}
+
+// renames allocates collision-free media names before relationships are written.
+func (m *reuseMediaAllocator) renames(oldRels []byte) map[string]string {
+	renames := map[string]string{}
+	reserved := map[string]bool{}
+	for _, target := range relTargets(oldRels) {
+		resolved := path.Clean(path.Join("ppt/slides", target))
+		if !strings.HasPrefix(resolved, "ppt/media/") {
+			continue
+		}
+		oldData, ok := m.oldParts[resolved]
+		if !ok {
+			continue
+		}
+		if existing, exists := m.parts[resolved]; exists && !bytes.Equal(existing, oldData) {
+			name := m.allocate(path.Ext(resolved), reserved)
+			renames[resolved] = name
+			reserved[name] = true
+		}
+	}
+	return renames
+}
+
+func (m *reuseMediaAllocator) allocate(ext string, reserved map[string]bool) string {
+	for {
+		m.nextIdx++
+		candidate := fmt.Sprintf("ppt/media/image%d%s", m.nextIdx, ext)
+		if _, exists := m.parts[candidate]; exists {
+			continue
+		}
+		if _, exists := m.oldParts[candidate]; exists {
+			continue
+		}
+		if reserved[candidate] {
+			continue
+		}
+		return candidate
+	}
 }
 
 // rewriteRef replaces occurrences of the oldRef path segment with newRef in a
