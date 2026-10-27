@@ -1,14 +1,11 @@
 package render
 
 import (
-	"archive/zip"
 	"bytes"
-	"context"
-	"io"
 	"strings"
 	"testing"
 
-	"github.com/Songmu/slidown/md"
+	"github.com/Songmu/slidown/internal/testutil"
 )
 
 const sampleMarkdown = `# Title One
@@ -29,14 +26,7 @@ Just a paragraph with a [link](https://example.com).
 
 func renderMarkdown(t *testing.T) map[string]string {
 	t.Helper()
-	parsed, err := md.Parse("", []byte(sampleMarkdown), nil)
-	if err != nil {
-		t.Fatalf("md.Parse: %v", err)
-	}
-	slides, err := parsed.ToSlides(context.Background(), "")
-	if err != nil {
-		t.Fatalf("ToSlides: %v", err)
-	}
+	slides := markdownSlides(t, sampleMarkdown)
 	if len(slides) != 2 {
 		t.Fatalf("expected 2 slides, got %d", len(slides))
 	}
@@ -45,17 +35,7 @@ func renderMarkdown(t *testing.T) map[string]string {
 	if _, err := ToPresentation(slides).WriteTo(&buf); err != nil {
 		t.Fatalf("WriteTo: %v", err)
 	}
-	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
-	if err != nil {
-		t.Fatalf("invalid zip: %v", err)
-	}
-	parts := map[string]string{}
-	for _, f := range zr.File {
-		rc, _ := f.Open()
-		b, _ := io.ReadAll(rc)
-		rc.Close()
-		parts[f.Name] = string(b)
-	}
+	parts := testutil.ReadZIPStrings(t, buf.Bytes())
 	return parts
 }
 

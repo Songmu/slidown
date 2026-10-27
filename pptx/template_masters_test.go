@@ -1,13 +1,13 @@
 package pptx
 
 import (
-	"archive/zip"
 	"bytes"
-	"io"
 	"path"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/Songmu/slidown/internal/testutil"
 )
 
 // TestTemplateCarriesNotesAndHandoutMasters guards against the bug where a
@@ -130,25 +130,6 @@ func undeclaredParts(parts map[string][]byte) []string {
 	return out
 }
 
-func unzipToMap(t *testing.T, data []byte) map[string][]byte {
-	t.Helper()
-	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
-	if err != nil {
-		t.Fatalf("zip reader: %v", err)
-	}
-	parts := map[string][]byte{}
-	for _, f := range zr.File {
-		rc, err := f.Open()
-		if err != nil {
-			t.Fatalf("open %s: %v", f.Name, err)
-		}
-		b, _ := io.ReadAll(rc)
-		rc.Close()
-		parts[f.Name] = b
-	}
-	return parts
-}
-
 // writeMastersTemplate builds a template .pptx carrying slide/notes/handout
 // masters and three themes, wired so slideMaster1->theme2, notesMaster1->theme1
 // and handoutMaster1->theme3.
@@ -216,19 +197,10 @@ func writeMastersTemplate(t *testing.T) string {
 		"ppt/slideLayouts/_rels/slideLayout1.xml.rels": slideLayout1Rels,
 	}
 
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
+	zipParts := make(map[string][]byte)
 	for name, data := range parts {
-		fw, err := zw.Create(name)
-		if err != nil {
-			t.Fatalf("zip create %s: %v", name, err)
-		}
-		if _, err := io.WriteString(fw, data); err != nil {
-			t.Fatalf("zip write %s: %v", name, err)
-		}
+		zipParts[name] = []byte(data)
 	}
-	if err := zw.Close(); err != nil {
-		t.Fatalf("zip close: %v", err)
-	}
-	return writeTempPPTX(t, buf.Bytes())
+	zipData := testutil.WriteZIP(t, zipParts, nil)
+	return writeTempPPTX(t, zipData)
 }

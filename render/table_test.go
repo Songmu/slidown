@@ -1,14 +1,8 @@
 package render
 
 import (
-	"archive/zip"
-	"bytes"
-	"context"
-	"io"
 	"strings"
 	"testing"
-
-	"github.com/Songmu/slidown/md"
 )
 
 const tableMarkdown = `# Table slide
@@ -27,32 +21,9 @@ const tableLinkMarkdown = `# Link in table
 `
 
 func TestRenderTable(t *testing.T) {
-	parsed, err := md.Parse("", []byte(tableMarkdown), nil)
-	if err != nil {
-		t.Fatalf("md.Parse: %v", err)
-	}
-	slides, err := parsed.ToSlides(context.Background(), "")
-	if err != nil {
-		t.Fatalf("ToSlides: %v", err)
-	}
+	slides := markdownSlides(t, tableMarkdown)
 
-	var buf bytes.Buffer
-	if _, err := ToPresentation(slides).WriteTo(&buf); err != nil {
-		t.Fatalf("WriteTo: %v", err)
-	}
-	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
-	if err != nil {
-		t.Fatalf("invalid zip: %v", err)
-	}
-	var slide string
-	for _, f := range zr.File {
-		if f.Name == "ppt/slides/slide1.xml" {
-			rc, _ := f.Open()
-			b, _ := io.ReadAll(rc)
-			rc.Close()
-			slide = string(b)
-		}
-	}
+	slide := string(renderSlidesToParts(t, slides)["ppt/slides/slide1.xml"])
 	for _, sub := range []string{
 		`<a:tbl>`,
 		`<a:tblGrid>`,
@@ -69,39 +40,11 @@ func TestRenderTable(t *testing.T) {
 }
 
 func TestRenderTableCellHyperlink(t *testing.T) {
-	parsed, err := md.Parse("", []byte(tableLinkMarkdown), nil)
-	if err != nil {
-		t.Fatalf("md.Parse: %v", err)
-	}
-	slides, err := parsed.ToSlides(context.Background(), "")
-	if err != nil {
-		t.Fatalf("ToSlides: %v", err)
-	}
+	slides := markdownSlides(t, tableLinkMarkdown)
 
-	var buf bytes.Buffer
-	if _, err := ToPresentation(slides).WriteTo(&buf); err != nil {
-		t.Fatalf("WriteTo: %v", err)
-	}
-	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
-	if err != nil {
-		t.Fatalf("invalid zip: %v", err)
-	}
-
-	var slideXML, relsXML string
-	for _, f := range zr.File {
-		switch f.Name {
-		case "ppt/slides/slide1.xml":
-			rc, _ := f.Open()
-			b, _ := io.ReadAll(rc)
-			rc.Close()
-			slideXML = string(b)
-		case "ppt/slides/_rels/slide1.xml.rels":
-			rc, _ := f.Open()
-			b, _ := io.ReadAll(rc)
-			rc.Close()
-			relsXML = string(b)
-		}
-	}
+	parts := renderSlidesToParts(t, slides)
+	slideXML := string(parts["ppt/slides/slide1.xml"])
+	relsXML := string(parts["ppt/slides/_rels/slide1.xml.rels"])
 
 	// The slide XML must contain an hlinkClick referencing some rId.
 	if !strings.Contains(slideXML, `hlinkClick`) {

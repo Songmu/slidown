@@ -1,15 +1,12 @@
 package render
 
 import (
-	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
-
-	"github.com/Songmu/slidown/md"
 )
 
 // findSoffice locates a LibreOffice binary, if available.
@@ -112,14 +109,7 @@ func TestE2ERendersWithLibreOffice(t *testing.T) {
 		"| A | B |\n| --- | ---: |\n| x | 1 |\n| y | 2 |\n\n" +
 		"<!--\nspeaker note here\n-->\n"
 
-	parsed, err := md.Parse("", []byte(src), nil)
-	if err != nil {
-		t.Fatalf("md.Parse: %v", err)
-	}
-	slides, err := parsed.ToSlides(context.Background(), "")
-	if err != nil {
-		t.Fatalf("ToSlides: %v", err)
-	}
+	slides := markdownSlides(t, src)
 
 	dir := t.TempDir()
 	pptxPath := filepath.Join(dir, "e2e.pptx")

@@ -1,43 +1,13 @@
 package render
 
 import (
-	"archive/zip"
 	"bytes"
-	"context"
-	"io"
 	"strings"
 	"testing"
 
 	"github.com/Songmu/slidown"
-	"github.com/Songmu/slidown/md"
 	"github.com/Songmu/slidown/pptx"
 )
-
-func renderSlidesToParts(t *testing.T, slides slidown.Slides) map[string][]byte {
-	t.Helper()
-	var buf bytes.Buffer
-	if _, err := ToPresentation(slides).WriteTo(&buf); err != nil {
-		t.Fatalf("WriteTo: %v", err)
-	}
-	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
-	if err != nil {
-		t.Fatalf("invalid zip: %v", err)
-	}
-	parts := map[string][]byte{}
-	for _, f := range zr.File {
-		rc, err := f.Open()
-		if err != nil {
-			t.Fatalf("open zip entry %s: %v", f.Name, err)
-		}
-		b, err := io.ReadAll(rc)
-		rc.Close()
-		if err != nil {
-			t.Fatalf("read zip entry %s: %v", f.Name, err)
-		}
-		parts[f.Name] = b
-	}
-	return parts
-}
 
 // Note: the generic keys() helper used in failure messages below is defined in
 // image_test.go, which is part of this same `render` test package.
@@ -132,14 +102,7 @@ func TestSVGPlaceholderBinding(t *testing.T) {
 		HasGeom: true, X: 1000000, Y: 1000000, W: 2000000, H: 2000000,
 	})
 
-	parsed, err := md.Parse("", []byte("# Pic\n"), nil)
-	if err != nil {
-		t.Fatalf("md.Parse: %v", err)
-	}
-	slides, err := parsed.ToSlides(context.Background(), "")
-	if err != nil {
-		t.Fatalf("ToSlides: %v", err)
-	}
+	slides := markdownSlides(t, "# Pic\n")
 	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#4C9AFF"/></svg>`
 	slides[0].Images = []*slidown.Image{newSVGImage(t, svg)}
 
@@ -174,29 +137,6 @@ func TestSVGPlaceholderBinding(t *testing.T) {
 	}
 }
 
-// An SVG that falls back but references an external raster image is embedded as
-// a best-effort raster-only picture (no native svgBlip): the image is still
-// shown rather than dropped, but the native SVG isn't embedded because its
-// external reference can't be resolved.
-func TestRenderSVGExternalResourceRasterOnly(t *testing.T) {
-	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="red"/><image href="asset.png" width="100" height="100"/></svg>`
-	parts := renderSlidesToParts(t, slidown.Slides{
-		{Titles: []string{"ext"}, Images: []*slidown.Image{newSVGImage(t, svg)}},
-	})
-	slide := string(parts["ppt/slides/slide1.xml"])
-	if !strings.Contains(slide, "<p:pic>") {
-		t.Errorf("expected a best-effort raster picture for the external-resource SVG")
-	}
-	if strings.Contains(slide, "asvg:svgBlip") {
-		t.Errorf("did not expect a native SVG blip for an external-resource SVG")
-	}
-	for name := range parts {
-		if strings.HasPrefix(name, "ppt/media/") && strings.HasSuffix(name, ".svg") {
-			t.Errorf("did not expect an embedded .svg media part: %s", name)
-		}
-	}
-}
-
 // A hyperlink or <desc> containing "href" text must not be misclassified as an
 // external resource: the native SVG (svgBlip + .svg part) is preserved.
 func TestRenderSVGHyperlinkNotExternal(t *testing.T) {
@@ -216,41 +156,6 @@ func TestRenderSVGHyperlinkNotExternal(t *testing.T) {
 	}
 	if !hasSVG {
 		t.Errorf("expected an embedded .svg media part for the native SVG")
-	}
-}
-
-// An unsupported SVG that references an external paint via url(file#id) is
-// embedded as a best-effort raster-only picture (no native svgBlip).
-func TestRenderSVGExternalURLRasterOnly(t *testing.T) {
-	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="url(paints.svg#g)" clip-path="url(#c)"/></svg>`
-	parts := renderSlidesToParts(t, slidown.Slides{
-		{Titles: []string{"ext"}, Images: []*slidown.Image{newSVGImage(t, svg)}},
-	})
-	slide := string(parts["ppt/slides/slide1.xml"])
-	if !strings.Contains(slide, "<p:pic>") {
-		t.Errorf("expected a best-effort raster picture for the external-url SVG")
-	}
-	if strings.Contains(slide, "asvg:svgBlip") {
-		t.Errorf("did not expect a native SVG blip for an external-url SVG")
-	}
-}
-
-// A gradient that inherits from an external SVG via href (`<linearGradient
-// href="ext.svg#g">`) is rejected by the shape converter and must be embedded
-// raster-only: PowerPoint and the raster fallback can't resolve the external
-// gradient, so the native svgBlip (which would carry a dangling reference) is
-// omitted.
-func TestRenderSVGExternalGradientHrefRasterOnly(t *testing.T) {
-	svg := `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 10 10"><defs><linearGradient id="g" xlink:href="ext.svg#base"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`
-	parts := renderSlidesToParts(t, slidown.Slides{
-		{Titles: []string{"grad"}, Images: []*slidown.Image{newSVGImage(t, svg)}},
-	})
-	slide := string(parts["ppt/slides/slide1.xml"])
-	if !strings.Contains(slide, "<p:pic>") {
-		t.Errorf("expected a best-effort raster picture for the external-gradient SVG")
-	}
-	if strings.Contains(slide, "asvg:svgBlip") {
-		t.Errorf("did not expect a native SVG blip for an external-gradient-href SVG: %s", slide)
 	}
 }
 
@@ -315,55 +220,6 @@ func TestDirectiveReferencesExternal(t *testing.T) {
 	}
 }
 
-// An SVG with an external xml:base rebases its references, so it can't be
-// embedded self-contained and must be raster-only.
-func TestRenderSVGXMLBaseRasterOnly(t *testing.T) {
-	svg := `<svg xmlns="http://www.w3.org/2000/svg" xml:base="http://example.com/" viewBox="0 0 10 10"><rect width="10" height="10" fill="red"/></svg>`
-	img, err := slidown.NewImageFromCodeBlock(bytes.NewReader([]byte(svg)))
-	if err != nil {
-		t.Fatalf("NewImageFromCodeBlock: %v", err)
-	}
-	parts := renderSlidesToParts(t, slidown.Slides{
-		{Titles: []string{"base"}, Images: []*slidown.Image{img}},
-	})
-	if strings.Contains(string(parts["ppt/slides/slide1.xml"]), "asvg:svgBlip") {
-		t.Errorf("external xml:base SVG should not embed a native svgBlip")
-	}
-}
-
-// An SVG with an external DTD (DOCTYPE ... SYSTEM/PUBLIC) declares an
-// unresolvable external dependency and must be embedded raster-only.
-func TestRenderSVGExternalDTDRasterOnly(t *testing.T) {
-	svg := `<!DOCTYPE svg SYSTEM "theme.dtd"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="red" clip-path="url(#c)"/></svg>`
-	img, err := slidown.NewImageFromCodeBlock(bytes.NewReader([]byte(svg)))
-	if err != nil {
-		t.Fatalf("NewImageFromCodeBlock: %v", err)
-	}
-	parts := renderSlidesToParts(t, slidown.Slides{
-		{Titles: []string{"dtd"}, Images: []*slidown.Image{img}},
-	})
-	slide := string(parts["ppt/slides/slide1.xml"])
-	if !strings.Contains(slide, "<p:pic>") {
-		t.Errorf("expected a best-effort raster picture for the external-DTD SVG")
-	}
-	if strings.Contains(slide, "asvg:svgBlip") {
-		t.Errorf("external-DTD SVG should not embed a native svgBlip: %s", slide)
-	}
-	// A lower/mixed-case system keyword (non-strict parsers accept it) must be
-	// detected too.
-	lc := `<!doctype svg system "theme.dtd"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="red" clip-path="url(#c)"/></svg>`
-	lcImg, err := slidown.NewImageFromCodeBlock(bytes.NewReader([]byte(lc)))
-	if err != nil {
-		t.Fatalf("NewImageFromCodeBlock: %v", err)
-	}
-	lcParts := renderSlidesToParts(t, slidown.Slides{
-		{Titles: []string{"dtd2"}, Images: []*slidown.Image{lcImg}},
-	})
-	if strings.Contains(string(lcParts["ppt/slides/slide1.xml"]), "asvg:svgBlip") {
-		t.Errorf("lowercase external-DTD SVG should not embed a native svgBlip")
-	}
-}
-
 // SVG text with an explicit font-family applies it to every script, so the
 // slide emits the typeface for the East Asian (<a:ea>) and complex-script
 // (<a:cs>) slots too, not just <a:latin> (which CJK/Arabic text would ignore).
@@ -388,9 +244,6 @@ func TestRenderSVGTextPreservesSeparator(t *testing.T) {
 		{Titles: []string{"txt"}, Images: []*slidown.Image{newSVGImage(t, svg)}},
 	})
 	slide := string(parts["ppt/slides/slide1.xml"])
-	if !strings.Contains(slide, "<a:custGeom>") && !strings.Contains(slide, `xml:space="preserve"`) {
-		t.Errorf("expected xml:space=preserve on the whitespace-carrying run, got: %s", slide)
-	}
 	if !strings.Contains(slide, `xml:space="preserve"`) {
 		t.Errorf("expected xml:space=preserve for the text separator, got: %s", slide)
 	}
@@ -444,56 +297,40 @@ func TestRenderSVGUnicodeCommentInchUnits(t *testing.T) {
 	}
 }
 
-// A string-form @import separated from its URL by a CSS comment
-// (@import/**/"theme.css") is still an external stylesheet and must be embedded
-// raster-only.
-func TestRenderSVGImportCommentSeparatorRasterOnly(t *testing.T) {
-	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><style>@import/**/"theme.css";</style><rect width="10" height="10" clip-path="url(#c)"/></svg>`
-	img, err := slidown.NewImageFromCodeBlock(bytes.NewReader([]byte(svg)))
-	if err != nil {
-		t.Fatalf("NewImageFromCodeBlock: %v", err)
-	}
-	parts := renderSlidesToParts(t, slidown.Slides{
-		{Titles: []string{"imp"}, Images: []*slidown.Image{img}},
-	})
-	if strings.Contains(string(parts["ppt/slides/slide1.xml"]), "asvg:svgBlip") {
-		t.Errorf("comment-separated @import should force raster-only, not native svgBlip")
-	}
-}
-
-// An unsupported SVG whose external url() reference is hidden behind CSS
-// escapes (\75 rl -> url) must still be embedded raster-only.
-func TestRenderSVGEscapedURLRasterOnly(t *testing.T) {
-	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" style="fill:\75 rl(other.svg#g);clip-path:url(#c)"/></svg>`
-	img, err := slidown.NewImageFromCodeBlock(bytes.NewReader([]byte(svg)))
-	if err != nil {
-		t.Fatalf("NewImageFromCodeBlock: %v", err)
-	}
-	parts := renderSlidesToParts(t, slidown.Slides{
-		{Titles: []string{"esc"}, Images: []*slidown.Image{img}},
-	})
-	if strings.Contains(string(parts["ppt/slides/slide1.xml"]), "asvg:svgBlip") {
-		t.Errorf("escaped external url() should force raster-only, not native svgBlip")
-	}
-}
-
-// An SVG with a string-form @import or an xml-stylesheet PI references an
-// external stylesheet and must be embedded raster-only (no native svgBlip).
-func TestRenderSVGExternalStylesheetRasterOnly(t *testing.T) {
-	for _, svg := range []string{
-		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><style>@import "theme.css";</style><rect width="10" height="10" clip-path="url(#c)"/></svg>`,
-		`<?xml-stylesheet href="theme.css" type="text/css"?><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" clip-path="url(#c)"/></svg>`,
+func TestRenderSVGExternalDependenciesRasterOnly(t *testing.T) {
+	for name, tc := range map[string]struct {
+		svg            string
+		requirePicture bool
+	}{
+		"image_href":                        {`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="red"/><image href="asset.png" width="100" height="100"/></svg>`, true},
+		"external_paint_url":                {`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="url(paints.svg#g)" clip-path="url(#c)"/></svg>`, true},
+		"gradient_xlink_href":               {`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 10 10"><defs><linearGradient id="g" xlink:href="ext.svg#base"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`, true},
+		"xml_base":                          {`<svg xmlns="http://www.w3.org/2000/svg" xml:base="http://example.com/" viewBox="0 0 10 10"><rect width="10" height="10" fill="red"/></svg>`, false},
+		"system_dtd":                        {`<!DOCTYPE svg SYSTEM "theme.dtd"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="red" clip-path="url(#c)"/></svg>`, true},
+		"lowercase_system_dtd":              {`<!doctype svg system "theme.dtd"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="red" clip-path="url(#c)"/></svg>`, false},
+		"comment_separated_import":          {`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><style>@import/**/"theme.css";</style><rect width="10" height="10" clip-path="url(#c)"/></svg>`, false},
+		"escaped_external_url":              {`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" style="fill:\75 rl(other.svg#g);clip-path:url(#c)"/></svg>`, false},
+		"string_import":                     {`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><style>@import "theme.css";</style><rect width="10" height="10" clip-path="url(#c)"/></svg>`, false},
+		"stylesheet_processing_instruction": {`<?xml-stylesheet href="theme.css" type="text/css"?><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" clip-path="url(#c)"/></svg>`, false},
 	} {
-		img, err := slidown.NewImageFromCodeBlock(bytes.NewReader([]byte(svg)))
-		if err != nil {
-			t.Fatalf("NewImageFromCodeBlock: %v", err)
-		}
-		parts := renderSlidesToParts(t, slidown.Slides{
-			{Titles: []string{"s"}, Images: []*slidown.Image{img}},
+		t.Run(name, func(t *testing.T) {
+			parts := renderSlidesToParts(t, slidown.Slides{
+				{Titles: []string{name}, Images: []*slidown.Image{newSVGImage(t, tc.svg)}},
+			})
+			slide := string(parts["ppt/slides/slide1.xml"])
+			// Some unsupported inputs cannot be rasterized at all; only the
+			// historically renderable cases require a picture.
+			if tc.requirePicture && !strings.Contains(slide, "<p:pic>") {
+				t.Error("expected a best-effort raster picture")
+			}
+			if strings.Contains(slide, "asvg:svgBlip") {
+				t.Error("external dependency must not embed a native SVG blip")
+			}
+			for name := range parts {
+				if strings.HasPrefix(name, "ppt/media/") && strings.HasSuffix(name, ".svg") {
+					t.Errorf("external dependency must not embed SVG media: %s", name)
+				}
+			}
 		})
-		slide := string(parts["ppt/slides/slide1.xml"])
-		if strings.Contains(slide, "asvg:svgBlip") {
-			t.Errorf("external stylesheet SVG should not embed native svgBlip: %s", svg)
-		}
 	}
 }

@@ -2,12 +2,10 @@ package render
 
 import (
 	"bytes"
-	"context"
 	"strings"
 	"testing"
 
 	"github.com/Songmu/slidown"
-	"github.com/Songmu/slidown/md"
 	"github.com/Songmu/slidown/pptx"
 )
 
@@ -33,14 +31,7 @@ func TestToPresentationWithTemplateAppliesStyleLayoutFixture(t *testing.T) {
 		}
 	}
 
-	parsed, err := md.Parse("", []byte(styleFixtureMarkdown), nil)
-	if err != nil {
-		t.Fatalf("md.Parse: %v", err)
-	}
-	slides, err := parsed.ToSlides(context.Background(), "")
-	if err != nil {
-		t.Fatalf("ToSlides: %v", err)
-	}
+	slides := markdownSlides(t, styleFixtureMarkdown)
 
 	var buf bytes.Buffer
 	if _, err := ToPresentationWithTemplate(slides, tmpl).WriteTo(&buf); err != nil {

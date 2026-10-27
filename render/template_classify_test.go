@@ -1,12 +1,11 @@
 package render
 
 import (
-	"archive/zip"
 	"bytes"
-	"io"
 	"strings"
 	"testing"
 
+	"github.com/Songmu/slidown/internal/testutil"
 	"github.com/Songmu/slidown/pptx"
 )
 
@@ -161,20 +160,7 @@ func TestRenderHintedSubtitleEmitsRoleMarker(t *testing.T) {
 	if _, err := p.WriteTo(&buf); err != nil {
 		t.Fatalf("WriteTo: %v", err)
 	}
-	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
-	if err != nil {
-		t.Fatalf("invalid zip: %v", err)
-	}
-	var slideXML string
-	for _, f := range zr.File {
-		if f.Name == "ppt/slides/slide1.xml" {
-			rc, _ := f.Open()
-			b, _ := io.ReadAll(rc)
-			rc.Close()
-			slideXML = string(b)
-			break
-		}
-	}
+	slideXML := testutil.ReadZIPStrings(t, buf.Bytes())["ppt/slides/slide1.xml"]
 	if slideXML == "" {
 		t.Fatal("ppt/slides/slide1.xml missing from output")
 	}
