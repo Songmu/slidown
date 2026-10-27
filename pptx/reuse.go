@@ -139,19 +139,12 @@ func mergeReusingUnchangedSlides(oldParts map[string][]byte, newPPTX []byte, reu
 			}
 		}
 
-		// When the slide moves, its reference to the notes slide in the rels
-		// must be renumbered to the new position.  Any media renames are applied
-		// here too so the rels stay consistent with the actual part names.
-		newRels := rewriteRef(oldRels,
-			fmt.Sprintf("notesSlide%d.xml", oldPos),
-			fmt.Sprintf("notesSlide%d.xml", newPos))
+		newRels := oldRels
 		for oldResolved, newResolved := range mediaRename {
 			oldTarget := "../media/" + path.Base(oldResolved)
 			newTarget := "../media/" + path.Base(newResolved)
 			newRels = []byte(strings.ReplaceAll(string(newRels), oldTarget, newTarget))
 		}
-		addPart(fmt.Sprintf("ppt/slides/_rels/slide%d.xml.rels", newPos), newRels)
-
 		for _, target := range relTargets(oldRels) {
 			resolved := path.Clean(path.Join("ppt/slides", target))
 			switch {
@@ -178,6 +171,8 @@ func mergeReusingUnchangedSlides(oldParts map[string][]byte, newPPTX []byte, reu
 				newNotes := fmt.Sprintf("ppt/notesSlides/notesSlide%d.xml", newPos)
 				addPart(newNotes, oldNotes)
 				neededOverrides[newNotes] = ctNotesSlide
+				// Notes part numbers need not match their owning slide's number.
+				newRels = rewriteRef(newRels, target, "../notesSlides/"+path.Base(newNotes))
 
 				oldNotesRels, ok := oldParts[relsPath(resolved)]
 				if !ok {
@@ -208,6 +203,7 @@ func mergeReusingUnchangedSlides(oldParts map[string][]byte, newPPTX []byte, reu
 				}
 			}
 		}
+		addPart(fmt.Sprintf("ppt/slides/_rels/slide%d.xml.rels", newPos), newRels)
 	}
 
 	// Ensure [Content_Types].xml declares the restored notes parts; otherwise
