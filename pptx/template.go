@@ -266,6 +266,31 @@ type xmlContentTypes struct {
 // the same OOXML structure for theme, slide masters and slide layouts, so the
 // loader treats them interchangeably.
 func LoadTemplate(path string) (*Template, error) {
+	parts, err := readTemplateParts(path)
+	if err != nil {
+		return nil, err
+	}
+	types, err := parseTemplateContentTypes(parts, path)
+	if err != nil {
+		return nil, err
+	}
+	t := &Template{
+		designParts:  map[string][]byte{},
+		partTypes:    map[string]string{},
+		defaultTypes: map[string]string{},
+		SyntaxStyles: map[string]StyleSpec{},
+	}
+	t.loadDefaultTypes(types)
+	styleLayout := t.collectDesignParts(parts, types)
+	if err := t.initializeDesign(parts, path, styleLayout); err != nil {
+		return nil, err
+	}
+	t.retainDesignMedia(parts, types)
+	t.linkLayoutMasters()
+	return t, nil
+}
+
+func readTemplateParts(path string) (map[string][]byte, error) {
 	zr, err := zip.OpenReader(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open template %q: %w", path, err)
@@ -285,23 +310,22 @@ func LoadTemplate(path string) (*Template, error) {
 		}
 		parts[f.Name] = b
 	}
+	return parts, nil
+}
 
+func parseTemplateContentTypes(parts map[string][]byte, path string) (xmlContentTypes, error) {
+	var types xmlContentTypes
 	ct, ok := parts["[Content_Types].xml"]
 	if !ok {
-		return nil, fmt.Errorf("template %q is missing [Content_Types].xml", path)
+		return types, fmt.Errorf("template %q is missing [Content_Types].xml", path)
 	}
-	var types xmlContentTypes
 	if err := xml.Unmarshal(ct, &types); err != nil {
-		return nil, fmt.Errorf("failed to parse template content types: %w", err)
+		return types, fmt.Errorf("failed to parse template content types: %w", err)
 	}
+	return types, nil
+}
 
-	t := &Template{
-		designParts:  map[string][]byte{},
-		partTypes:    map[string]string{},
-		defaultTypes: map[string]string{},
-		SyntaxStyles: map[string]StyleSpec{},
-	}
-
+func (t *Template) loadDefaultTypes(types xmlContentTypes) {
 	// Preserve the template's Default extension declarations so verbatim-copied
 	// media (emf, svg, wdp, ...) still has a declared content type in the
 	// emitted [Content_Types].xml.
@@ -312,67 +336,67 @@ func LoadTemplate(path string) (*Template, error) {
 		}
 		t.defaultTypes[ext] = d.ContentType
 	}
+}
 
-	// Classify overrides into design parts we carry over.
-	var styleLayoutPart string
-	var styleLayoutData []byte
+func (t *Template) collectDesignParts(parts map[string][]byte, types xmlContentTypes) (styleLayout *LayoutInfo) {
 	for _, o := range types.Overrides {
 		name := strings.TrimPrefix(o.PartName, "/")
-		switch {
-		case strings.Contains(o.ContentType, "theme+xml"):
-			if t.themePart == "" {
-				t.themePart = name
-			}
-			t.copyPart(parts, name)
-			t.copyRels(parts, name)
-			t.partTypes[name] = o.ContentType
-		case strings.Contains(o.ContentType, "slideMaster+xml"):
-			t.masterParts = append(t.masterParts, name)
-			t.copyPart(parts, name)
-			t.copyRels(parts, name)
-			t.partTypes[name] = o.ContentType
-		case strings.Contains(o.ContentType, "notesMaster+xml"):
-			t.notesMasterPart = name
-			t.copyPart(parts, name)
-			t.copyRels(parts, name)
-			t.partTypes[name] = o.ContentType
-		case strings.Contains(o.ContentType, "handoutMaster+xml"):
-			t.handoutMasterPart = name
-			t.copyPart(parts, name)
-			t.copyRels(parts, name)
-			t.partTypes[name] = o.ContentType
-		case strings.Contains(o.ContentType, "slideLayout+xml"):
-			t.copyPart(parts, name)
-			t.copyRels(parts, name)
-			t.partTypes[name] = o.ContentType
-			if li := parseLayout(name, parts[name]); li != nil {
-				if li.Name == styleLayoutName {
-					styleLayoutPart = name
-					styleLayoutData = parts[name]
-					continue
-				}
-				t.Layouts = append(t.Layouts, li)
-			}
-		case strings.Contains(o.ContentType, "presProps+xml"):
-			t.presPropsPart = name
-			t.copyPart(parts, name)
-			t.partTypes[name] = o.ContentType
-		case strings.Contains(o.ContentType, "viewProps+xml"):
-			t.viewPropsPart = name
-			t.copyPart(parts, name)
-			t.partTypes[name] = o.ContentType
-		case strings.Contains(o.ContentType, "tableStyles+xml"):
-			t.tableStylesPart = name
-			t.copyPart(parts, name)
-			t.partTypes[name] = o.ContentType
+		if style := t.collectDesignPart(parts, name, o.ContentType); style != nil {
+			styleLayout = style
 		}
 	}
+	return styleLayout
+}
 
+func (t *Template) collectDesignPart(parts map[string][]byte, name, contentType string) (styleLayout *LayoutInfo) {
+	withRels := true
+	// Keep substring priority and declaration order: some templates declare a
+	// part more than once, and only the first matching kind classifies it.
+	switch {
+	case strings.Contains(contentType, "theme+xml"):
+		if t.themePart == "" {
+			t.themePart = name
+		}
+	case strings.Contains(contentType, "slideMaster+xml"):
+		t.masterParts = append(t.masterParts, name)
+	case strings.Contains(contentType, "notesMaster+xml"):
+		t.notesMasterPart = name
+	case strings.Contains(contentType, "handoutMaster+xml"):
+		t.handoutMasterPart = name
+	case strings.Contains(contentType, "slideLayout+xml"):
+		if li := parseLayout(name, parts[name]); li != nil {
+			if li.Name == styleLayoutName {
+				styleLayout = li
+			} else {
+				t.Layouts = append(t.Layouts, li)
+			}
+		}
+	case strings.Contains(contentType, "presProps+xml"):
+		t.presPropsPart = name
+		withRels = false
+	case strings.Contains(contentType, "viewProps+xml"):
+		t.viewPropsPart = name
+		withRels = false
+	case strings.Contains(contentType, "tableStyles+xml"):
+		t.tableStylesPart = name
+		withRels = false
+	default:
+		return nil
+	}
+	t.copyPart(parts, name)
+	if withRels {
+		t.copyRels(parts, name)
+	}
+	t.partTypes[name] = contentType
+	return styleLayout
+}
+
+func (t *Template) initializeDesign(parts map[string][]byte, path string, styleLayout *LayoutInfo) error {
 	if len(t.masterParts) == 0 {
-		return nil, fmt.Errorf("template %q has no slide master", path)
+		return fmt.Errorf("template %q has no slide master", path)
 	}
 	if len(t.Layouts) == 0 {
-		return nil, fmt.Errorf("template %q has no slide layouts", path)
+		return fmt.Errorf("template %q has no slide layouts", path)
 	}
 	sort.Slice(t.masterParts, func(i, j int) bool { return t.masterParts[i] < t.masterParts[j] })
 	sort.Slice(t.Layouts, func(i, j int) bool { return t.Layouts[i].PartName < t.Layouts[j].PartName })
@@ -384,19 +408,22 @@ func LoadTemplate(path string) (*Template, error) {
 	if theme := t.themeReferencedBy(t.masterParts[0]); theme != "" {
 		t.themePart = theme
 	}
-	if len(styleLayoutData) > 0 {
-		t.loadStyleLayoutPart(styleLayoutPart, styleLayoutData)
+	if styleLayout != nil {
+		t.loadStyleLayoutPart(styleLayout.PartName, parts[styleLayout.PartName])
 	}
 
 	if pres, ok := parts["ppt/presentation.xml"]; ok {
 		if err := t.loadPresentation(pres); err != nil {
-			return nil, fmt.Errorf("failed to parse template presentation: %w", err)
+			return fmt.Errorf("failed to parse template presentation: %w", err)
 		}
 	}
 	if err := t.loadDefaultStyleRelationships(parts); err != nil {
-		return nil, fmt.Errorf("failed to preserve template default text style: %w", err)
+		return fmt.Errorf("failed to preserve template default text style: %w", err)
 	}
+	return nil
+}
 
+func (t *Template) retainDesignMedia(parts map[string][]byte, types xmlContentTypes) {
 	// Copy only media referenced by retained design parts, not orphaned
 	// slide-level media from previous builds.
 	for media := range referencedDesignMedia(t.designParts) {
@@ -410,7 +437,9 @@ func LoadTemplate(path string) (*Template, error) {
 			t.partTypes[name] = o.ContentType
 		}
 	}
+}
 
+func (t *Template) linkLayoutMasters() {
 	// Link each layout to its slide master and parse master placeholder
 	// geometry so layouts that omit an explicit <a:xfrm> can inherit position
 	// from the master (the standard OOXML placeholder inheritance).
@@ -421,8 +450,6 @@ func LoadTemplate(path string) (*Template, error) {
 	for _, m := range t.masterParts {
 		t.masterGeoms[m] = parseGeom(t.designParts[m])
 	}
-
-	return t, nil
 }
 
 func (t *Template) loadPresentation(data []byte) error {

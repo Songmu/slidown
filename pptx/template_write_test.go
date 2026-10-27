@@ -24,81 +24,99 @@ func TestTemplatePreservesTextStyleInheritance(t *testing.T) {
 		{"absent", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			parts, order, err := readZipPartsFromPath(writeMinimalTemplate(t, nil))
-			if err != nil {
-				t.Fatal(err)
-			}
+			parts := minimalTemplateParts(t)
 			parts["ppt/presentation.xml"] = []byte(`<q:presentation xmlns:q="` + nsPresentationML +
 				`" xmlns:d="` + drawingNS + `" xmlns:x="urn:custom-text-style">` +
 				`<q:sldSz cx="9144000" cy="6858000"/>` + tc.style + `</q:presentation>`)
-			data, err := zipFromParts(order, parts)
-			if err != nil {
-				t.Fatal(err)
-			}
-			tmpl, err := LoadTemplate(writeTempPPTX(t, data))
-			if err != nil {
-				t.Fatal(err)
-			}
 			p := samplePresentation()
-			p.Template = tmpl
+			p.Template = loadTemplateParts(t, parts)
 			got := writeToParts(t, p)
-			var pres struct {
-				Default *struct {
-					Inner string `xml:",innerxml"`
-					Level struct {
-						Margin int `xml:"marL,attr"`
-						Indent int `xml:"indent,attr"`
-					} `xml:"http://schemas.openxmlformats.org/drawingml/2006/main lvl1pPr"`
-				} `xml:"http://schemas.openxmlformats.org/presentationml/2006/main defaultTextStyle"`
-			}
-			if err := xml.Unmarshal([]byte(got["ppt/presentation.xml"]), &pres); err != nil {
-				t.Fatal(err)
-			}
-			if tc.style == "" {
-				if pres.Default != nil {
-					t.Fatal("added a default text style to a template without one")
-				}
-			} else if pres.Default == nil {
-				t.Fatal("lost the presentation default text style or its namespace")
-			} else if tc.name != "empty" {
-				if pres.Default.Inner != inner || pres.Default.Level.Margin != 987654 || pres.Default.Level.Indent != -123456 {
-					t.Fatalf("changed default text style: %+v", pres.Default)
-				}
-				dec := xml.NewDecoder(strings.NewReader(got["ppt/presentation.xml"]))
-				for {
-					tok, err := dec.Token()
-					if err == io.EOF {
-						break
-					}
-					if err != nil {
-						t.Fatal(err)
-					}
-					if elem, ok := tok.(xml.StartElement); ok && elem.Name.Local == "marker" && elem.Name.Space != "urn:custom-text-style" {
-						t.Fatalf("lost extension namespace: %+v", elem.Name)
-					}
-				}
-			}
-			for _, name := range []string{"ppt/slideMasters/slideMaster1.xml", "ppt/slideLayouts/slideLayout1.xml"} {
-				if got[name] != string(parts[name]) {
-					t.Errorf("changed inherited design part %s", name)
-				}
-			}
-			slide := got["ppt/slides/slide1.xml"]
-			if strings.Contains(slide, ` marL=`) || strings.Contains(slide, ` indent=`) {
-				t.Error("slide overrides inherited indentation")
-			}
-			if !strings.Contains(slide, `<a:buAutoNum type="arabicPeriod"/>`) || !strings.Contains(slide, `<a:buChar`) {
-				t.Error("lost explicit Markdown bullet/number types")
-			}
+			assertDefaultTextStyle(t, got["ppt/presentation.xml"], tc.name, inner)
+			assertInheritedSlideFormatting(t, got, parts)
 		})
 	}
 }
 
-func TestTemplatePreservesDefaultStylePictureBullets(t *testing.T) {
-	parts, order, err := readZipPartsFromPath(writeMinimalTemplate(t, nil))
-	if err != nil {
+func assertDefaultTextStyle(t *testing.T, data, variant, inner string) {
+	t.Helper()
+	var pres struct {
+		Default *struct {
+			Inner string `xml:",innerxml"`
+			Level struct {
+				Margin int `xml:"marL,attr"`
+				Indent int `xml:"indent,attr"`
+			} `xml:"http://schemas.openxmlformats.org/drawingml/2006/main lvl1pPr"`
+		} `xml:"http://schemas.openxmlformats.org/presentationml/2006/main defaultTextStyle"`
+	}
+	if err := xml.Unmarshal([]byte(data), &pres); err != nil {
 		t.Fatal(err)
 	}
+	if variant == "absent" {
+		if pres.Default != nil {
+			t.Fatal("added a default text style to a template without one")
+		}
+		return
+	}
+	if pres.Default == nil {
+		t.Fatal("lost the presentation default text style or its namespace")
+	}
+	if variant == "empty" {
+		if pres.Default.Inner != "" {
+			t.Fatal("added content to an empty default text style")
+		}
+		return
+	}
+	if pres.Default.Inner != inner || pres.Default.Level.Margin != 987654 || pres.Default.Level.Indent != -123456 {
+		t.Fatalf("changed default text style: %+v", pres.Default)
+	}
+	assertTextStyleExtensionNamespace(t, data)
+}
+
+func assertTextStyleExtensionNamespace(t *testing.T, data string) {
+	t.Helper()
+	dec := xml.NewDecoder(strings.NewReader(data))
+	found := false
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		elem, ok := tok.(xml.StartElement)
+		if !ok || elem.Name.Local != "marker" {
+			continue
+		}
+		found = true
+		if elem.Name.Space != "urn:custom-text-style" {
+			t.Fatalf("lost extension namespace: %+v", elem.Name)
+		}
+	}
+	if !found {
+		t.Fatal("lost default text style extension marker")
+	}
+}
+
+func assertInheritedSlideFormatting(t *testing.T, got map[string]string, source map[string][]byte) {
+	t.Helper()
+	for _, name := range []string{"ppt/slideMasters/slideMaster1.xml", "ppt/slideLayouts/slideLayout1.xml"} {
+		if got[name] != string(source[name]) {
+			t.Errorf("changed inherited design part %s", name)
+		}
+	}
+	slide := got["ppt/slides/slide1.xml"]
+	if strings.Contains(slide, ` marL=`) || strings.Contains(slide, ` indent=`) {
+		t.Error("slide overrides inherited indentation")
+	}
+	if !strings.Contains(slide, `<a:buAutoNum type="arabicPeriod"/>`) || !strings.Contains(slide, `<a:buChar`) {
+		t.Error("lost explicit Markdown bullet/number types")
+	}
+}
+
+func defaultStylePictureBulletParts(t *testing.T) map[string][]byte {
+	t.Helper()
+	parts := minimalTemplateParts(t)
 	style := `<p:defaultTextStyle xmlns:s="` + nsRelationships + `">` +
 		`<a:lvl1pPr><a:buBlip><a:blip s:embed='rId1' s:link=""/></a:buBlip></a:lvl1pPr>` +
 		`<a:lvl2pPr><a:buBlip><a:blip s:embed="rId1"/></a:buBlip></a:lvl2pPr>` +
@@ -116,11 +134,11 @@ func TestTemplatePreservesDefaultStylePictureBullets(t *testing.T) {
 	parts["ppt/media/unused.png"] = []byte("unused-image")
 	parts["[Content_Types].xml"] = []byte(strings.Replace(string(parts["[Content_Types].xml"]), `</Types>`,
 		`<Override PartName="/ppt/media/bullet.png" ContentType="image/png"/></Types>`, 1))
-	order = append(order, "ppt/media/bullet.png", "ppt/media/unused.png")
-	data, err := zipFromParts(order, parts)
-	if err != nil {
-		t.Fatal(err)
-	}
+	return parts
+}
+
+func TestTemplatePreservesDefaultStylePictureBullets(t *testing.T) {
+	data := testutil.WriteZIP(t, defaultStylePictureBulletParts(t), nil)
 	for round := 0; round < 2; round++ {
 		tmpl, err := LoadTemplate(writeTempPPTX(t, data))
 		if err != nil {
@@ -129,69 +147,89 @@ func TestTemplatePreservesDefaultStylePictureBullets(t *testing.T) {
 		p := samplePresentation()
 		p.Template = tmpl
 		got := writeToParts(t, p)
-		if got["ppt/media/bullet.png"] != "picture-bullet-image" {
-			t.Fatal("lost the image referenced only by the default text style")
-		}
-		if _, ok := got["ppt/media/unused.png"]; ok {
-			t.Error("preserved an image not referenced by the retained design")
-		}
-		if !strings.Contains(got["[Content_Types].xml"], `<Override PartName="/ppt/media/bullet.png" ContentType="image/png"/>`) {
-			t.Error("lost the picture bullet's content type override")
-		}
-		var pres struct {
-			Blips []struct {
-				Embed string `xml:"http://schemas.openxmlformats.org/officeDocument/2006/relationships embed,attr"`
-				Link  string `xml:"http://schemas.openxmlformats.org/officeDocument/2006/relationships link,attr"`
-			} `xml:"defaultTextStyle>lvl1pPr>buBlip>blip"`
-			Second struct {
-				Embed string `xml:"http://schemas.openxmlformats.org/officeDocument/2006/relationships embed,attr"`
-			} `xml:"defaultTextStyle>lvl2pPr>buBlip>blip"`
-			External struct {
-				Link string `xml:"http://schemas.openxmlformats.org/officeDocument/2006/relationships link,attr"`
-			} `xml:"defaultTextStyle>lvl3pPr>buBlip>blip"`
-		}
-		if err := xml.Unmarshal([]byte(got["ppt/presentation.xml"]), &pres); err != nil {
-			t.Fatal(err)
-		}
-		var parsed struct {
-			Items []struct {
-				ID         string `xml:"Id,attr"`
-				Target     string `xml:"Target,attr"`
-				Type       string `xml:"Type,attr"`
-				TargetMode string `xml:"TargetMode,attr"`
-			} `xml:"Relationship"`
-		}
-		if err := xml.Unmarshal([]byte(got["ppt/_rels/presentation.xml.rels"]), &parsed); err != nil {
-			t.Fatal(err)
-		}
-		if len(pres.Blips) != 1 || pres.Blips[0].Embed == "" || pres.Second.Embed != pres.Blips[0].Embed || pres.External.Link == "" {
-			t.Fatalf("lost or inconsistently remapped picture bullet references: %+v", pres)
-		}
-		seen := map[string]bool{}
-		for _, rel := range parsed.Items {
-			if seen[rel.ID] {
-				t.Fatalf("duplicate presentation relationship ID %q", rel.ID)
-			}
-			seen[rel.ID] = true
-			switch rel.ID {
-			case pres.Blips[0].Embed:
-				if rel.Target != "/ppt/media/bullet.png" || rel.Type != nsRelationships+"/image" {
-					t.Errorf("picture bullet points at the wrong relationship: %+v", rel)
-				}
-			case pres.External.Link:
-				if rel.Target != "https://example.com/bullet.png?a=1&b=2" || rel.TargetMode != "External" {
-					t.Errorf("changed external picture bullet relationship: %+v", rel)
-				}
-			}
-		}
-		if !seen[pres.Blips[0].Embed] || !seen[pres.External.Link] {
-			t.Fatal("missing picture bullet relationships")
-		}
+		assertPictureBulletAssets(t, got)
+		assertDefaultStylePictureBulletReferences(t, got)
 		var buf bytes.Buffer
 		if _, err := p.WriteTo(&buf); err != nil {
 			t.Fatal(err)
 		}
 		data = buf.Bytes()
+	}
+}
+
+func assertPictureBulletAssets(t *testing.T, got map[string]string) {
+	t.Helper()
+	if got["ppt/media/bullet.png"] != "picture-bullet-image" {
+		t.Fatal("lost the image referenced only by the default text style")
+	}
+	if _, ok := got["ppt/media/unused.png"]; ok {
+		t.Error("preserved an image not referenced by the retained design")
+	}
+	if !strings.Contains(got["[Content_Types].xml"], `<Override PartName="/ppt/media/bullet.png" ContentType="image/png"/>`) {
+		t.Error("lost the picture bullet's content type override")
+	}
+}
+
+func assertDefaultStylePictureBulletReferences(t *testing.T, got map[string]string) {
+	t.Helper()
+	var pres struct {
+		Blips []struct {
+			Embed string `xml:"http://schemas.openxmlformats.org/officeDocument/2006/relationships embed,attr"`
+			Link  string `xml:"http://schemas.openxmlformats.org/officeDocument/2006/relationships link,attr"`
+		} `xml:"defaultTextStyle>lvl1pPr>buBlip>blip"`
+		Second struct {
+			Embed string `xml:"http://schemas.openxmlformats.org/officeDocument/2006/relationships embed,attr"`
+		} `xml:"defaultTextStyle>lvl2pPr>buBlip>blip"`
+		External struct {
+			Link string `xml:"http://schemas.openxmlformats.org/officeDocument/2006/relationships link,attr"`
+		} `xml:"defaultTextStyle>lvl3pPr>buBlip>blip"`
+	}
+	if err := xml.Unmarshal([]byte(got["ppt/presentation.xml"]), &pres); err != nil {
+		t.Fatal(err)
+	}
+	if len(pres.Blips) != 1 || pres.Blips[0].Embed == "" || pres.Second.Embed != pres.Blips[0].Embed || pres.External.Link == "" {
+		t.Fatalf("lost or inconsistently remapped picture bullet references: %+v", pres)
+	}
+	for _, empty := range []string{`s:link=""`, `s:embed=""`} {
+		if !strings.Contains(got["ppt/presentation.xml"], empty) {
+			t.Errorf("changed empty relationship attribute %s", empty)
+		}
+	}
+	assertPictureBulletRelationships(t, got["ppt/_rels/presentation.xml.rels"], pres.Blips[0].Embed, pres.External.Link)
+}
+
+func assertPictureBulletRelationships(t *testing.T, data, embed, link string) {
+	t.Helper()
+	var parsed struct {
+		Items []struct {
+			ID         string `xml:"Id,attr"`
+			Target     string `xml:"Target,attr"`
+			Type       string `xml:"Type,attr"`
+			TargetMode string `xml:"TargetMode,attr"`
+		} `xml:"Relationship"`
+	}
+	if err := xml.Unmarshal([]byte(data), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, rel := range parsed.Items {
+		if seen[rel.ID] {
+			t.Fatalf("duplicate presentation relationship ID %q", rel.ID)
+		}
+		seen[rel.ID] = true
+		switch rel.ID {
+		case embed:
+			if rel.Target != "/ppt/media/bullet.png" || rel.Type != nsRelationships+"/image" {
+				t.Errorf("picture bullet points at the wrong relationship: %+v", rel)
+			}
+		case link:
+			if rel.Target != "https://example.com/bullet.png?a=1&b=2" || rel.TargetMode != "External" {
+				t.Errorf("changed external picture bullet relationship: %+v", rel)
+			}
+		}
+	}
+	if !seen[embed] || !seen[link] {
+		t.Fatal("missing picture bullet relationships")
 	}
 }
 
