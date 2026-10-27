@@ -167,35 +167,7 @@ func parseXML(data []byte) (*node, error) {
 				// SVG-namespaced root) is not SVG content and is not rendered.
 				n.foreign = t.Name.Space != rootNS
 			}
-			for _, a := range t.Attr {
-				key := strings.ToLower(a.Name.Local)
-				switch {
-				case a.Name.Space == "":
-					// SVG presentation attributes are unqualified (no namespace);
-					// a prefixed attribute such as svg:fill is not one. Attribute
-					// names are also case-sensitive: a known SVG attribute in the
-					// wrong case (e.g. FILL, WIDTH, VIEWBOX) is unknown, so keep
-					// it under its raw name to force the fallback via
-					// hasUnsupportedAttrs rather than silently activating it.
-					if canon, known := canonicalSVGAttr[key]; known && a.Name.Local != canon {
-						n.Attrs[a.Name.Local] = strings.TrimSpace(a.Value)
-					} else {
-						n.Attrs[key] = strings.TrimSpace(a.Value)
-					}
-				case a.Name.Space == xlinkNS && key == "href":
-					n.Attrs["xlink:href"] = strings.TrimSpace(a.Value)
-				case a.Name.Space == xmlNS && key == "space":
-					n.Attrs["xml:space"] = strings.TrimSpace(a.Value)
-				case a.Name.Space == xmlNS && key == "base":
-					// xml:base changes how href="#id"/url(#id) resolve; the
-					// converter can't honor it, so keep it so hasUnsupportedAttrs
-					// forces the fallback.
-					n.Attrs["xml:base"] = strings.TrimSpace(a.Value)
-				default:
-					// Foreign-namespaced attribute (e.g. an extension); ignore
-					// rather than misinterpret it as an SVG presentation attr.
-				}
-			}
+			n.readXMLAttrs(t.Attr)
 			if len(stack) == 0 {
 				root = n
 			} else {
@@ -215,21 +187,7 @@ func parseXML(data []byte) (*node, error) {
 			}
 		case xml.CharData:
 			if len(stack) > 0 {
-				top := stack[len(stack)-1]
-				// Any character data after a child element is order-significant
-				// in mixed content (including a whitespace separator between
-				// tspans); flag it so text conversion falls back rather than
-				// reordering.
-				if len(top.Children) > 0 {
-					top.textAfterChild = true
-				}
-				// Accumulate in a builder so a text node split into many small
-				// CharData tokens (e.g. by comments/CDATA) stays linear rather
-				// than quadratic.
-				if top.textB == nil {
-					top.textB = &strings.Builder{}
-				}
-				top.textB.Write(t)
+				stack[len(stack)-1].appendXMLText(t)
 			}
 		case xml.ProcInst:
 			// An xml-stylesheet PI can restyle the document; we can't evaluate
@@ -245,6 +203,55 @@ func parseXML(data []byte) (*node, error) {
 			return nil, errTooComplex
 		}
 	}
+}
+
+func (n *node) readXMLAttrs(attrs []xml.Attr) {
+	for _, a := range attrs {
+		key := strings.ToLower(a.Name.Local)
+		switch {
+		case a.Name.Space == "":
+			// SVG presentation attributes are unqualified (no namespace);
+			// a prefixed attribute such as svg:fill is not one. Attribute
+			// names are also case-sensitive: a known SVG attribute in the
+			// wrong case (e.g. FILL, WIDTH, VIEWBOX) is unknown, so keep
+			// it under its raw name to force the fallback via
+			// hasUnsupportedAttrs rather than silently activating it.
+			if canon, known := canonicalSVGAttr[key]; known && a.Name.Local != canon {
+				n.Attrs[a.Name.Local] = strings.TrimSpace(a.Value)
+			} else {
+				n.Attrs[key] = strings.TrimSpace(a.Value)
+			}
+		case a.Name.Space == xlinkNS && key == "href":
+			n.Attrs["xlink:href"] = strings.TrimSpace(a.Value)
+		case a.Name.Space == xmlNS && key == "space":
+			n.Attrs["xml:space"] = strings.TrimSpace(a.Value)
+		case a.Name.Space == xmlNS && key == "base":
+			// xml:base changes how href="#id"/url(#id) resolve; the
+			// converter can't honor it, so keep it so hasUnsupportedAttrs
+			// forces the fallback.
+			n.Attrs["xml:base"] = strings.TrimSpace(a.Value)
+		default:
+			// Foreign-namespaced attribute (e.g. an extension); ignore
+			// rather than misinterpret it as an SVG presentation attr.
+		}
+	}
+}
+
+func (n *node) appendXMLText(text xml.CharData) {
+	// Any character data after a child element is order-significant
+	// in mixed content (including a whitespace separator between
+	// tspans); flag it so text conversion falls back rather than
+	// reordering.
+	if len(n.Children) > 0 {
+		n.textAfterChild = true
+	}
+	// Accumulate in a builder so a text node split into many small
+	// CharData tokens (e.g. by comments/CDATA) stays linear rather
+	// than quadratic.
+	if n.textB == nil {
+		n.textB = &strings.Builder{}
+	}
+	n.textB.Write(text)
 }
 
 func (c *conv) initViewport() bool {
@@ -740,105 +747,13 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 
 	switch n.Name {
 	case "svg", "g":
-		// A nested <svg> establishes its own viewport (x/y/width/height/viewBox/
-		// preserveAspectRatio) that isn't modeled; only the root is handled.
-		if n.Name == "svg" && !root {
-			return false
-		}
-		// A container with opacity < 1 requires group compositing (its content
-		// is flattened and blended as a whole), which flat custom-geometry
-		// shapes can't reproduce; fall back to the native SVG picture.
-		if op, ok := containerOpacity(st); !ok {
-			return false
-		} else if op < 1 {
-			return false
-		}
-		// Keep walking visibility-hidden containers: a descendant may override
-		// with visibility:visible.
-		for _, ch := range n.Children {
-			if !c.walk(ch, st, m, g, false) {
-				return false
-			}
-		}
-		return true
+		return c.walkContainer(n, st, m, g, root)
 	case "symbol":
 		// A <symbol> renders only when instantiated by <use>; encountered
 		// directly in the tree it draws nothing.
 		return true
 	case "path", "rect", "circle", "ellipse", "line", "polyline", "polygon":
-		gp, forceFillNone, ok := c.geometry(n, m)
-		if !ok {
-			return false
-		}
-		if len(gp.Cmds) == 0 {
-			return true
-		}
-		c.cmdCount += len(gp.Cmds)
-		if c.cmdCount > maxCommands {
-			return false
-		}
-		if visibilityHidden(st) {
-			return true
-		}
-		fill, stroke, ok := c.paint(st, m, forceFillNone)
-		if !ok {
-			return false
-		}
-		// DrawingML custom geometry fills always use nonzero winding, so any
-		// filled evenodd path (holes, or a self-intersecting subpath such as a
-		// star) can mis-render; fall back to embedding the SVG as an image.
-		evenOdd := strings.EqualFold(st.get("fill-rule"), "evenodd")
-		if evenOdd && fill.Kind != pptx.FillNone {
-			return false
-		}
-		// A DrawingML gradient spans the shape's own transform rectangle, so a
-		// gradient-filled shape must use tight element bounds (not the whole
-		// viewBox) to match SVG objectBoundingBox, and its direction can't be
-		// rotated/skewed; fall back for rotation/skew.
-		gs := &pptx.GeomShape{Name: shapeName(n, "Shape", c.geomCount+1), X: 0, Y: 0, W: c.chW, H: c.chH, PathW: c.chW, PathH: c.chH, Paths: []pptx.GeomPath{gp}, Fill: fill, Stroke: stroke, EvenOdd: evenOdd}
-		// SVG clips painting to the root viewport by default, but a PowerPoint
-		// group does not clip its children. Fall back when a shape's geometry —
-		// or a stroke painted around it — extends beyond the viewBox, since an
-		// SVG rendered as an image would be clipped there. Only EMU rounding
-		// slack is tolerated; any real overhang leaks pixels past the image rect.
-		if bx0, by0, bx1, by1, ok := geomPathBounds(gs); ok {
-			const tol = 16 // EMU, absorbs rounding of edge-aligned content
-			if bx0 < -tol || by0 < -tol || bx1 > c.chW+tol || by1 > c.chH+tol {
-				return false
-			}
-			if stroke != nil {
-				// A stroke paints half its width perpendicular to the path, so
-				// that half-width is the baseline overhang past the geometry
-				// bounds. Any overhang beyond rounding slack leaks outside the
-				// image rectangle (SVG-as-image clips to the viewport).
-				se := stroke.Width / 2
-				if bx0-se < -tol || by0-se < -tol ||
-					bx1+se > c.chW+tol || by1+se > c.chH+tol {
-					return false
-				}
-				// A miter join adds a spike beyond the half-width, and a square
-				// cap extends past open endpoints; check the actual per-join
-				// apex and per-cap corners so a shape near the edge can't leak.
-				if c.strokeExtremesExceedViewport(gs, float64(se), stroke.Join, stroke.Cap, tol) {
-					return false
-				}
-			}
-		}
-		if fill.Kind == pptx.FillGradient {
-			// <a:lin> only expresses a direction over the shape's box, so a
-			// rotation, skew or axis reflection baked into the geometry can't be
-			// reflected in the gradient; fall back for those.
-			if m.b != 0 || m.c != 0 || m.a < 0 || m.d < 0 {
-				return false
-			}
-			if !tightenGradientBounds(gs) {
-				return false
-			}
-		}
-		c.geomCount++
-		g.Geoms = append(g.Geoms, gs)
-		g.Children = append(g.Children, pptx.GroupChild{Geom: gs})
-		return true
+		return c.walkGeometry(n, st, m, g)
 	case "use":
 		return c.expandUse(n, st, m, g)
 	case "text":
@@ -849,6 +764,113 @@ func (c *conv) walk(n *node, inherited style, m matrix, g *pptx.GroupShape, root
 		}
 		return false
 	}
+}
+
+func (c *conv) walkContainer(n *node, st style, m matrix, g *pptx.GroupShape, root bool) bool {
+	// A nested <svg> establishes its own viewport (x/y/width/height/viewBox/
+	// preserveAspectRatio) that isn't modeled; only the root is handled.
+	if n.Name == "svg" && !root {
+		return false
+	}
+	// A container with opacity < 1 requires group compositing (its content
+	// is flattened and blended as a whole), which flat custom-geometry
+	// shapes can't reproduce; fall back to the native SVG picture.
+	if op, ok := containerOpacity(st); !ok {
+		return false
+	} else if op < 1 {
+		return false
+	}
+	// Keep walking visibility-hidden containers: a descendant may override
+	// with visibility:visible.
+	for _, ch := range n.Children {
+		if !c.walk(ch, st, m, g, false) {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *conv) walkGeometry(n *node, st style, m matrix, g *pptx.GroupShape) bool {
+	gp, forceFillNone, ok := c.geometry(n, m)
+	if !ok {
+		return false
+	}
+	if len(gp.Cmds) == 0 {
+		return true
+	}
+	c.cmdCount += len(gp.Cmds)
+	if c.cmdCount > maxCommands {
+		return false
+	}
+	if visibilityHidden(st) {
+		return true
+	}
+	fill, stroke, ok := c.paint(st, m, forceFillNone)
+	if !ok {
+		return false
+	}
+	// DrawingML custom geometry fills always use nonzero winding, so any
+	// filled evenodd path (holes, or a self-intersecting subpath such as a
+	// star) can mis-render; fall back to embedding the SVG as an image.
+	evenOdd := strings.EqualFold(st.get("fill-rule"), "evenodd")
+	if evenOdd && fill.Kind != pptx.FillNone {
+		return false
+	}
+	// A DrawingML gradient spans the shape's own transform rectangle, so a
+	// gradient-filled shape must use tight element bounds (not the whole
+	// viewBox) to match SVG objectBoundingBox, and its direction can't be
+	// rotated/skewed; fall back for rotation/skew.
+	gs := &pptx.GeomShape{Name: shapeName(n, "Shape", c.geomCount+1), X: 0, Y: 0, W: c.chW, H: c.chH, PathW: c.chW, PathH: c.chH, Paths: []pptx.GeomPath{gp}, Fill: fill, Stroke: stroke, EvenOdd: evenOdd}
+	if !c.geometryWithinViewport(gs) {
+		return false
+	}
+	if fill.Kind == pptx.FillGradient {
+		// <a:lin> only expresses a direction over the shape's box, so a
+		// rotation, skew or axis reflection baked into the geometry can't be
+		// reflected in the gradient; fall back for those.
+		if m.b != 0 || m.c != 0 || m.a < 0 || m.d < 0 {
+			return false
+		}
+		if !tightenGradientBounds(gs) {
+			return false
+		}
+	}
+	c.geomCount++
+	g.Geoms = append(g.Geoms, gs)
+	g.Children = append(g.Children, pptx.GroupChild{Geom: gs})
+	return true
+}
+
+func (c *conv) geometryWithinViewport(gs *pptx.GeomShape) bool {
+	// SVG clips painting to the root viewport by default, but a PowerPoint
+	// group does not clip its children. Fall back when a shape's geometry —
+	// or a stroke painted around it — extends beyond the viewBox, since an
+	// SVG rendered as an image would be clipped there. Only EMU rounding
+	// slack is tolerated; any real overhang leaks pixels past the image rect.
+	if bx0, by0, bx1, by1, ok := geomPathBounds(gs); ok {
+		const tol = 16 // EMU, absorbs rounding of edge-aligned content
+		if bx0 < -tol || by0 < -tol || bx1 > c.chW+tol || by1 > c.chH+tol {
+			return false
+		}
+		if stroke := gs.Stroke; stroke != nil {
+			// A stroke paints half its width perpendicular to the path, so
+			// that half-width is the baseline overhang past the geometry
+			// bounds. Any overhang beyond rounding slack leaks outside the
+			// image rectangle (SVG-as-image clips to the viewport).
+			se := stroke.Width / 2
+			if bx0-se < -tol || by0-se < -tol ||
+				bx1+se > c.chW+tol || by1+se > c.chH+tol {
+				return false
+			}
+			// A miter join adds a spike beyond the half-width, and a square
+			// cap extends past open endpoints; check the actual per-join
+			// apex and per-cap corners so a shape near the edge can't leak.
+			if c.strokeExtremesExceedViewport(gs, float64(se), stroke.Join, stroke.Cap, tol) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (c *conv) geometry(n *node, m matrix) (pptx.GeomPath, bool, bool) {

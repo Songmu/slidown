@@ -49,20 +49,9 @@ func (c *conv) gradient(id string, seen map[string]bool) (*pptx.Gradient, bool) 
 	if sp := n.Attrs["spreadmethod"]; sp != "" && strings.ToLower(sp) != "pad" {
 		return nil, false
 	}
-	var parent *pptx.Gradient
-	if n.Attrs["href"] != "" || n.Attrs["xlink:href"] != "" {
-		// A present href that doesn't resolve to a local #id references an
-		// external gradient we can't inherit from; fall back rather than
-		// silently using default coordinates.
-		href := hrefID(n)
-		if href == "" {
-			return nil, false
-		}
-		pg, ok := c.gradient(href, seen)
-		if !ok {
-			return nil, false
-		}
-		parent = pg
+	parent, ok := c.gradientParent(n, seen)
+	if !ok {
+		return nil, false
 	}
 	gr := &pptx.Gradient{Kind: pptx.GradientLinear}
 	if n.Name == "radialgradient" {
@@ -73,73 +62,104 @@ func (c *conv) gradient(id string, seen map[string]bool) (*pptx.Gradient, bool) 
 		gr.Angle = parent.Angle
 		gr.Stops = append([]pptx.GradientStop(nil), parent.Stops...)
 	}
+	if !gradientGeometry(n, gr, parent) || !c.applyGradientStops(n, gr) {
+		return nil, false
+	}
+	c.gradients[id] = gr
+	return gr, true
+}
+
+func (c *conv) gradientParent(n *node, seen map[string]bool) (*pptx.Gradient, bool) {
+	if n.Attrs["href"] != "" || n.Attrs["xlink:href"] != "" {
+		// A present href that doesn't resolve to a local #id references an
+		// external gradient we can't inherit from; fall back rather than
+		// silently using default coordinates.
+		href := hrefID(n)
+		if href == "" {
+			return nil, false
+		}
+		return c.gradient(href, seen)
+	}
+	return nil, true
+}
+
+func gradientGeometry(n *node, gr, parent *pptx.Gradient) bool {
 	if n.Name == "lineargradient" {
 		gr.Kind = pptx.GradientLinear
-		if gu := n.Attrs["gradientunits"]; gu != "" && strings.ToLower(gu) != "objectboundingbox" {
-			return nil, false
-		}
-		// DrawingML's <a:lin> expresses only a direction and always spans the
-		// whole bounding box, so only a full-box vector (endpoints on the 0/1
-		// edges) is representable. Recompute the angle only when this gradient
-		// declares its own vector; otherwise keep the inherited (parent) angle.
-		hasCoord := n.Attrs["x1"] != "" || n.Attrs["y1"] != "" || n.Attrs["x2"] != "" || n.Attrs["y2"] != ""
-		if hasCoord && parent != nil {
-			// A partial coordinate override must inherit the unspecified
-			// endpoints from the referenced gradient; that merge isn't modeled,
-			// so fall back conservatively.
-			return nil, false
-		}
-		if hasCoord || parent == nil {
-			coords := map[string]float64{"x1": 0, "y1": 0, "x2": 1, "y2": 0}
-			for k := range coords {
-				if s := n.Attrs[k]; s != "" {
-					v, ok := parseGradCoord(s)
-					if !ok {
-						return nil, false
-					}
-					coords[k] = v
-				}
-			}
-			// Reject partial vectors: each endpoint coordinate must sit on a box
-			// edge (0 or 1) so the gradient covers the full box.
-			for _, v := range coords {
-				if math.Abs(v) > 1e-9 && math.Abs(v-1) > 1e-9 {
-					return nil, false
-				}
-			}
-			// A zero-length gradient vector paints a solid last-stop color; the
-			// direction-only <a:lin> can't express that, so fall back.
-			if math.Abs(coords["x2"]-coords["x1"]) < 1e-9 && math.Abs(coords["y2"]-coords["y1"]) < 1e-9 {
-				return nil, false
-			}
-			gr.Angle = math.Atan2(coords["y2"]-coords["y1"], coords["x2"]-coords["x1"]) * 180 / math.Pi
-			if gr.Angle < 0 {
-				gr.Angle += 360
-			}
-		}
-	} else {
-		gr.Kind = pptx.GradientRadial
-		// The writer always emits a centered radial fill, so reject any custom
-		// radial geometry or non-default gradientUnits rather than silently
-		// rendering a different gradient.
-		for _, a := range []string{"cx", "cy", "r", "fx", "fy", "fr"} {
-			if n.Attrs[a] != "" {
-				return nil, false
-			}
-		}
-		if gu := n.Attrs["gradientunits"]; gu != "" && strings.ToLower(gu) != "objectboundingbox" {
-			return nil, false
+		return linearGradientGeometry(n, gr, parent)
+	}
+	gr.Kind = pptx.GradientRadial
+	// The writer always emits a centered radial fill, so reject any custom
+	// radial geometry or non-default gradientUnits rather than silently
+	// rendering a different gradient.
+	for _, a := range []string{"cx", "cy", "r", "fx", "fy", "fr"} {
+		if n.Attrs[a] != "" {
+			return false
 		}
 	}
+	if gu := n.Attrs["gradientunits"]; gu != "" && strings.ToLower(gu) != "objectboundingbox" {
+		return false
+	}
+	return true
+}
+
+func linearGradientGeometry(n *node, gr, parent *pptx.Gradient) bool {
+	if gu := n.Attrs["gradientunits"]; gu != "" && strings.ToLower(gu) != "objectboundingbox" {
+		return false
+	}
+	// DrawingML's <a:lin> expresses only a direction and always spans the
+	// whole bounding box, so only a full-box vector (endpoints on the 0/1
+	// edges) is representable. Recompute the angle only when this gradient
+	// declares its own vector; otherwise keep the inherited (parent) angle.
+	hasCoord := n.Attrs["x1"] != "" || n.Attrs["y1"] != "" || n.Attrs["x2"] != "" || n.Attrs["y2"] != ""
+	if hasCoord && parent != nil {
+		// A partial coordinate override must inherit the unspecified
+		// endpoints from the referenced gradient; that merge isn't modeled,
+		// so fall back conservatively.
+		return false
+	}
+	if !hasCoord && parent != nil {
+		return true
+	}
+	coords := map[string]float64{"x1": 0, "y1": 0, "x2": 1, "y2": 0}
+	for k := range coords {
+		if s := n.Attrs[k]; s != "" {
+			v, ok := parseGradCoord(s)
+			if !ok {
+				return false
+			}
+			coords[k] = v
+		}
+	}
+	// Reject partial vectors: each endpoint coordinate must sit on a box
+	// edge (0 or 1) so the gradient covers the full box.
+	for _, v := range coords {
+		if math.Abs(v) > 1e-9 && math.Abs(v-1) > 1e-9 {
+			return false
+		}
+	}
+	// A zero-length gradient vector paints a solid last-stop color; the
+	// direction-only <a:lin> can't express that, so fall back.
+	if math.Abs(coords["x2"]-coords["x1"]) < 1e-9 && math.Abs(coords["y2"]-coords["y1"]) < 1e-9 {
+		return false
+	}
+	gr.Angle = math.Atan2(coords["y2"]-coords["y1"], coords["x2"]-coords["x1"]) * 180 / math.Pi
+	if gr.Angle < 0 {
+		gr.Angle += 360
+	}
+	return true
+}
+
+func (c *conv) applyGradientStops(n *node, gr *pptx.Gradient) bool {
 	stops, ok := c.gradientStops(n)
 	if !ok {
-		return nil, false
+		return false
 	}
 	if len(stops) > 0 {
 		gr.Stops = stops
 	}
 	if len(gr.Stops) == 0 {
-		return nil, false
+		return false
 	}
 	if len(gr.Stops) == 1 {
 		// DrawingML requires at least two gradient stops; a single SVG stop is
@@ -147,8 +167,7 @@ func (c *conv) gradient(id string, seen map[string]bool) (*pptx.Gradient, bool) 
 		s := gr.Stops[0]
 		gr.Stops = []pptx.GradientStop{{Pos: 0, Color: s.Color, Alpha: s.Alpha}, {Pos: 1, Color: s.Color, Alpha: s.Alpha}}
 	}
-	c.gradients[id] = gr
-	return gr, true
+	return true
 }
 func parseGradCoord(s string) (float64, bool) {
 	s = strings.TrimSpace(s)
