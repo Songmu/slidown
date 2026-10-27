@@ -2,6 +2,7 @@ package pptx
 
 import (
 	"archive/zip"
+	"bytes"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -51,6 +52,9 @@ type Template struct {
 	defaultTypes map[string]string
 	// slideSize from the template presentation, in EMUs (0 if not found).
 	width, height int64
+	// defaultTextStyle is the presentation-wide fallback, including the
+	// namespace declarations inherited from the source presentation root.
+	defaultTextStyle string
 	// masterGeoms caches each slide master's placeholder geometry keyed by the
 	// master part name then by placeholder idx. Used to resolve geometry that a
 	// layout placeholder inherits from its master rather than declaring itself.
@@ -255,13 +259,6 @@ type xmlContentTypes struct {
 	} `xml:"Override"`
 }
 
-type xmlPresentation struct {
-	SldSz struct {
-		Cx string `xml:"cx,attr"`
-		Cy string `xml:"cy,attr"`
-	} `xml:"sldSz"`
-}
-
 // LoadTemplate reads a PowerPoint template package (a .pptx presentation or
 // .potx template) and extracts its reusable design parts. Both formats share
 // the same OOXML structure for theme, slide masters and slide layouts, so the
@@ -400,10 +397,8 @@ func LoadTemplate(path string) (*Template, error) {
 	}
 
 	if pres, ok := parts["ppt/presentation.xml"]; ok {
-		var xp xmlPresentation
-		if err := xml.Unmarshal(pres, &xp); err == nil {
-			t.width = atoi64(xp.SldSz.Cx)
-			t.height = atoi64(xp.SldSz.Cy)
+		if err := t.loadPresentation(pres); err != nil {
+			return nil, fmt.Errorf("failed to parse template presentation: %w", err)
 		}
 	}
 
@@ -419,6 +414,47 @@ func LoadTemplate(path string) (*Template, error) {
 	}
 
 	return t, nil
+}
+
+func (t *Template) loadPresentation(data []byte) error {
+	dec := xml.NewDecoder(bytes.NewReader(data))
+	var rootAttrs []xml.Attr
+	for {
+		start := dec.InputOffset()
+		tok, err := dec.Token()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		elem, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		switch elem.Name {
+		case xml.Name{Space: nsPresentationML, Local: "presentation"}:
+			rootAttrs = elem.Attr
+		case xml.Name{Space: nsPresentationML, Local: "sldSz"}:
+			for _, attr := range elem.Attr {
+				switch attr.Name.Local {
+				case "cx":
+					t.width = atoi64(attr.Value)
+				case "cy":
+					t.height = atoi64(attr.Value)
+				}
+			}
+		case xml.Name{Space: nsPresentationML, Local: "defaultTextStyle"}:
+			if err := dec.Skip(); err != nil {
+				return err
+			}
+			t.defaultTextStyle = string(unionRootNamespaces(data[start:dec.InputOffset()], elem.Attr, rootAttrs))
+		default:
+			if err := dec.Skip(); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 func (t *Template) copyPart(parts map[string][]byte, name string) {

@@ -144,6 +144,7 @@ func (t *Template) presentationXML(width, height int64, slideCount int, hasNotes
 	}
 	b.WriteString(`</p:sldIdLst>`)
 	b.WriteString(fmt.Sprintf(`<p:sldSz cx="%d" cy="%d"/><p:notesSz cx="6858000" cy="9144000"/>`, width, height))
+	b.WriteString(t.defaultTextStyle)
 	b.WriteString(`</p:presentation>`)
 	return b.String()
 }

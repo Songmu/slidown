@@ -3,10 +3,95 @@ package pptx
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/xml"
 	"io"
 	"strings"
 	"testing"
 )
+
+func TestTemplatePreservesTextStyleInheritance(t *testing.T) {
+	const drawingNS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+	const inner = `<d:lvl1pPr marL="987654" indent="-123456"><d:defRPr><d:latin typeface="Custom Font"/></d:defRPr></d:lvl1pPr>` +
+		`<d:extLst><d:ext uri="test"><x:marker/></d:ext></d:extLst>`
+	for _, tc := range []struct {
+		name  string
+		style string
+	}{
+		{"inherited namespaces", `<q:defaultTextStyle>` + inner + `</q:defaultTextStyle>`},
+		{"local namespace", `<q:defaultTextStyle xmlns:d="` + drawingNS + `">` + inner + `</q:defaultTextStyle>`},
+		{"empty", `<q:defaultTextStyle/>`},
+		{"absent", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parts, order, err := readZipPartsFromPath(writeMinimalTemplate(t, nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			parts["ppt/presentation.xml"] = []byte(`<q:presentation xmlns:q="` + nsPresentationML +
+				`" xmlns:d="` + drawingNS + `" xmlns:x="urn:custom-text-style">` +
+				`<q:sldSz cx="9144000" cy="6858000"/>` + tc.style + `</q:presentation>`)
+			data, err := zipFromParts(order, parts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tmpl, err := LoadTemplate(writeTempPPTX(t, data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := samplePresentation()
+			p.Template = tmpl
+			got := writeToParts(t, p)
+			var pres struct {
+				Default *struct {
+					Inner string `xml:",innerxml"`
+					Level struct {
+						Margin int `xml:"marL,attr"`
+						Indent int `xml:"indent,attr"`
+					} `xml:"http://schemas.openxmlformats.org/drawingml/2006/main lvl1pPr"`
+				} `xml:"http://schemas.openxmlformats.org/presentationml/2006/main defaultTextStyle"`
+			}
+			if err := xml.Unmarshal([]byte(got["ppt/presentation.xml"]), &pres); err != nil {
+				t.Fatal(err)
+			}
+			if tc.style == "" {
+				if pres.Default != nil {
+					t.Fatal("added a default text style to a template without one")
+				}
+			} else if pres.Default == nil {
+				t.Fatal("lost the presentation default text style or its namespace")
+			} else if tc.name != "empty" {
+				if pres.Default.Inner != inner || pres.Default.Level.Margin != 987654 || pres.Default.Level.Indent != -123456 {
+					t.Fatalf("changed default text style: %+v", pres.Default)
+				}
+				dec := xml.NewDecoder(strings.NewReader(got["ppt/presentation.xml"]))
+				for {
+					tok, err := dec.Token()
+					if err == io.EOF {
+						break
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					if elem, ok := tok.(xml.StartElement); ok && elem.Name.Local == "marker" && elem.Name.Space != "urn:custom-text-style" {
+						t.Fatalf("lost extension namespace: %+v", elem.Name)
+					}
+				}
+			}
+			for _, name := range []string{"ppt/slideMasters/slideMaster1.xml", "ppt/slideLayouts/slideLayout1.xml"} {
+				if got[name] != string(parts[name]) {
+					t.Errorf("changed inherited design part %s", name)
+				}
+			}
+			slide := got["ppt/slides/slide1.xml"]
+			if strings.Contains(slide, ` marL=`) || strings.Contains(slide, ` indent=`) {
+				t.Error("slide overrides inherited indentation")
+			}
+			if !strings.Contains(slide, `<a:buAutoNum type="arabicPeriod"/>`) || !strings.Contains(slide, `<a:buChar`) {
+				t.Error("lost explicit Markdown bullet/number types")
+			}
+		})
+	}
+}
 
 // TestContentTypesPreservesTemplateDefaults guards against regressing the bug
 // where templates carrying non-standard media (emf, svg, wdp, ...) produced an

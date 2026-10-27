@@ -87,6 +87,40 @@ func TestWriteToProducesValidZip(t *testing.T) {
 	}
 }
 
+func TestBuiltInListIndentation(t *testing.T) {
+	parts := writeToParts(t, samplePresentation())
+	var master struct {
+		Body struct {
+			Levels []struct {
+				Margin int `xml:"marL,attr"`
+				Indent int `xml:"indent,attr"`
+			} `xml:",any"`
+		} `xml:"txStyles>bodyStyle"`
+	}
+	if err := xml.Unmarshal([]byte(parts["ppt/slideMasters/slideMaster1.xml"]), &master); err != nil {
+		t.Fatal(err)
+	}
+	// Text and bullet positions in points, relative to the body text area.
+	want := [][2]float64{
+		{27, 0}, {58.5, 36}, {90, 72}, {126, 108}, {162, 144},
+		{198, 180}, {234, 216}, {270, 252}, {306, 288},
+	}
+	if len(master.Body.Levels) != len(want) {
+		t.Fatalf("got %d list levels, want %d", len(master.Body.Levels), len(want))
+	}
+	for i, level := range master.Body.Levels {
+		text := float64(level.Margin) / 12700
+		bullet := float64(level.Margin+level.Indent) / 12700
+		if text != want[i][0] || bullet != want[i][1] {
+			t.Errorf("level %d: text/bullet positions = %g/%gpt, want %g/%gpt", i+1, text, bullet, want[i][0], want[i][1])
+		}
+	}
+	slide := parts["ppt/slides/slide1.xml"]
+	if strings.Contains(slide, ` marL=`) || strings.Contains(slide, ` indent=`) {
+		t.Error("slide overrides the master list indentation")
+	}
+}
+
 func TestWriteToWithSpeakerNotes(t *testing.T) {
 	p := New()
 	s := p.AddSlide()
