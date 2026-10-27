@@ -698,189 +698,185 @@ func toFragments(baseDir string, b []byte, n ast.Node, seedFragment slidown.Frag
 		err = errors.WithStack(err)
 	}()
 
-	var frags []*fragment
-	var images []*slidown.Image
-	if n == nil {
-		return frags, images, nil
+	builder := fragmentBuilder{
+		baseDir:      baseDir,
+		source:       b,
+		seedFragment: seedFragment,
 	}
-	var styleName string
+	if n == nil {
+		return nil, nil, nil
+	}
 	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
-		switch childNode := c.(type) {
-		case *ast.Emphasis:
-			children, childImages, err := toFragments(baseDir, b, childNode, seedFragment)
-			if err != nil {
-				return nil, nil, err
-			}
-			for _, child := range children {
-				frags = append(frags, &fragment{
-					SoftLineBreak: child.SoftLineBreak,
-					Fragment: &slidown.Fragment{
-						Value:     child.Value,
-						Link:      child.Link,
-						Bold:      (childNode.Level == 2) || child.Bold,
-						Italic:    (childNode.Level == 1) || child.Italic,
-						Code:      child.Code,
-						StyleName: styleName,
-					}})
-			}
-			images = append(images, childImages...)
-		case *ast.Link:
-			children, childImages, err := toFragments(baseDir, b, childNode, seedFragment)
-			if err != nil {
-				return nil, nil, err
-			}
-			if len(children) == 0 {
-				for _, img := range childImages {
-					img.SetLink(string(childNode.Destination))
-					images = append(images, img)
-				}
-				continue
-			}
-			for _, child := range children {
-				frags = append(frags, &fragment{
-					SoftLineBreak: child.SoftLineBreak,
-					Fragment: &slidown.Fragment{
-						Value:     child.Value,
-						Link:      string(childNode.Destination),
-						Bold:      child.Bold,
-						Italic:    child.Italic,
-						Code:      child.Code,
-						StyleName: styleName,
-					}})
-			}
-			images = append(images, childImages...)
-		case *ast.AutoLink:
-			url := string(childNode.URL(b))
-			label := string(childNode.Label(b))
-			frags = append(frags, &fragment{
-				Fragment: &slidown.Fragment{
-					Value:     label,
-					Link:      url,
-					StyleName: styleName,
-				}})
-		case *ast.Text:
-			b := childNode.Segment.Value(b)
-			if !childNode.IsRaw() {
-				b = gutil.UnescapePunctuations(b)
-			}
-			v := string(b)
-			if v == "" {
-				if len(frags) > 0 {
-					frags[len(frags)-1].SoftLineBreak = childNode.SoftLineBreak()
-				}
-				continue // Skip empty text fragments
-			}
-			if childNode.HardLineBreak() {
-				v += "\n"
-			}
-			frag := seedFragment
-			frag.Value = v
-			frag.StyleName = styleName
-			frags = append(frags, &fragment{
-				SoftLineBreak: childNode.SoftLineBreak(),
-				Fragment:      &frag,
-			})
-		case *ast.Image:
-			imageLink := string(childNode.Destination)
-			if !strings.Contains(imageLink, "://") && !filepath.IsAbs(imageLink) {
-				imageLink = filepath.Join(baseDir, imageLink)
-			}
-			image, err := slidown.NewImageFromMarkdown(imageLink)
-			if err != nil {
-				return nil, nil, err
-			}
-			images = append(images, image)
-		case *ast.RawHTML:
-			// Get the raw HTML content
-			htmlContent := string(childNode.Segments.Value(b))
-
-			if !strings.HasPrefix(htmlContent, "<") {
-				styleName = "" // Reset class attribute for closing tags
-				continue       // Skip if it doesn't look like HTML
-			}
-
-			// Check if it's a closing tag
-			if strings.HasPrefix(htmlContent, "</") && strings.HasSuffix(htmlContent, ">") {
-				styleName = "" // Reset class attribute for closing tags
-				continue
-			}
-
-			// <br> tag - add a newline fragment
-			if strings.HasPrefix(htmlContent, "<br") {
-				frags = append(frags, &fragment{
-					Fragment: &slidown.Fragment{
-						Value:     "\n",
-						Bold:      false,
-						StyleName: styleName,
-					}})
-				styleName = "" // Reset class attribute
-				continue
-			}
-
-			// Check if the HTML content is an allowed inline element
-			stuffs := allowdInlineElmReg.FindStringSubmatch(htmlContent)
-			isAllowed := len(stuffs) == 2
-			if !isAllowed {
-				styleName = "" // Reset class attribute for disallowed elements
-				continue       // Skip disallowed inline HTML elements
-			}
-
-			// Extract class attribute if present
-			matches := classRe.FindStringSubmatch(htmlContent)
-			if len(matches) > 1 {
-				if matches[1] != "" {
-					styleName = matches[1] // For double quotes
-				} else if len(matches) > 2 && matches[2] != "" {
-					styleName = matches[2] // For single quotes
-				}
-			} else {
-				styleName = stuffs[1] // Use the matched element name as style name
-			}
-		case *ast.CodeSpan:
-			children, childImages, err := toFragments(baseDir, b, childNode, seedFragment)
-			if err != nil {
-				return nil, nil, err
-			}
-			frags = append(frags, &fragment{
-				SoftLineBreak: children[0].SoftLineBreak,
-				Fragment: &slidown.Fragment{
-					Value:     children[0].Value,
-					Link:      children[0].Link,
-					Bold:      children[0].Bold,
-					Italic:    children[0].Italic,
-					Code:      true,
-					StyleName: styleName,
-				}})
-			images = append(images, childImages...)
-		case *east.Strikethrough:
-			children, childImages, err := toFragments(baseDir, b, childNode, seedFragment)
-			if err != nil {
-				return nil, nil, err
-			}
-			frags = append(frags, &fragment{
-				SoftLineBreak: children[0].SoftLineBreak,
-				// Previously, Bold, Italic, and Code were used as flags to control styles. However, to ensure
-				// consistency with raw HTML tags, we will now simply assign StyleName instead of adding new flag fields.
-				Fragment: &slidown.Fragment{
-					Value:  children[0].Value,
-					Link:   children[0].Link,
-					Bold:   children[0].Bold,
-					Italic: children[0].Italic,
-					Code:   children[0].Code,
-					// The GFM specification states that Strikethrough corresponds to the `del` tag, not the `s` tag,
-					// and goldmark's implementation follows this. Therefore, the style name should also be `del`.
-					StyleName: slidown.StyleDel,
-				}})
-			images = append(images, childImages...)
-		default:
-			// For all other node types, return a newline to match original behavior
-			frags = append(frags, &fragment{Fragment: &slidown.Fragment{
-				Value: "\n",
-				Bold:  false,
-			}})
+		if err := builder.addNode(c); err != nil {
+			return nil, nil, err
 		}
 	}
-	return frags, images, nil
+	return builder.fragments, builder.images, nil
+}
+
+type fragmentBuilder struct {
+	baseDir      string
+	source       []byte
+	seedFragment slidown.Fragment
+	styleName    string
+	fragments    []*fragment
+	images       []*slidown.Image
+}
+
+func (b *fragmentBuilder) addNode(n ast.Node) error {
+	switch node := n.(type) {
+	case *ast.Emphasis, *ast.Link, *ast.CodeSpan, *east.Strikethrough:
+		return b.addDecoratedNode(node)
+	case *ast.AutoLink:
+		url := string(node.URL(b.source))
+		label := string(node.Label(b.source))
+		b.fragments = append(b.fragments, &fragment{
+			Fragment: &slidown.Fragment{
+				Value:     label,
+				Link:      url,
+				StyleName: b.styleName,
+			}})
+	case *ast.Text:
+		b.addText(node)
+	case *ast.Image:
+		return b.addImage(node)
+	case *ast.RawHTML:
+		b.addInlineHTML(string(node.Segments.Value(b.source)))
+	default:
+		// For all other node types, return a newline to match original behavior.
+		b.fragments = append(b.fragments, &fragment{Fragment: &slidown.Fragment{
+			Value: "\n",
+			Bold:  false,
+		}})
+	}
+	return nil
+}
+
+func (b *fragmentBuilder) addDecoratedNode(n ast.Node) error {
+	// Recursion inherits the seed, but starts with fresh inline HTML style state.
+	children, images, err := toFragments(b.baseDir, b.source, n, b.seedFragment)
+	if err != nil {
+		return err
+	}
+	switch node := n.(type) {
+	case *ast.Link:
+		if len(children) == 0 {
+			for _, image := range images {
+				image.SetLink(string(node.Destination))
+				b.images = append(b.images, image)
+			}
+			return nil
+		}
+	case *ast.CodeSpan, *east.Strikethrough:
+		// These nodes historically consume only their first text fragment.
+		children = []*fragment{children[0]}
+	}
+	for _, child := range children {
+		b.fragments = append(b.fragments, decorateFragment(child, n, b.styleName))
+	}
+	b.images = append(b.images, images...)
+	return nil
+}
+
+func decorateFragment(child *fragment, n ast.Node, styleName string) *fragment {
+	decorated := &fragment{
+		SoftLineBreak: child.SoftLineBreak,
+		Fragment: &slidown.Fragment{
+			Value:     child.Value,
+			Link:      child.Link,
+			Bold:      child.Bold,
+			Italic:    child.Italic,
+			Code:      child.Code,
+			StyleName: styleName,
+		},
+	}
+	switch node := n.(type) {
+	case *ast.Emphasis:
+		decorated.Bold = (node.Level == 2) || child.Bold
+		decorated.Italic = (node.Level == 1) || child.Italic
+	case *ast.Link:
+		decorated.Link = string(node.Destination)
+	case *ast.CodeSpan:
+		decorated.Code = true
+	case *east.Strikethrough:
+		// GFM and goldmark use the `del` tag, not `s`, for strikethrough.
+		decorated.StyleName = slidown.StyleDel
+	}
+	return decorated
+}
+
+func (b *fragmentBuilder) addText(node *ast.Text) {
+	value := node.Segment.Value(b.source)
+	if !node.IsRaw() {
+		value = gutil.UnescapePunctuations(value)
+	}
+	v := string(value)
+	if v == "" {
+		if len(b.fragments) > 0 {
+			b.fragments[len(b.fragments)-1].SoftLineBreak = node.SoftLineBreak()
+		}
+		return
+	}
+	if node.HardLineBreak() {
+		v += "\n"
+	}
+	frag := b.seedFragment
+	frag.Value = v
+	frag.StyleName = b.styleName
+	b.fragments = append(b.fragments, &fragment{
+		SoftLineBreak: node.SoftLineBreak(),
+		Fragment:      &frag,
+	})
+}
+
+func (b *fragmentBuilder) addImage(node *ast.Image) error {
+	imageLink := string(node.Destination)
+	if !strings.Contains(imageLink, "://") && !filepath.IsAbs(imageLink) {
+		imageLink = filepath.Join(b.baseDir, imageLink)
+	}
+	image, err := slidown.NewImageFromMarkdown(imageLink)
+	if err != nil {
+		return err
+	}
+	b.images = append(b.images, image)
+	return nil
+}
+
+func (b *fragmentBuilder) addInlineHTML(htmlContent string) {
+	if !strings.HasPrefix(htmlContent, "<") {
+		b.styleName = ""
+		return
+	}
+	if strings.HasPrefix(htmlContent, "</") && strings.HasSuffix(htmlContent, ">") {
+		b.styleName = ""
+		return
+	}
+	if strings.HasPrefix(htmlContent, "<br") {
+		b.fragments = append(b.fragments, &fragment{
+			Fragment: &slidown.Fragment{
+				Value:     "\n",
+				Bold:      false,
+				StyleName: b.styleName,
+			}})
+		b.styleName = ""
+		return
+	}
+
+	elements := allowdInlineElmReg.FindStringSubmatch(htmlContent)
+	if len(elements) != 2 {
+		b.styleName = ""
+		return
+	}
+	matches := classRe.FindStringSubmatch(htmlContent)
+	if len(matches) > 1 {
+		if matches[1] != "" {
+			b.styleName = matches[1]
+		} else if len(matches) > 2 && matches[2] != "" {
+			b.styleName = matches[2]
+		}
+	} else {
+		b.styleName = elements[1]
+	}
 }
 
 // classRe is a regular expression to extract class attribute from HTML tags.
