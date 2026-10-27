@@ -93,6 +93,107 @@ func TestTemplatePreservesTextStyleInheritance(t *testing.T) {
 	}
 }
 
+func TestTemplatePreservesDefaultStylePictureBullets(t *testing.T) {
+	parts, order, err := readZipPartsFromPath(writeMinimalTemplate(t, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	style := `<p:defaultTextStyle xmlns:s="` + nsRelationships + `">` +
+		`<a:lvl1pPr><a:buBlip><a:blip s:embed='rId1'/></a:buBlip></a:lvl1pPr>` +
+		`<a:lvl2pPr><a:buBlip><a:blip s:embed="rId1"/></a:buBlip></a:lvl2pPr>` +
+		`<a:lvl3pPr><a:buBlip><a:blip s:link="rId900"/></a:buBlip></a:lvl3pPr>` +
+		`</p:defaultTextStyle>`
+	pres := strings.ReplaceAll(string(parts["ppt/presentation.xml"]), `r:id="rId1"`, `r:id="rId7"`)
+	parts["ppt/presentation.xml"] = []byte(strings.Replace(pres, `</p:presentation>`, style+`</p:presentation>`, 1))
+	parts["ppt/_rels/presentation.xml.rels"] = []byte(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+		`<Relationship Id="rId7" Type="` + nsRelationships + `/slideMaster" Target="slideMasters/slideMaster1.xml"/>` +
+		`<Relationship Id="rId1" Type="` + nsRelationships + `/image" Target="/ppt/media/bullet.png"/>` +
+		`<Relationship Id="rId900" Type="` + nsRelationships + `/image" Target="https://example.com/bullet.png?a=1&amp;b=2" TargetMode="External"/>` +
+		`<Relationship Id="rId42" Type="` + nsRelationships + `/image" Target="media/unused.png"/>` +
+		`</Relationships>`)
+	parts["ppt/media/bullet.png"] = []byte("picture-bullet-image")
+	parts["ppt/media/unused.png"] = []byte("unused-image")
+	parts["[Content_Types].xml"] = []byte(strings.Replace(string(parts["[Content_Types].xml"]), `</Types>`,
+		`<Override PartName="/ppt/media/bullet.png" ContentType="image/png"/></Types>`, 1))
+	order = append(order, "ppt/media/bullet.png", "ppt/media/unused.png")
+	data, err := zipFromParts(order, parts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for round := 0; round < 2; round++ {
+		tmpl, err := LoadTemplate(writeTempPPTX(t, data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := samplePresentation()
+		p.Template = tmpl
+		got := writeToParts(t, p)
+		if got["ppt/media/bullet.png"] != "picture-bullet-image" {
+			t.Fatal("lost the image referenced only by the default text style")
+		}
+		if _, ok := got["ppt/media/unused.png"]; ok {
+			t.Error("preserved an image not referenced by the retained design")
+		}
+		if !strings.Contains(got["[Content_Types].xml"], `<Override PartName="/ppt/media/bullet.png" ContentType="image/png"/>`) {
+			t.Error("lost the picture bullet's content type override")
+		}
+		var pres struct {
+			Blips []struct {
+				Embed string `xml:"http://schemas.openxmlformats.org/officeDocument/2006/relationships embed,attr"`
+				Link  string `xml:"http://schemas.openxmlformats.org/officeDocument/2006/relationships link,attr"`
+			} `xml:"defaultTextStyle>lvl1pPr>buBlip>blip"`
+			Second struct {
+				Embed string `xml:"http://schemas.openxmlformats.org/officeDocument/2006/relationships embed,attr"`
+			} `xml:"defaultTextStyle>lvl2pPr>buBlip>blip"`
+			External struct {
+				Link string `xml:"http://schemas.openxmlformats.org/officeDocument/2006/relationships link,attr"`
+			} `xml:"defaultTextStyle>lvl3pPr>buBlip>blip"`
+		}
+		if err := xml.Unmarshal([]byte(got["ppt/presentation.xml"]), &pres); err != nil {
+			t.Fatal(err)
+		}
+		var parsed struct {
+			Items []struct {
+				ID         string `xml:"Id,attr"`
+				Target     string `xml:"Target,attr"`
+				Type       string `xml:"Type,attr"`
+				TargetMode string `xml:"TargetMode,attr"`
+			} `xml:"Relationship"`
+		}
+		if err := xml.Unmarshal([]byte(got["ppt/_rels/presentation.xml.rels"]), &parsed); err != nil {
+			t.Fatal(err)
+		}
+		if len(pres.Blips) != 1 || pres.Blips[0].Embed == "" || pres.Second.Embed != pres.Blips[0].Embed || pres.External.Link == "" {
+			t.Fatalf("lost or inconsistently remapped picture bullet references: %+v", pres)
+		}
+		seen := map[string]bool{}
+		for _, rel := range parsed.Items {
+			if seen[rel.ID] {
+				t.Fatalf("duplicate presentation relationship ID %q", rel.ID)
+			}
+			seen[rel.ID] = true
+			switch rel.ID {
+			case pres.Blips[0].Embed:
+				if rel.Target != "/ppt/media/bullet.png" || rel.Type != nsRelationships+"/image" {
+					t.Errorf("picture bullet points at the wrong relationship: %+v", rel)
+				}
+			case pres.External.Link:
+				if rel.Target != "https://example.com/bullet.png?a=1&b=2" || rel.TargetMode != "External" {
+					t.Errorf("changed external picture bullet relationship: %+v", rel)
+				}
+			}
+		}
+		if !seen[pres.Blips[0].Embed] || !seen[pres.External.Link] {
+			t.Fatal("missing picture bullet relationships")
+		}
+		var buf bytes.Buffer
+		if _, err := p.WriteTo(&buf); err != nil {
+			t.Fatal(err)
+		}
+		data = buf.Bytes()
+	}
+}
+
 // TestContentTypesPreservesTemplateDefaults guards against regressing the bug
 // where templates carrying non-standard media (emf, svg, wdp, ...) produced an
 // output package whose [Content_Types].xml lacked the matching Default entries.

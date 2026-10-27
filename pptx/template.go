@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -55,6 +56,7 @@ type Template struct {
 	// defaultTextStyle is the presentation-wide fallback, including the
 	// namespace declarations inherited from the source presentation root.
 	defaultTextStyle string
+	defaultStyleRels []templateStyleRel
 	// masterGeoms caches each slide master's placeholder geometry keyed by the
 	// master part name then by placeholder idx. Used to resolve geometry that a
 	// layout placeholder inherits from its master rather than declaring itself.
@@ -366,16 +368,6 @@ func LoadTemplate(path string) (*Template, error) {
 		}
 	}
 
-	// Copy only ppt/media/* parts that are actually referenced by the design
-	// .rels files collected above (theme, masters, layouts). Copying the whole
-	// ppt/media tree would accumulate orphaned slide-level media across
-	// incremental rebuilds when an existing output is reused as a template.
-	for media := range referencedDesignMedia(t.designParts) {
-		if data, ok := parts[media]; ok {
-			t.designParts[media] = data
-		}
-	}
-
 	if len(t.masterParts) == 0 {
 		return nil, fmt.Errorf("template %q has no slide master", path)
 	}
@@ -399,6 +391,23 @@ func LoadTemplate(path string) (*Template, error) {
 	if pres, ok := parts["ppt/presentation.xml"]; ok {
 		if err := t.loadPresentation(pres); err != nil {
 			return nil, fmt.Errorf("failed to parse template presentation: %w", err)
+		}
+	}
+	if err := t.loadDefaultStyleRelationships(parts); err != nil {
+		return nil, fmt.Errorf("failed to preserve template default text style: %w", err)
+	}
+
+	// Copy only media referenced by retained design parts, not orphaned
+	// slide-level media from previous builds.
+	for media := range referencedDesignMedia(t.designParts) {
+		if data, ok := parts[media]; ok {
+			t.designParts[media] = data
+		}
+	}
+	for _, o := range types.Overrides {
+		name := strings.TrimPrefix(o.PartName, "/")
+		if _, ok := t.designParts[name]; ok {
+			t.partTypes[name] = o.ContentType
 		}
 	}
 
@@ -455,6 +464,106 @@ func (t *Template) loadPresentation(data []byte) error {
 			}
 		}
 	}
+}
+
+type templateStyleRel struct {
+	ID         string `xml:"Id,attr"`
+	Type       string `xml:"Type,attr"`
+	Target     string `xml:"Target,attr"`
+	TargetMode string `xml:"TargetMode,attr"`
+}
+
+var styleAttrValueRE = regexp.MustCompile(`\s+[^\s=]+\s*=\s*("[^"]*"|'[^']*')`)
+
+func (t *Template) loadDefaultStyleRelationships(parts map[string][]byte) error {
+	if t.defaultTextStyle == "" {
+		return nil
+	}
+	var source struct {
+		Items []templateStyleRel `xml:"Relationship"`
+	}
+	if data := parts["ppt/_rels/presentation.xml.rels"]; len(data) > 0 {
+		if err := xml.Unmarshal(data, &source); err != nil {
+			return err
+		}
+	}
+	byID := make(map[string]templateStyleRel, len(source.Items))
+	for _, rel := range source.Items {
+		byID[rel.ID] = rel
+	}
+	remapped := map[string]string{}
+	var out strings.Builder
+	pos := 0
+	dec := xml.NewDecoder(strings.NewReader(t.defaultTextStyle))
+	for {
+		start := int(dec.InputOffset())
+		tok, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		elem, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		attrs := styleAttrValueRE.FindAllStringSubmatchIndex(t.defaultTextStyle[start:int(dec.InputOffset())], -1)
+		for i, attr := range elem.Attr {
+			if attr.Name.Space != nsRelationships {
+				continue
+			}
+			id, ok := remapped[attr.Value]
+			if !ok {
+				rel, found := byID[attr.Value]
+				if !found {
+					return fmt.Errorf("missing relationship %q", attr.Value)
+				}
+				id = fmt.Sprintf("rIdDefaultStyle%d", len(t.defaultStyleRels)+1)
+				rel.ID = id
+				t.defaultStyleRels = append(t.defaultStyleRels, rel)
+				remapped[attr.Value] = id
+			}
+			// Match raw attributes in decoder order to preserve prefixes,
+			// quoting and all XML unrelated to the relationship value.
+			valueStart, valueEnd := start+attrs[i][2]+1, start+attrs[i][3]-1
+			out.WriteString(t.defaultTextStyle[pos:valueStart])
+			out.WriteString(id)
+			pos = valueEnd
+		}
+	}
+	out.WriteString(t.defaultTextStyle[pos:])
+	t.defaultTextStyle = out.String()
+
+	var pending []string
+	for _, rel := range t.defaultStyleRels {
+		if !strings.EqualFold(rel.TargetMode, "External") {
+			pending = append(pending, relationshipTargetPart("ppt", rel.Target))
+		}
+	}
+	for len(pending) > 0 {
+		name := pending[0]
+		pending = pending[1:]
+		if _, ok := t.designParts[name]; ok {
+			continue
+		}
+		if _, ok := parts[name]; !ok {
+			return fmt.Errorf("missing related part %q", name)
+		}
+		t.copyPart(parts, name)
+		t.copyRels(parts, name)
+		for _, target := range relTargets(parts[relsPath(name)]) {
+			pending = append(pending, relationshipTargetPart(path.Dir(name), target))
+		}
+	}
+	return nil
+}
+
+func relationshipTargetPart(base, target string) string {
+	if strings.HasPrefix(target, "/") {
+		return strings.TrimPrefix(path.Clean(target), "/")
+	}
+	return path.Clean(path.Join(base, target))
 }
 
 func (t *Template) copyPart(parts map[string][]byte, name string) {
