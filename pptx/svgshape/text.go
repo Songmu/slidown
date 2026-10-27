@@ -145,73 +145,13 @@ func (c *conv) text(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 	return true
 }
 func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]*pptx.Run, bool) {
-	var runs []*pptx.Run
-	// A skipped invisible (fill:none / hidden) run still advances the text
-	// position in SVG. We can't reproduce that advance, so once a non-empty
-	// invisible run appears, fall back if any later run is visible.
-	pendingInvisible := false
-	emit := func(txt, col string, fpt float64, fam string) bool {
-		if txt == "" {
-			return true
-		}
-		if col == "" {
-			// A whitespace-only invisible run still advances the SVG text
-			// position, so treat any non-empty invisible run as pending; a
-			// later visible run then triggers the native-image fallback.
-			pendingInvisible = true
-			return true
-		}
-		if pendingInvisible {
-			return false
-		}
-		if txt != "" {
-			runs = append(runs, &pptx.Run{Text: txt, FontSize: fpt, Color: col, FontFamily: fam, FontAllScripts: fam != ""})
-		}
-		return true
-	}
-	if !emit(collapseSpace(n.Text), color, pt, family) {
+	var stream textRunStream
+	if !stream.emit(collapseSpace(n.Text), color, pt, family) {
 		return nil, false
 	}
 	for _, ch := range n.Children {
-		// Names were lowercased during parsing, so a foreign-namespace or
-		// wrong-case child could match "tspan"; such non-SVG elements can't be
-		// faithfully placed, so fall back.
-		if ch.foreign || ch.badCase {
-			return nil, false
-		}
-		if ch.Name == "textpath" {
-			return nil, false
-		}
-		if ch.Name != "tspan" {
-			return nil, false
-		}
-		// Mixed content whose character data follows a child element loses
-		// document order once flattened (e.g. <text>A<tspan>B</tspan>C</text>
-		// would emit A,C,B); reject it rather than reorder.
-		if ch.textAfterChild || n.textAfterChild {
-			return nil, false
-		}
-		// Positioned or nested tspans (x/y/dx/dy/rotate, or child elements)
-		// change layout in ways not modeled here; fall back.
-		for _, a := range []string{"x", "y", "dx", "dy", "rotate"} {
-			if ch.Attrs[a] != "" {
-				return nil, false
-			}
-		}
-		if len(ch.Children) > 0 {
-			return nil, false
-		}
-		// Validate the tspan's attributes the same way as any element so an
-		// unsupported presentation attribute (e.g. font-weight) forces fallback.
-		if hasUnsupportedAttrs(ch) {
-			return nil, false
-		}
-		child, ok := c.resolveStyle(ch, st)
+		child, ok := c.tspanStyle(ch, n, st)
 		if !ok {
-			return nil, false
-		}
-		// xml:space="preserve" (inherited) changes whitespace handling.
-		if strings.EqualFold(child.get("xml:space"), "preserve") {
 			return nil, false
 		}
 		// display:none removes the run from layout entirely (no advance), so it
@@ -224,59 +164,135 @@ func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]
 		// later visible run can't be faithfully placed, so mark it pending.
 		if visibilityHidden(child) {
 			if collapseSpace(ch.Text) != "" {
-				pendingInvisible = true
+				stream.pendingInvisible = true
 			}
 			continue
 		}
-		// Glyph strokes on a tspan can't be represented; fall back.
-		if sv := resolvePaint(child, child.get("stroke")); sv != "none" && sv != "" {
-			return nil, false
-		}
-		cpt := pt
-		if fs := child.get("font-size"); fs != "" {
-			f, ok := parseLength(fs, false)
-			if !ok || f <= 0 {
-				// Non-positive font size is invalid; fall back.
-				return nil, false
-			}
-			cpt = f * 0.75
-			if cpt < minFontPt || cpt > maxFontPt {
-				// Outside the DrawingML a:rPr@sz range; fall back.
-				return nil, false
-			}
-		}
-		// Runs carry no alpha, so a translucent tspan can't be represented:
-		// fall back for the whole SVG.
-		cop, ok := parseUnit(child.get("opacity"), 1)
-		if !ok {
-			return nil, false
-		}
-		cfo, ok := parseUnit(child.get("fill-opacity"), 1)
-		if !ok {
-			return nil, false
-		}
-		if cop*cfo < 1 {
-			return nil, false
-		}
-		col := color
-		fillVal := resolvePaint(child, child.get("fill"))
-		if fillVal == "none" {
-			col = ""
-		} else if fillVal != "" {
-			var ok bool
-			col, ok = parseColor(fillVal)
-			if !ok {
-				return nil, false
-			}
-		}
-		fam := family
-		if ff := firstFamily(child.get("font-family")); ff != "" {
-			fam = ff
-		}
-		if !emit(collapseSpace(ch.Text), col, cpt, fam) {
+		run, ok := tspanRun(ch, child, pt, color, family)
+		if !ok || !stream.emit(run.Text, run.Color, run.FontSize, run.FontFamily) {
 			return nil, false
 		}
 	}
+	return normalizeTextRuns(stream.runs), true
+}
+
+type textRunStream struct {
+	runs []*pptx.Run
+	// A skipped invisible (fill:none / hidden) run still advances the text
+	// position in SVG. We can't reproduce that advance, so once a non-empty
+	// invisible run appears, fall back if any later run is visible.
+	pendingInvisible bool
+}
+
+func (s *textRunStream) emit(txt, col string, pt float64, family string) bool {
+	if txt == "" {
+		return true
+	}
+	if col == "" {
+		// A whitespace-only invisible run still advances the SVG text
+		// position, so treat any non-empty invisible run as pending; a
+		// later visible run then triggers the native-image fallback.
+		s.pendingInvisible = true
+		return true
+	}
+	if s.pendingInvisible {
+		return false
+	}
+	s.runs = append(s.runs, &pptx.Run{Text: txt, FontSize: pt, Color: col, FontFamily: family, FontAllScripts: family != ""})
+	return true
+}
+
+func (c *conv) tspanStyle(ch, parent *node, st style) (style, bool) {
+	// Names were lowercased during parsing, so a foreign-namespace or
+	// wrong-case child could match "tspan"; such non-SVG elements can't be
+	// faithfully placed, so fall back.
+	if ch.foreign || ch.badCase {
+		return nil, false
+	}
+	if ch.Name == "textpath" {
+		return nil, false
+	}
+	if ch.Name != "tspan" {
+		return nil, false
+	}
+	// Mixed content whose character data follows a child element loses
+	// document order once flattened (e.g. <text>A<tspan>B</tspan>C</text>
+	// would emit A,C,B); reject it rather than reorder.
+	if ch.textAfterChild || parent.textAfterChild {
+		return nil, false
+	}
+	// Positioned or nested tspans (x/y/dx/dy/rotate, or child elements)
+	// change layout in ways not modeled here; fall back.
+	for _, a := range []string{"x", "y", "dx", "dy", "rotate"} {
+		if ch.Attrs[a] != "" {
+			return nil, false
+		}
+	}
+	if len(ch.Children) > 0 {
+		return nil, false
+	}
+	// Validate the tspan's attributes the same way as any element so an
+	// unsupported presentation attribute (e.g. font-weight) forces fallback.
+	if hasUnsupportedAttrs(ch) {
+		return nil, false
+	}
+	child, ok := c.resolveStyle(ch, st)
+	if !ok {
+		return nil, false
+	}
+	// xml:space="preserve" (inherited) changes whitespace handling.
+	if strings.EqualFold(child.get("xml:space"), "preserve") {
+		return nil, false
+	}
+	return child, true
+}
+
+func tspanRun(n *node, st style, pt float64, color, family string) (pptx.Run, bool) {
+	// Glyph strokes on a tspan can't be represented; fall back.
+	if sv := resolvePaint(st, st.get("stroke")); sv != "none" && sv != "" {
+		return pptx.Run{}, false
+	}
+	if fs := st.get("font-size"); fs != "" {
+		f, ok := parseLength(fs, false)
+		if !ok || f <= 0 {
+			// Non-positive font size is invalid; fall back.
+			return pptx.Run{}, false
+		}
+		pt = f * 0.75
+		if pt < minFontPt || pt > maxFontPt {
+			// Outside the DrawingML a:rPr@sz range; fall back.
+			return pptx.Run{}, false
+		}
+	}
+	// Runs carry no alpha, so a translucent tspan can't be represented:
+	// fall back for the whole SVG.
+	op, ok := parseUnit(st.get("opacity"), 1)
+	if !ok {
+		return pptx.Run{}, false
+	}
+	fo, ok := parseUnit(st.get("fill-opacity"), 1)
+	if !ok {
+		return pptx.Run{}, false
+	}
+	if op*fo < 1 {
+		return pptx.Run{}, false
+	}
+	fillVal := resolvePaint(st, st.get("fill"))
+	if fillVal == "none" {
+		color = ""
+	} else if fillVal != "" {
+		color, ok = parseColor(fillVal)
+		if !ok {
+			return pptx.Run{}, false
+		}
+	}
+	if ff := firstFamily(st.get("font-family")); ff != "" {
+		family = ff
+	}
+	return pptx.Run{Text: collapseSpace(n.Text), Color: color, FontSize: pt, FontFamily: family}, true
+}
+
+func normalizeTextRuns(runs []*pptx.Run) []*pptx.Run {
 	// Collapse whitespace across run boundaries so a trailing space on one run
 	// plus a leading space on the next don't become a double space.
 	for i := 0; i+1 < len(runs); i++ {
@@ -303,7 +319,7 @@ func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]
 		}
 		kept = append(kept, r)
 	}
-	return kept, true
+	return kept
 }
 
 // collapseSpace collapses runs of XML whitespace to a single space without
