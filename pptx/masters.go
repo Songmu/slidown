@@ -94,13 +94,14 @@ func slideMaster1() string {
 		`</p:sldMaster>`
 }
 
-// bodyStyleLevels emits nine indentation levels for the body text style.
+// bodyStyleLevels uses the traditional Office theme's list indentation.
 func bodyStyleLevels() string {
-	indents := []int{0, 457200, 914400, 1371600, 1828800, 2286000, 2743200, 3200400, 3657600}
+	margins := []int{342900, 742950, 1143000, 1600200, 2057400, 2514600, 2971800, 3429000, 3886200}
+	indents := []int{-342900, -285750, -228600, -228600, -228600, -228600, -228600, -228600, -228600}
 	sizes := []int{2800, 2400, 2000, 1800, 1800, 1800, 1800, 1800, 1800}
 	var out string
 	for i := 0; i < 9; i++ {
-		out += `<a:lvl` + itoa(i+1) + `pPr marL="` + itoa(indents[i]) + `" indent="-285750" algn="l" defTabSz="914400" rtl="0" eaLnBrk="1" latinLnBrk="0" hangingPunct="1">` +
+		out += `<a:lvl` + itoa(i+1) + `pPr marL="` + itoa(margins[i]) + `" indent="` + itoa(indents[i]) + `" algn="l" defTabSz="914400" rtl="0" eaLnBrk="1" latinLnBrk="0" hangingPunct="1">` +
 			`<a:spcBef><a:spcPct val="20000"/></a:spcBef>` +
 			`<a:buFont typeface="Noto Sans" panose="020B0604020202020204" pitchFamily="34" charset="0"/>` +
 			`<a:buChar char="&#8226;"/>` +

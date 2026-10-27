@@ -374,9 +374,8 @@ func appendShapesToSpTree(slideXML, shapes []byte) ([]byte, bool) {
 	return out.Bytes(), true
 }
 
-// unionRootNamespaces injects into the slide root any xmlns declaration present
-// on the existing slide root but missing on the new slide root, so namespaces
-// referenced inside a spliced existing shape remain declared.
+// unionRootNamespaces adds missing namespace declarations to an XML root so
+// raw elements copied from another document keep their namespace bindings.
 func unionRootNamespaces(slideXML []byte, newRoot, oldRoot []xml.Attr) []byte {
 	have := map[string]bool{}
 	for _, a := range newRoot {
@@ -417,6 +416,9 @@ func unionRootNamespaces(slideXML []byte, newRoot, oldRoot []xml.Attr) []byte {
 			return slideXML
 		}
 		idx = idx + 1 + next
+	}
+	if idx > 0 && slideXML[idx-1] == '/' {
+		idx--
 	}
 	var out bytes.Buffer
 	out.Write(slideXML[:idx])

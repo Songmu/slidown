@@ -144,6 +144,7 @@ func (t *Template) presentationXML(width, height int64, slideCount int, hasNotes
 	}
 	b.WriteString(`</p:sldIdLst>`)
 	b.WriteString(fmt.Sprintf(`<p:sldSz cx="%d" cy="%d"/><p:notesSz cx="6858000" cy="9144000"/>`, width, height))
+	b.WriteString(t.defaultTextStyle)
 	b.WriteString(`</p:presentation>`)
 	return b.String()
 }
@@ -189,6 +190,14 @@ func (t *Template) presentationRelsXML(slideCount int, hasNotes bool) string {
 	}
 	if t.handoutMasterPart != "" {
 		b.WriteString(fmt.Sprintf(`<Relationship Id="rId903" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/handoutMaster" Target="%s"/>`, strings.TrimPrefix(t.handoutMasterPart, "ppt/")))
+	}
+	for _, rel := range t.defaultStyleRels {
+		var mode string
+		if rel.TargetMode != "" {
+			mode = ` TargetMode="` + escapeXML(rel.TargetMode) + `"`
+		}
+		b.WriteString(fmt.Sprintf(`<Relationship Id="%s" Type="%s" Target="%s"%s/>`,
+			escapeXML(rel.ID), escapeXML(rel.Type), escapeXML(rel.Target), mode))
 	}
 	b.WriteString(`</Relationships>`)
 	return b.String()
