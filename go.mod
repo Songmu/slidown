@@ -2,6 +2,8 @@ module github.com/Songmu/slidown
 
 go 1.26.0
 
+toolchain go1.27.3
+
 require (
 	github.com/corona10/goimagehash v1.1.0
 	github.com/fswatcher/fswatcher v0.1.1-0.20260620132924-abd043702c24
