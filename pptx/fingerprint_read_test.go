@@ -1,13 +1,14 @@
 package pptx
 
 import (
-	"archive/zip"
 	"bytes"
 	"encoding/xml"
 	"fmt"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/Songmu/slidown/internal/testutil"
 )
 
 func TestReadSlideMetasFollowsPresentationSlideOrder(t *testing.T) {
@@ -41,27 +42,9 @@ func TestReadSlideMetasFollowsPresentationSlideOrder(t *testing.T) {
 
 func reorderPresentationOrder(t *testing.T, in []byte) []byte {
 	t.Helper()
-	parts, order, err := readZipPartsFromBytes(in)
-	if err != nil {
-		t.Fatalf("readZipPartsFromBytes: %v", err)
-	}
+	parts, order := testutil.ReadZIP(t, in)
 	parts["ppt/presentation.xml"] = reorderPresentationXMLForTest(t, parts["ppt/presentation.xml"])
-
-	var out bytes.Buffer
-	zw := zip.NewWriter(&out)
-	for _, name := range order {
-		fw, err := zw.Create(name)
-		if err != nil {
-			t.Fatalf("zip create %s: %v", name, err)
-		}
-		if _, err := fw.Write(parts[name]); err != nil {
-			t.Fatalf("zip write %s: %v", name, err)
-		}
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatalf("zip close: %v", err)
-	}
-	return out.Bytes()
+	return testutil.WriteZIP(t, parts, order)
 }
 
 func reorderPresentationXMLForTest(t *testing.T, presentationXML []byte) []byte {

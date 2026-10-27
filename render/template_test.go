@@ -1,17 +1,14 @@
 package render
 
 import (
-	"archive/zip"
 	"bytes"
-	"context"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Songmu/slidown"
-	"github.com/Songmu/slidown/md"
+	"github.com/Songmu/slidown/internal/testutil"
 	"github.com/Songmu/slidown/pptx"
 )
 
@@ -19,14 +16,7 @@ import (
 // path, to be reused as a template in tests.
 func buildTemplateFile(t *testing.T) string {
 	t.Helper()
-	parsed, err := md.Parse("", []byte("# Base\n\n- x\n"), nil)
-	if err != nil {
-		t.Fatalf("md.Parse: %v", err)
-	}
-	slides, err := parsed.ToSlides(context.Background(), "")
-	if err != nil {
-		t.Fatalf("ToSlides: %v", err)
-	}
+	slides := markdownSlides(t, "# Base\n\n- x\n")
 	dir := t.TempDir()
 	path := filepath.Join(dir, "template.pptx")
 	if err := ToPresentation(slides).WriteFile(path); err != nil {
@@ -45,30 +35,13 @@ func TestToPresentationWithTemplate(t *testing.T) {
 		t.Fatalf("template has no layouts")
 	}
 
-	parsed, err := md.Parse("", []byte("# Title\n\n## Sub\n\n- a\n- **b**\n"), nil)
-	if err != nil {
-		t.Fatalf("md.Parse: %v", err)
-	}
-	slides, err := parsed.ToSlides(context.Background(), "")
-	if err != nil {
-		t.Fatalf("ToSlides: %v", err)
-	}
+	slides := markdownSlides(t, "# Title\n\n## Sub\n\n- a\n- **b**\n")
 
 	var buf bytes.Buffer
 	if _, err := ToPresentationWithTemplate(slides, tmpl).WriteTo(&buf); err != nil {
 		t.Fatalf("WriteTo: %v", err)
 	}
-	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
-	if err != nil {
-		t.Fatalf("invalid zip: %v", err)
-	}
-	parts := map[string]string{}
-	for _, f := range zr.File {
-		rc, _ := f.Open()
-		b, _ := io.ReadAll(rc)
-		rc.Close()
-		parts[f.Name] = string(b)
-	}
+	parts := testutil.ReadZIPStrings(t, buf.Bytes())
 
 	// Template design parts must be carried over.
 	for _, name := range []string{
@@ -116,14 +89,7 @@ func TestExternalTemplateFixture(t *testing.T) {
 		t.Fatalf("external template has no layouts")
 	}
 
-	parsed, err := md.Parse("", []byte("# External Title\n\n## External Sub\n\n- one\n- two\n"), nil)
-	if err != nil {
-		t.Fatalf("md.Parse: %v", err)
-	}
-	slides, err := parsed.ToSlides(context.Background(), "")
-	if err != nil {
-		t.Fatalf("ToSlides: %v", err)
-	}
+	slides := markdownSlides(t, "# External Title\n\n## External Sub\n\n- one\n- two\n")
 
 	var buf bytes.Buffer
 	if _, err := ToPresentationWithTemplate(slides, tmpl).WriteTo(&buf); err != nil {
@@ -157,20 +123,7 @@ func TestExternalTemplateFixture(t *testing.T) {
 
 func zipParts(t *testing.T, data []byte) map[string][]byte {
 	t.Helper()
-	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
-	if err != nil {
-		t.Fatalf("zip.NewReader: %v", err)
-	}
-	parts := map[string][]byte{}
-	for _, f := range zr.File {
-		rc, err := f.Open()
-		if err != nil {
-			t.Fatalf("open %s: %v", f.Name, err)
-		}
-		b, _ := io.ReadAll(rc)
-		rc.Close()
-		parts[f.Name] = b
-	}
+	parts, _ := testutil.ReadZIP(t, data)
 	return parts
 }
 
@@ -207,14 +160,7 @@ func TestMultiBodyPlaceholderDistribution(t *testing.T) {
 	})
 
 	const markdown = "# Title\n\nLeft column\n\n- - -\n\nRight column\n"
-	parsed, err := md.Parse("", []byte(markdown), nil)
-	if err != nil {
-		t.Fatalf("md.Parse: %v", err)
-	}
-	slides, err := parsed.ToSlides(context.Background(), "")
-	if err != nil {
-		t.Fatalf("ToSlides: %v", err)
-	}
+	slides := markdownSlides(t, markdown)
 	if len(slides) != 1 {
 		t.Fatalf("expected 1 slide, got %d", len(slides))
 	}
@@ -304,14 +250,7 @@ func TestMultiBodyPlaceholderOrderedByPosition(t *testing.T) {
 	)
 
 	const markdown = "# Title\n\nTop content\n\n- - -\n\nBottom content\n"
-	parsed, err := md.Parse("", []byte(markdown), nil)
-	if err != nil {
-		t.Fatalf("md.Parse: %v", err)
-	}
-	slides, err := parsed.ToSlides(context.Background(), "")
-	if err != nil {
-		t.Fatalf("ToSlides: %v", err)
-	}
+	slides := markdownSlides(t, markdown)
 
 	var buf bytes.Buffer
 	if _, err := ToPresentationWithTemplate(slides, tmpl).WriteTo(&buf); err != nil {
@@ -378,14 +317,7 @@ func TestMultipleSubtitleSlotDistribution(t *testing.T) {
 	)
 
 	const markdown = "# Title\n\n## First Sub\n\n## Second Sub\n\n## Third Sub\n\nbody text\n"
-	parsed, err := md.Parse("", []byte(markdown), nil)
-	if err != nil {
-		t.Fatalf("md.Parse: %v", err)
-	}
-	slides, err := parsed.ToSlides(context.Background(), "")
-	if err != nil {
-		t.Fatalf("ToSlides: %v", err)
-	}
+	slides := markdownSlides(t, markdown)
 
 	var buf bytes.Buffer
 	if _, err := ToPresentationWithTemplate(slides, tmpl).WriteTo(&buf); err != nil {
@@ -497,14 +429,7 @@ func TestToPresentationWithTemplateLeadingIgnoredSlide(t *testing.T) {
 		"---\n\n# Ignored Two\n\n<!-- {\"ignore\": true} -->\n\n" +
 		"---\n\n# Real Title\n\n---\n\n# Second\n"
 
-	parsed, err := md.Parse("", []byte(markdown), nil)
-	if err != nil {
-		t.Fatalf("md.Parse: %v", err)
-	}
-	slides, err := parsed.ToSlides(context.Background(), "")
-	if err != nil {
-		t.Fatalf("ToSlides: %v", err)
-	}
+	slides := markdownSlides(t, markdown)
 	// Both leading ignored pages are dropped at parse time.
 	if got, want := len(slides), 2; got != want {
 		t.Fatalf("slide count after parse = %d, want %d (leading ignores dropped)", got, want)

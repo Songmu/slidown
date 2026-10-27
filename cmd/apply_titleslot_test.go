@@ -1,12 +1,12 @@
 package cmd
 
 import (
-	"archive/zip"
-	"io"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/Songmu/slidown/internal/testutil"
 )
 
 // layoutNameByTitleForTest returns a map from each slide's first text run (used
@@ -16,24 +16,7 @@ import (
 // package, so tests must compare resolved layout names, not part paths.
 func layoutNameByTitleForTest(t *testing.T, path string) map[string]string {
 	t.Helper()
-	zr, err := zip.OpenReader(path)
-	if err != nil {
-		t.Fatalf("zip.OpenReader: %v", err)
-	}
-	defer zr.Close()
-	parts := map[string]string{}
-	for _, f := range zr.File {
-		rc, err := f.Open()
-		if err != nil {
-			t.Fatalf("open %s: %v", f.Name, err)
-		}
-		b, err := io.ReadAll(rc)
-		rc.Close()
-		if err != nil {
-			t.Fatalf("read %s: %v", f.Name, err)
-		}
-		parts[f.Name] = string(b)
-	}
+	parts := testutil.ReadZIPStrings(t, mustReadFileForTest(t, path))
 	nameRe := regexp.MustCompile(`<p:cSld name="([^"]*)"`)
 	textRe := regexp.MustCompile(`<a:t>([^<]*)</a:t>`)
 	out := map[string]string{}

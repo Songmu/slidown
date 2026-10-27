@@ -1,7 +1,6 @@
 package pptx
 
 import (
-	"archive/zip"
 	"bytes"
 	"encoding/xml"
 	"io"
@@ -134,19 +133,7 @@ func TestPresentationTitleMetadata(t *testing.T) {
 			if _, err := p.WriteTo(&buf); err != nil {
 				t.Fatalf("WriteTo: %v", err)
 			}
-			zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
-			if err != nil {
-				t.Fatalf("zip: %v", err)
-			}
-			var core string
-			for _, f := range zr.File {
-				if f.Name == "docProps/core.xml" {
-					rc, _ := f.Open()
-					b, _ := io.ReadAll(rc)
-					rc.Close()
-					core = string(b)
-				}
-			}
+			core := unzipToStringMap(t, buf.Bytes())["docProps/core.xml"]
 			if !strings.Contains(core, tc.want) {
 				t.Errorf("core.xml missing %q\ngot: %s", tc.want, core)
 			}

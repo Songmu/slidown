@@ -347,286 +347,6 @@ func TestClipPathAndMaskAttrsFallback(t *testing.T) {
 	}
 }
 
-func TestReviewBatchFallbacks(t *testing.T) {
-	// Leaf element opacity still applies (multiplied into fill alpha).
-	g := mustConvert(t, `<svg viewBox="0 0 10 10"><rect width="10" height="10" fill="red" opacity="0.5"/></svg>`)
-	if a := g.Geoms[0].Fill.Alpha; a < 0.49 || a > 0.51 {
-		t.Fatalf("leaf opacity should apply, got alpha=%v", a)
-	}
-	// CSS display:none must hide the matched element (resolved style, not just attrs).
-	g = mustConvert(t, `<svg viewBox="0 0 10 10"><style>.h{display:none}</style>`+
-		`<rect class="h" width="1" height="1" fill="red"/><rect width="1" height="1" fill="green"/></svg>`)
-	if len(g.Geoms) != 1 || g.Geoms[0].Fill.Color != "008000" {
-		t.Fatalf("CSS display:none should hide element, got %#v", g.Geoms)
-	}
-	for name, svg := range map[string]string{
-		"group opacity":       `<svg viewBox="0 0 10 10"><g opacity="0.5"><rect width="1" height="1" fill="red"/></g></svg>`,
-		"unsupported css":     `<svg viewBox="0 0 10 10"><rect width="1" height="1" style="mix-blend-mode:multiply"/></svg>`,
-		"dash array":          `<svg viewBox="0 0 10 10"><rect width="1" height="1" fill="none" stroke="black" stroke-width="1" stroke-dasharray="1 2"/></svg>`,
-		"radial geometry":     `<svg viewBox="0 0 10 10"><defs><radialGradient id="g" cx="0" cy="0" r="50%"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></radialGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`,
-		"use width":           `<svg viewBox="0 0 10 10"><defs><rect id="r" width="2" height="2"/></defs><use href="#r" width="5" height="5"/></svg>`,
-		"symbol viewbox":      `<svg viewBox="0 0 10 10"><defs><symbol id="s" viewBox="0 0 4 4"><rect width="4" height="4"/></symbol></defs><use href="#s"/></svg>`,
-		"text scale":          `<svg viewBox="0 0 100 100"><text x="1" y="1" transform="scale(2)" fill="red" font-size="10">Hi</text></svg>`,
-		"mixed text ordering": `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10">A<tspan>B</tspan>C</text></svg>`,
-	} {
-		if _, ok := Convert([]byte(svg)); ok {
-			t.Errorf("%s: expected fallback (ok=false)", name)
-		}
-	}
-}
-
-func TestReviewBatch2(t *testing.T) {
-	// Nested <svg> is rejected (own viewport unmodeled).
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><svg width="5" height="5"><rect width="1" height="1"/></svg></svg>`)); ok {
-		t.Error("nested svg should fall back")
-	}
-	// viewBox + mismatched width/height aspect ratio -> fallback (letterboxing).
-	if _, ok := Convert([]byte(`<svg width="200" height="100" viewBox="0 0 100 100"><rect width="1" height="1"/></svg>`)); ok {
-		t.Error("viewBox+aspect mismatch should fall back")
-	}
-	// Non-default preserveAspectRatio -> fallback.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10" preserveAspectRatio="none"><rect width="1" height="1"/></svg>`)); ok {
-		t.Error("preserveAspectRatio none should fall back")
-	}
-	// visibility:hidden container with a visible descendant keeps the child.
-	g := mustConvert(t, `<svg viewBox="0 0 10 10"><g visibility="hidden"><rect width="1" height="1" fill="red" visibility="visible"/></g></svg>`)
-	if len(g.Geoms) != 1 || g.Geoms[0].Fill.Color != "ff0000" {
-		t.Fatalf("visibility override lost: %#v", g.Geoms)
-	}
-	// visibility:hidden leaf with no override is skipped.
-	g = mustConvert(t, `<svg viewBox="0 0 10 10"><rect width="1" height="1" visibility="hidden"/><rect width="1" height="1" fill="green"/></svg>`)
-	if len(g.Geoms) != 1 || g.Geoms[0].Fill.Color != "008000" {
-		t.Fatalf("visibility hidden leaf not skipped: %#v", g.Geoms)
-	}
-	// Fractional linear-gradient vector -> fallback; full-box vector converts.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><defs><linearGradient id="g" x1="0.5" x2="1"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)); ok {
-		t.Error("partial linear gradient vector should fall back")
-	}
-	// Single-stop gradient is expanded to two stops (valid OOXML).
-	g = mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="g"><stop offset="0" stop-color="red"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)
-	if gr := g.Geoms[0].Fill.Gradient; gr == nil || len(gr.Stops) != 2 {
-		t.Fatalf("single stop should expand to two: %#v", g.Geoms[0].Fill.Gradient)
-	}
-	// Non-uniform scale on a stroked shape -> fallback.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect width="2" height="2" fill="none" stroke="black" stroke-width="1" transform="scale(4,1)"/></svg>`)); ok {
-		t.Error("non-uniform scaled stroke should fall back")
-	}
-	// CSS class selector is case-sensitive: .Hot must not match class="hot".
-	g = mustConvert(t, `<svg viewBox="0 0 10 10"><style>.Hot{fill:#00f}</style><rect class="hot" width="1" height="1" fill="green"/></svg>`)
-	if g.Geoms[0].Fill.Color != "008000" {
-		t.Fatalf(".Hot should not match class=hot, got %s", g.Geoms[0].Fill.Color)
-	}
-	// Converted SVG text carries zero insets and preserves document order.
-	g = mustConvert(t, `<svg viewBox="0 0 100 100"><rect width="1" height="1" fill="red"/><text x="1" y="20" fill="blue" font-size="10">Hi</text></svg>`)
-	if len(g.Children) != 2 || g.Children[0].Geom == nil || g.Children[1].Text == nil {
-		t.Fatalf("expected ordered geom then text children: %#v", g.Children)
-	}
-	if !g.Children[1].Text.NoInset {
-		t.Error("svg text should use zero insets")
-	}
-}
-
-func TestReviewBatch3(t *testing.T) {
-	// Standalone <symbol> renders nothing; via <use> it renders.
-	g := mustConvert(t, `<svg viewBox="0 0 10 10"><symbol id="s"><rect width="1" height="1" fill="red"/></symbol></svg>`)
-	if len(g.Geoms) != 0 {
-		t.Fatalf("standalone symbol should render nothing, got %d", len(g.Geoms))
-	}
-	g = mustConvert(t, `<svg viewBox="0 0 10 10"><defs><symbol id="s"><rect width="1" height="1" fill="red"/></symbol></defs><use href="#s"/></svg>`)
-	if len(g.Geoms) != 1 {
-		t.Fatalf("symbol via use should render, got %d", len(g.Geoms))
-	}
-	// display:none on the root renders nothing.
-	g = mustConvert(t, `<svg viewBox="0 0 10 10" display="none"><rect width="1" height="1" fill="red"/></svg>`)
-	if len(g.Geoms) != 0 {
-		t.Fatalf("root display:none should render nothing, got %d", len(g.Geoms))
-	}
-	// A gradient-filled rect not covering the canvas gets tight bounds.
-	g = mustConvert(t, `<svg viewBox="0 0 100 100"><defs><linearGradient id="lg"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect x="40" y="40" width="20" height="20" fill="url(#lg)"/></svg>`)
-	gs := g.Geoms[0]
-	if gs.X <= 0 || gs.W >= gs.PathW+1 && gs.W == round(100*emuPerUnit) {
-		t.Fatalf("gradient shape should use tight bounds, got X=%d W=%d", gs.X, gs.W)
-	}
-	if gs.W != round(20*emuPerUnit) {
-		t.Fatalf("gradient shape width should equal element width, got %d want %d", gs.W, round(20*emuPerUnit))
-	}
-	// Monotonic gradient offsets: a descending offset is clamped.
-	g = mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg"><stop offset="1" stop-color="red"/><stop offset="0" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`)
-	st := g.Geoms[0].Fill.Gradient.Stops
-	if st[1].Pos < st[0].Pos {
-		t.Fatalf("stop offsets must be non-decreasing, got %v then %v", st[0].Pos, st[1].Pos)
-	}
-	// Text fill:none with a colored tspan still renders the tspan.
-	g = mustConvert(t, `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="none" font-size="10"><tspan fill="red">Hi</tspan></text></svg>`)
-	if len(g.Texts) != 1 || len(g.Texts[0].Paragraphs[0].Runs) != 1 || g.Texts[0].Paragraphs[0].Runs[0].Color != "ff0000" {
-		t.Fatalf("fill:none text with colored tspan should render tspan: %#v", g.Texts)
-	}
-	// Whitespace between a text node and a tspan is preserved as a separator.
-	g = mustConvert(t, `<svg viewBox="0 0 200 100"><text x="1" y="20" fill="blue" font-size="10">Hello <tspan>world</tspan></text></svg>`)
-	runs := g.Texts[0].Paragraphs[0].Runs
-	var joined string
-	for _, r := range runs {
-		joined += r.Text
-	}
-	if joined != "Hello world" {
-		t.Fatalf("whitespace separator lost: %q", joined)
-	}
-
-	for name, svg := range map[string]string{
-		"gradient under rotation":   `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)" transform="rotate(90)"/></svg>`,
-		"partial gradient override": `<svg viewBox="0 0 10 10"><defs><linearGradient id="p" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient><linearGradient id="c" href="#p" x2="1"/></defs><rect width="10" height="10" fill="url(#c)"/></svg>`,
-		"important":                 `<svg viewBox="0 0 10 10"><rect width="1" height="1" style="display:none !important"/></svg>`,
-		"tspan positioned":          `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="red" font-size="10"><tspan x="5">Hi</tspan></text></svg>`,
-		"tspan nested":              `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="red" font-size="10"><tspan><tspan>Hi</tspan></tspan></text></svg>`,
-		"explicit miterlimit":       `<svg viewBox="0 0 10 10"><rect width="2" height="2" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter" stroke-miterlimit="10"/></svg>`,
-	} {
-		if _, ok := Convert([]byte(svg)); ok {
-			t.Errorf("%s: expected fallback", name)
-		}
-	}
-}
-
-func TestReviewBatch4(t *testing.T) {
-	// Foreign-namespace element is not rendered.
-	g := mustConvert(t, `<svg xmlns="http://www.w3.org/2000/svg" xmlns:foo="urn:example" viewBox="0 0 10 10"><foo:rect x="0" y="0" width="1" height="1" fill="red"/><rect width="1" height="1" fill="green"/></svg>`)
-	if len(g.Geoms) != 1 || g.Geoms[0].Fill.Color != "008000" {
-		t.Fatalf("foreign element should not render: %#v", g.Geoms)
-	}
-	// Whitespace-only text between tspans is order-significant -> fallback.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10"><tspan>Hello</tspan> <tspan>world</tspan></text></svg>`)); ok {
-		t.Error("whitespace between tspans should fall back")
-	}
-	// A hidden tspan after the visible content is skipped; the sibling renders.
-	g = mustConvert(t, `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10"><tspan>ok</tspan><tspan display="none">x</tspan></text></svg>`)
-	if len(g.Texts) != 1 || len(g.Texts[0].Paragraphs[0].Runs) != 1 || g.Texts[0].Paragraphs[0].Runs[0].Text != "ok" {
-		t.Fatalf("trailing display:none tspan should be skipped: %#v", g.Texts)
-	}
-	// A display:none tspan with text *before* visible text does not advance the
-	// position (display:none is removed from layout), so the visible run stays
-	// anchored and conversion succeeds.
-	g = mustConvert(t, `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10"><tspan display="none">x</tspan><tspan>ok</tspan></text></svg>`)
-	if len(g.Texts[0].Paragraphs[0].Runs) != 1 || g.Texts[0].Paragraphs[0].Runs[0].Text != "ok" {
-		t.Fatalf("display:none run before visible text should be dropped without advancing: %#v", g.Texts)
-	}
-	// A visibility:hidden tspan before visible text *does* advance, so it falls
-	// back.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10"><tspan visibility="hidden">x</tspan><tspan>ok</tspan></text></svg>`)); ok {
-		t.Error("visibility:hidden text before visible text should fall back")
-	}
-	// Hidden text with a visibility:visible tspan still renders the child.
-	g = mustConvert(t, `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10" visibility="hidden"><tspan visibility="visible">seen</tspan></text></svg>`)
-	if len(g.Texts) != 1 || len(g.Texts[0].Paragraphs[0].Runs) != 1 || g.Texts[0].Paragraphs[0].Runs[0].Text != "seen" {
-		t.Fatalf("visible tspan under hidden text lost: %#v", g.Texts)
-	}
-	// Bezier bounds: a gradient-filled circle uses tight bounds ~= its bbox.
-	g = mustConvert(t, `<svg viewBox="0 0 100 100"><defs><linearGradient id="lg"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><circle cx="50" cy="50" r="10" fill="url(#lg)"/></svg>`)
-	gs := g.Geoms[0]
-	if d := gs.W - round(20*emuPerUnit); d < -round(1*emuPerUnit) || d > round(1*emuPerUnit) {
-		t.Fatalf("gradient circle bounds should be ~20 units wide, got W=%d", gs.W)
-	}
-
-	for name, svg := range map[string]string{
-		"unsupported presentation attr": `<svg viewBox="0 0 10 10"><rect width="1" height="1" fill="red" vector-effect="non-scaling-stroke"/></svg>`,
-		"font-weight attr":              `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10" font-weight="bold">Hi</text></svg>`,
-		"zero-length gradient":          `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg" x1="0.5" y1="0.5" x2="0.5" y2="0.5"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`,
-		"opacity fill and stroke":       `<svg viewBox="0 0 10 10"><rect width="5" height="5" fill="red" stroke="blue" stroke-width="1" opacity="0.5"/></svg>`,
-		"circle outside viewport":       `<svg viewBox="0 0 10 10"><circle cx="0" cy="5" r="3" fill="red"/></svg>`,
-	} {
-		if _, ok := Convert([]byte(svg)); ok {
-			t.Errorf("%s: expected fallback", name)
-		}
-	}
-}
-
-func TestReviewBatch5(t *testing.T) {
-	// Gradient stop-color from a matching CSS rule overrides the presentation attr.
-	g := mustConvert(t, `<svg viewBox="0 0 10 10"><style>.s{stop-color:#00ff00}</style><defs><linearGradient id="lg"><stop class="s" offset="0" stop-color="#ff0000"/><stop offset="1" stop-color="#0000ff"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`)
-	if g.Geoms[0].Fill.Gradient.Stops[0].Color != "00ff00" {
-		t.Fatalf("CSS stop-color should override attr, got %s", g.Geoms[0].Fill.Gradient.Stops[0].Color)
-	}
-
-	for name, svg := range map[string]string{
-		"xml:space preserve text":  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10" xml:space="preserve">a   b</text></svg>`,
-		"text with stroke":         `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="none" stroke="red" stroke-width="1" font-size="10">Hi</text></svg>`,
-		"tspan with stroke":        `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10"><tspan stroke="blue" stroke-width="1">Hi</tspan></text></svg>`,
-		"gradient axis reflection": `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect x="-5" width="5" height="5" fill="url(#lg)" transform="translate(10,0) scale(-1,1)"/></svg>`,
-		"text outside viewport":    `<svg viewBox="0 0 100 100"><text x="1" y="200" fill="red" font-size="10">Hi</text></svg>`,
-	} {
-		if _, ok := Convert([]byte(svg)); ok {
-			t.Errorf("%s: expected fallback", name)
-		}
-	}
-}
-
-func TestReviewBatch6(t *testing.T) {
-	// A gradient stop's currentColor resolves to the gradient's color context.
-	g := mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg" color="#ff0000"><stop offset="0" stop-color="currentColor"/><stop offset="1" stop-color="#0000ff"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`)
-	if g.Geoms[0].Fill.Gradient.Stops[0].Color != "ff0000" {
-		t.Fatalf("stop currentColor should resolve to gradient color, got %s", g.Geoms[0].Fill.Gradient.Stops[0].Color)
-	}
-	// stroke-width:0 paints no stroke but the shape still converts.
-	g = mustConvert(t, `<svg viewBox="0 0 10 10"><rect width="5" height="5" fill="red" stroke="black" stroke-width="0"/></svg>`)
-	if g.Geoms[0].Stroke != nil {
-		t.Fatalf("stroke-width:0 should yield no stroke")
-	}
-
-	for name, svg := range map[string]string{
-		"path starts with L":    `<svg viewBox="0 0 10 10"><path d="L5 5" fill="red"/></svg>`,
-		"zero scale stroked":    `<svg viewBox="0 0 10 10"><rect width="5" height="5" fill="none" stroke="black" stroke-width="1" transform="scale(0)"/></svg>`,
-		"NaN opacity":           `<svg viewBox="0 0 10 10"><rect width="5" height="5" fill="red" opacity="NaN"/></svg>`,
-		"NaN gradient coord":    `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg" x1="NaN"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`,
-		"negative stroke width": `<svg viewBox="0 0 10 10"><rect width="5" height="5" fill="none" stroke="black" stroke-width="-1"/></svg>`,
-		"style media print":     `<svg viewBox="0 0 10 10"><style media="print">rect{fill:red}</style><rect width="1" height="1"/></svg>`,
-		"style non-css type":    `<svg viewBox="0 0 10 10"><style type="text/less">rect{fill:red}</style><rect width="1" height="1"/></svg>`,
-	} {
-		if _, ok := Convert([]byte(svg)); ok {
-			t.Errorf("%s: expected fallback", name)
-		}
-	}
-}
-
-func TestReviewBatch7(t *testing.T) {
-	// color:currentColor inherits the parent color; a descendant fill:currentColor
-	// then resolves to that color rather than black.
-	g := mustConvert(t, `<svg viewBox="0 0 10 10"><g color="#ff0000"><g color="currentColor"><rect width="1" height="1" fill="currentColor"/></g></g></svg>`)
-	if g.Geoms[0].Fill.Color != "ff0000" {
-		t.Fatalf("nested currentColor should resolve to inherited color, got %s", g.Geoms[0].Fill.Color)
-	}
-	// xml:space=preserve on an ancestor forces fallback for descendant text.
-	if _, ok := Convert([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" xml:space="preserve"><g><text x="1" y="10" fill="red" font-size="10">a   b</text></g></svg>`)); ok {
-		t.Error("inherited xml:space=preserve should fall back")
-	}
-	// An unsupported presentation attribute on a tspan forces fallback.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10"><tspan font-weight="bold">Hi</tspan></text></svg>`)); ok {
-		t.Error("tspan font-weight should fall back")
-	}
-}
-
-func TestReviewBatch8(t *testing.T) {
-	// visibility:inherit under a hidden parent stays hidden.
-	g := mustConvert(t, `<svg viewBox="0 0 10 10"><g visibility="hidden"><rect width="1" height="1" fill="red" visibility="inherit"/></g><rect width="1" height="1" fill="green"/></svg>`)
-	if len(g.Geoms) != 1 || g.Geoms[0].Fill.Color != "008000" {
-		t.Fatalf("visibility:inherit under hidden parent should stay hidden: %#v", g.Geoms)
-	}
-	// SVG text is emitted with no-wrap.
-	g = mustConvert(t, `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="red" font-size="10">Hi</text></svg>`)
-	if !g.Texts[0].NoWrap {
-		t.Fatal("SVG text should be no-wrap")
-	}
-
-	for name, svg := range map[string]string{
-		"gradient color-interpolation": `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg" color-interpolation="linearRGB"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`,
-		"gradient coord out of range":  `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg" x1="-100%" x2="200%"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`,
-		"stop unsupported attr":        `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg"><stop offset="0" stop-color="red" color-interpolation="linearRGB"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`,
-		"negative font-size":           `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="red" font-size="-10">Hi</text></svg>`,
-		"negative tspan font-size":     `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="red" font-size="10"><tspan font-size="-5">Hi</tspan></text></svg>`,
-	} {
-		if _, ok := Convert([]byte(svg)); ok {
-			t.Errorf("%s: expected fallback", name)
-		}
-	}
-}
-
 func TestEmptyPolygonSkipped(t *testing.T) {
 	// A polygon/polyline with no (or too few) points emits no geometry rather
 	// than a malformed MoveTo-less path.
@@ -644,460 +364,945 @@ func TestEmptyPolygonSkipped(t *testing.T) {
 	}
 }
 
-func TestReviewBatch9(t *testing.T) {
+func TestConvertOpacity(t *testing.T) {
+	t.Run("leaf_alpha", func(t *testing.T) {
+		// Leaf element opacity still applies (multiplied into fill alpha).
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><rect width="10" height="10" fill="red" opacity="0.5"/></svg>`)
+		if a := g.Geoms[0].Fill.Alpha; a < 0.49 || a > 0.51 {
+			t.Fatalf("leaf opacity should apply, got alpha=%v", a)
+		}
+	})
+}
+
+func TestConvertVisibility(t *testing.T) {
+	t.Run("css_display_none", func(t *testing.T) {
+		// CSS display:none must hide the matched element (resolved style, not just attrs).
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><style>.h{display:none}</style>`+
+			`<rect class="h" width="1" height="1" fill="red"/><rect width="1" height="1" fill="green"/></svg>`)
+		if len(g.Geoms) != 1 || g.Geoms[0].Fill.Color != "008000" {
+			t.Fatalf("CSS display:none should hide element, got %#v", g.Geoms)
+		}
+	})
+	t.Run("visible_descendant", func(t *testing.T) {
+		// visibility:hidden container with a visible descendant keeps the child.
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><g visibility="hidden"><rect width="1" height="1" fill="red" visibility="visible"/></g></svg>`)
+		if len(g.Geoms) != 1 || g.Geoms[0].Fill.Color != "ff0000" {
+			t.Fatalf("visibility override lost: %#v", g.Geoms)
+		}
+	})
+	t.Run("hidden_leaf", func(t *testing.T) {
+		// visibility:hidden leaf with no override is skipped.
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><rect width="1" height="1" visibility="hidden"/><rect width="1" height="1" fill="green"/></svg>`)
+		if len(g.Geoms) != 1 || g.Geoms[0].Fill.Color != "008000" {
+			t.Fatalf("visibility hidden leaf not skipped: %#v", g.Geoms)
+		}
+	})
+	t.Run("root_display_none", func(t *testing.T) {
+		// display:none on the root renders nothing.
+		g := mustConvert(t, `<svg viewBox="0 0 10 10" display="none"><rect width="1" height="1" fill="red"/></svg>`)
+		if len(g.Geoms) != 0 {
+			t.Fatalf("root display:none should render nothing, got %d", len(g.Geoms))
+		}
+	})
+	t.Run("inherit_hidden", func(t *testing.T) {
+		// visibility:inherit under a hidden parent stays hidden.
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><g visibility="hidden"><rect width="1" height="1" fill="red" visibility="inherit"/></g><rect width="1" height="1" fill="green"/></svg>`)
+		if len(g.Geoms) != 1 || g.Geoms[0].Fill.Color != "008000" {
+			t.Fatalf("visibility:inherit under hidden parent should stay hidden: %#v", g.Geoms)
+		}
+	})
+	t.Run("unset_inherits_hidden", func(t *testing.T) {
+		// visibility:unset under a hidden parent stays hidden.
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><g visibility="hidden"><rect width="1" height="1" fill="red" visibility="unset"/></g><rect width="1" height="1" fill="green"/></svg>`)
+		if len(g.Geoms) != 1 || g.Geoms[0].Fill.Color != "008000" {
+			t.Fatalf("visibility:unset should inherit hidden: %#v", g.Geoms)
+		}
+	})
+}
+
+func TestConvertViewport(t *testing.T) {
+	t.Run("nested_svg", func(t *testing.T) {
+		// Nested <svg> is rejected (own viewport unmodeled).
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><svg width="5" height="5"><rect width="1" height="1"/></svg></svg>`)); ok {
+			t.Error("nested svg should fall back")
+		}
+	})
+	t.Run("aspect_ratio_mismatch", func(t *testing.T) {
+		// viewBox + mismatched width/height aspect ratio -> fallback (letterboxing).
+		if _, ok := Convert([]byte(`<svg width="200" height="100" viewBox="0 0 100 100"><rect width="1" height="1"/></svg>`)); ok {
+			t.Error("viewBox+aspect mismatch should fall back")
+		}
+	})
+	t.Run("preserve_aspect_ratio_none", func(t *testing.T) {
+		// Non-default preserveAspectRatio -> fallback.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10" preserveAspectRatio="none"><rect width="1" height="1"/></svg>`)); ok {
+			t.Error("preserveAspectRatio none should fall back")
+		}
+	})
+	t.Run("explicit_zero_dimensions", func(t *testing.T) {
+		// The exported Convert must not emit geometry for an SVG whose root width or
+		// height is an explicit zero (its viewport renders nothing), independent of
+		// the render pipeline's Dimensions prefilter.
+		for _, svg := range []string{
+			`<svg width="0" height="10" viewBox="0 0 10 10"><rect width="1" height="1" fill="red"/></svg>`,
+			`<svg width="0%" height="10" viewBox="0 0 10 10"><rect width="1" height="1" fill="red"/></svg>`,
+			`<svg width="0em" height="10" viewBox="0 0 10 10"><rect width="1" height="1" fill="red"/></svg>`,
+			`<svg width="10" height="0" viewBox="0 0 10 10"><rect width="1" height="1" fill="red"/></svg>`,
+		} {
+			if _, ok := Convert([]byte(svg)); ok {
+				t.Errorf("explicit zero root size should not convert: %s", svg)
+			}
+		}
+	})
+	t.Run("invalid_dimension_unit", func(t *testing.T) {
+		// An invalid (non-zero) dimension unit isn't a zero, so it still converts.
+		if _, ok := Convert([]byte(`<svg width="0foo" height="10" viewBox="0 0 10 10"><rect width="1" height="1" fill="red"/></svg>`)); !ok {
+			t.Error("invalid (non-zero) dimension should still convert")
+		}
+	})
+	t.Run("relative_height_without_viewbox", func(t *testing.T) {
+		// No-viewBox: a relative height (1em) is resolved for the child viewport, so
+		// a 32px x 1em SVG has a 32x16 child space (not 32x150), matching Dimensions.
+		g := mustConvert(t, `<svg width="32px" height="1em"><rect width="1" height="1" fill="red"/></svg>`)
+		if g.ChW != round(32*emuPerUnit) || g.ChH != round(16*emuPerUnit) {
+			t.Fatalf("no-viewBox em child space = %dx%d, want %dx%d", g.ChW, g.ChH, round(32*emuPerUnit), round(16*emuPerUnit))
+		}
+	})
+	t.Run("drawingml_extent_limit", func(t *testing.T) {
+		// A viewBox whose EMU extent exceeds ST_PositiveCoordinate can't be written;
+		// fall back.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 9000000000 9000000000"><rect width="1" height="1" fill="red"/></svg>`)); ok {
+			t.Error("oversized viewBox should fall back")
+		}
+	})
+	t.Run("relative_height_aspect_mismatch", func(t *testing.T) {
+		// A relative root height (1em) gives a real aspect (32x16) that differs from
+		// a square viewBox, which needs letterboxing this model can't do; fall back.
+		if _, ok := Convert([]byte(`<svg width="32px" height="1em" viewBox="0 0 32 32"><rect width="1" height="1" fill="red"/></svg>`)); ok {
+			t.Error("mismatched em-based aspect should fall back")
+		}
+	})
+}
+
+func TestConvertGradients(t *testing.T) {
+	t.Run("fractional_vector", func(t *testing.T) {
+		// Fractional linear-gradient vector -> fallback; full-box vector converts.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><defs><linearGradient id="g" x1="0.5" x2="1"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)); ok {
+			t.Error("partial linear gradient vector should fall back")
+		}
+	})
+	t.Run("single_stop_expansion", func(t *testing.T) {
+		// Single-stop gradient is expanded to two stops (valid OOXML).
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="g"><stop offset="0" stop-color="red"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)
+		if gr := g.Geoms[0].Fill.Gradient; gr == nil || len(gr.Stops) != 2 {
+			t.Fatalf("single stop should expand to two: %#v", g.Geoms[0].Fill.Gradient)
+		}
+	})
+	t.Run("rectangle_tight_bounds", func(t *testing.T) {
+		// A gradient-filled rect not covering the canvas gets tight bounds.
+		g := mustConvert(t, `<svg viewBox="0 0 100 100"><defs><linearGradient id="lg"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect x="40" y="40" width="20" height="20" fill="url(#lg)"/></svg>`)
+		gs := g.Geoms[0]
+		if gs.X <= 0 || gs.W >= gs.PathW+1 && gs.W == round(100*emuPerUnit) {
+			t.Fatalf("gradient shape should use tight bounds, got X=%d W=%d", gs.X, gs.W)
+		}
+		if gs.W != round(20*emuPerUnit) {
+			t.Fatalf("gradient shape width should equal element width, got %d want %d", gs.W, round(20*emuPerUnit))
+		}
+	})
+	t.Run("monotonic_offsets", func(t *testing.T) {
+		// Monotonic gradient offsets: a descending offset is clamped.
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg"><stop offset="1" stop-color="red"/><stop offset="0" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`)
+		st := g.Geoms[0].Fill.Gradient.Stops
+		if st[1].Pos < st[0].Pos {
+			t.Fatalf("stop offsets must be non-decreasing, got %v then %v", st[0].Pos, st[1].Pos)
+		}
+	})
+	t.Run("circle_tight_bounds", func(t *testing.T) {
+		// Bezier bounds: a gradient-filled circle uses tight bounds ~= its bbox.
+		g := mustConvert(t, `<svg viewBox="0 0 100 100"><defs><linearGradient id="lg"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><circle cx="50" cy="50" r="10" fill="url(#lg)"/></svg>`)
+		gs := g.Geoms[0]
+		if d := gs.W - round(20*emuPerUnit); d < -round(1*emuPerUnit) || d > round(1*emuPerUnit) {
+			t.Fatalf("gradient circle bounds should be ~20 units wide, got W=%d", gs.W)
+		}
+	})
+	t.Run("css_stop_color_precedence", func(t *testing.T) {
+		// Gradient stop-color from a matching CSS rule overrides the presentation attr.
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><style>.s{stop-color:#00ff00}</style><defs><linearGradient id="lg"><stop class="s" offset="0" stop-color="#ff0000"/><stop offset="1" stop-color="#0000ff"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`)
+		if g.Geoms[0].Fill.Gradient.Stops[0].Color != "00ff00" {
+			t.Fatalf("CSS stop-color should override attr, got %s", g.Geoms[0].Fill.Gradient.Stops[0].Color)
+		}
+	})
+	t.Run("current_color_context", func(t *testing.T) {
+		// A gradient stop's currentColor resolves to the gradient's color context.
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg" color="#ff0000"><stop offset="0" stop-color="currentColor"/><stop offset="1" stop-color="#0000ff"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`)
+		if g.Geoms[0].Fill.Gradient.Stops[0].Color != "ff0000" {
+			t.Fatalf("stop currentColor should resolve to gradient color, got %s", g.Geoms[0].Fill.Gradient.Stops[0].Color)
+		}
+	})
+	t.Run("noninherited_stop_color", func(t *testing.T) {
+		// stop-color set on the gradient must not leak into a stop lacking one.
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg" style="stop-color:#00ff00"><stop offset="0" stop-color="#ff0000"/><stop offset="1" stop-color="#0000ff"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`)
+		if g.Geoms[0].Fill.Gradient.Stops[0].Color != "ff0000" {
+			t.Fatalf("gradient stop-color leaked, got %s", g.Geoms[0].Fill.Gradient.Stops[0].Color)
+		}
+	})
+	t.Run("inherited_stop_color", func(t *testing.T) {
+		// stop-color:inherit resolves to the parent's computed initial value
+		// (black), not the lower-priority red presentation attribute.
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="red" style="stop-color:inherit"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)
+		if g.Geoms[0].Fill.Gradient.Stops[0].Color != "000000" {
+			t.Fatalf("stop-color:inherit should be initial black, got %#v", g.Geoms[0].Fill.Gradient.Stops[0])
+		}
+	})
+	t.Run("ancestor_current_color", func(t *testing.T) {
+		// A gradient stop's currentColor inherits the color computed at the
+		// gradient's own ancestors, not defaultStyle: here ancestor color="red".
+		g := mustConvert(t, `<svg viewBox="0 0 10 10" color="red"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="currentColor"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)
+		if g.Geoms[0].Fill.Gradient.Stops[0].Color != "ff0000" {
+			t.Fatalf("gradient currentColor should inherit ancestor red, got %#v", g.Geoms[0].Fill.Gradient.Stops[0])
+		}
+	})
+	t.Run("initial_stop_color", func(t *testing.T) {
+		// stop-color:initial restores the initial value (black), not the red
+		// presentation attribute; the gradient's first stop is black.
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="red" style="stop-color:initial"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)
+		if g.Geoms[0].Fill.Kind != pptx.FillGradient || g.Geoms[0].Fill.Gradient.Stops[0].Color != "000000" {
+			t.Fatalf("stop-color:initial should be black, got %#v", g.Geoms[0].Fill.Gradient)
+		}
+	})
+}
+
+func TestConvertStrokes(t *testing.T) {
+	t.Run("nonuniform_scale", func(t *testing.T) {
+		// Non-uniform scale on a stroked shape -> fallback.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect width="2" height="2" fill="none" stroke="black" stroke-width="1" transform="scale(4,1)"/></svg>`)); ok {
+			t.Error("non-uniform scaled stroke should fall back")
+		}
+	})
+	t.Run("zero_width", func(t *testing.T) {
+		// stroke-width:0 paints no stroke but the shape still converts.
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><rect width="5" height="5" fill="red" stroke="black" stroke-width="0"/></svg>`)
+		if g.Geoms[0].Stroke != nil {
+			t.Fatalf("stroke-width:0 should yield no stroke")
+		}
+	})
+	t.Run("huge_viewport_overhang", func(t *testing.T) {
+		// A large stroke that would paint well outside the viewport falls back.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><line x1="1" y1="5" x2="9" y2="5" stroke="black" stroke-width="1000"/></svg>`)); ok {
+			t.Error("huge stroke crossing the viewport should fall back")
+		}
+	})
+	t.Run("edge_aligned_border", func(t *testing.T) {
+		// An edge-aligned stroked border paints half its width outside the viewport,
+		// which a PowerPoint group would show beyond the image rect; fall back.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect x="0" y="0" width="10" height="10" fill="none" stroke="black" stroke-width="1" stroke-linejoin="round"/></svg>`)); ok {
+			t.Error("edge-aligned stroked border should fall back (stroke overhang)")
+		}
+	})
+	t.Run("inset_border", func(t *testing.T) {
+		// An inset border whose stroke stays within the viewport still converts.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" fill="none" stroke="black" stroke-width="1" stroke-linejoin="round"/></svg>`)); !ok {
+			t.Error("inset border within the viewport should convert")
+		}
+	})
+	t.Run("diagonal_square_cap_overhang", func(t *testing.T) {
+		// A square line cap on a diagonal extends up to sqrt(2)*half-width past the
+		// endpoint; a cap reaching the viewport corner falls back.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><line x1="50" y1="50" x2="2" y2="2" stroke="black" stroke-width="4" stroke-linecap="square"/></svg>`)); ok {
+			t.Error("square cap reaching the viewport corner should fall back")
+		}
+	})
+	t.Run("inset_diagonal_square_cap", func(t *testing.T) {
+		// The same diagonal square-capped line comfortably inside still converts.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><line x1="50" y1="50" x2="20" y2="20" stroke="black" stroke-width="4" stroke-linecap="square"/></svg>`)); !ok {
+			t.Error("inset diagonal square-capped line should convert")
+		}
+	})
+	t.Run("later_subpath_miter_overhang", func(t *testing.T) {
+		// A path's second subpath is evaluated independently: a miter corner near
+		// the edge there must still trigger the fallback.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><path d="M20 20 L40 20 L40 40 M10 50 L1 50 L1 60" fill="none" stroke="black" stroke-width="2"/></svg>`)); ok {
+			t.Error("miter corner in a later subpath near the edge should fall back")
+		}
+	})
+	t.Run("independent_subpaths", func(t *testing.T) {
+		// Two separate, safe subpaths must not be joined across the MoveTo (no false
+		// cross-subpath join), so they still convert.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><path d="M20 20 L40 20 L40 40 M50 50 L70 50 L70 70" fill="none" stroke="black" stroke-width="2"/></svg>`)); !ok {
+			t.Error("two independent safe subpaths should convert")
+		}
+	})
+	t.Run("drawingml_width_limit", func(t *testing.T) {
+		// A stroke wider than the DrawingML a:ln@w limit (even inside a large
+		// viewBox) can't be represented; fall back.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 1000000 1000000"><line x1="1" y1="5" x2="9" y2="5" stroke="black" stroke-width="500000"/></svg>`)); ok {
+			t.Error("stroke width beyond the DrawingML limit should fall back")
+		}
+	})
+	t.Run("sharp_miter_overhang", func(t *testing.T) {
+		// A sharp miter corner whose apex points past the viewport edge leaks
+		// outside the non-clipping group; fall back.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><polyline points="15,2 1,50 15,98" fill="none" stroke="black" stroke-width="2"/></svg>`)); ok {
+			t.Error("sharp miter spike near the edge should fall back")
+		}
+	})
+	t.Run("inset_miter", func(t *testing.T) {
+		// The same corner comfortably inside the viewport still converts (the actual
+		// miter apex, not a worst-case, is used).
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><polyline points="30,2 16,50 30,98" fill="none" stroke="black" stroke-width="2"/></svg>`)); !ok {
+			t.Error("inset miter corner should convert")
+		}
+	})
+	t.Run("edge_touching_line", func(t *testing.T) {
+		// An edge-aligned stroke paints half its width outside the viewport, which a
+		// PowerPoint group can't clip; fall back.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><line x1="0" y1="5" x2="10" y2="5" stroke="black" stroke-width="1"/></svg>`)); ok {
+			t.Error("edge-touching stroke should fall back (half-width overhang)")
+		}
+	})
+}
+
+func TestConvertCSS(t *testing.T) {
+	t.Run("class_case_sensitivity", func(t *testing.T) {
+		// CSS class selector is case-sensitive: .Hot must not match class="hot".
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><style>.Hot{fill:#00f}</style><rect class="hot" width="1" height="1" fill="green"/></svg>`)
+		if g.Geoms[0].Fill.Color != "008000" {
+			t.Fatalf(".Hot should not match class=hot, got %s", g.Geoms[0].Fill.Color)
+		}
+	})
+	t.Run("nested_current_color", func(t *testing.T) {
+		// color:currentColor inherits the parent color; a descendant fill:currentColor
+		// then resolves to that color rather than black.
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><g color="#ff0000"><g color="currentColor"><rect width="1" height="1" fill="currentColor"/></g></g></svg>`)
+		if g.Geoms[0].Fill.Color != "ff0000" {
+			t.Fatalf("nested currentColor should resolve to inherited color, got %s", g.Geoms[0].Fill.Color)
+		}
+	})
+	t.Run("compound_selector", func(t *testing.T) {
+		// Compound class selector .foo.bar is rejected (mis-matched as one class).
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><style>.foo.bar{fill:red}</style><rect class="foo" width="1" height="1"/></svg>`)); ok {
+			t.Error("compound selector should fall back")
+		}
+	})
+	t.Run("type_selector_case_sensitivity", func(t *testing.T) {
+		// A type selector is case-sensitive: RECT must not match <rect>.
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><style>RECT{fill:#0000ff}</style><rect width="1" height="1" fill="green"/></svg>`)
+		if g.Geoms[0].Fill.Color != "008000" {
+			t.Fatalf("RECT should not match <rect>, got %s", g.Geoms[0].Fill.Color)
+		}
+	})
+	t.Run("matching_type_selector", func(t *testing.T) {
+		// camelCase type selector still matches the camelCase element.
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><style>rect{fill:#00ff00}</style><rect width="1" height="1"/></svg>`)
+		if g.Geoms[0].Fill.Color != "00ff00" {
+			t.Fatalf("lowercase type selector should match, got %s", g.Geoms[0].Fill.Color)
+		}
+	})
+	t.Run("initial_fill", func(t *testing.T) {
+		// fill:initial restores the default (black), not "no fill".
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><rect width="1" height="1" fill="initial"/></svg>`)
+		if g.Geoms[0].Fill.Kind != pptx.FillSolid || g.Geoms[0].Fill.Color != "000000" {
+			t.Fatalf("fill:initial should be solid black, got %#v", g.Geoms[0].Fill)
+		}
+	})
+	t.Run("empty_declaration", func(t *testing.T) {
+		// An empty CSS declaration is invalid and must not override the presentation
+		// attribute: fill stays red rather than becoming empty.
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><rect fill="red" style="fill:" width="10" height="10"/></svg>`)
+		if g.Geoms[0].Fill.Color != "ff0000" {
+			t.Fatalf("empty fill declaration should keep the red attribute, got %#v", g.Geoms[0].Fill)
+		}
+	})
+	t.Run("invalid_display", func(t *testing.T) {
+		// An invalid inline display value must not un-hide a display:none element;
+		// the invalid declaration forces the fallback.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect width="1" height="1" display="none" style="display:bogus"/></svg>`)); ok {
+			t.Error("invalid display value should fall back")
+		}
+	})
+	t.Run("valid_display", func(t *testing.T) {
+		// A valid display value still converts.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect width="1" height="1" fill="red" style="display:inline"/></svg>`)); !ok {
+			t.Error("valid display:inline should convert")
+		}
+	})
+	t.Run("nan_rgb_component", func(t *testing.T) {
+		// An invalid rgb() component (NaN) is not a valid color; the declaration is
+		// rejected and the element falls back.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect width="1" height="1" fill="rgb(NaN%,0%,0%)"/></svg>`)); ok {
+			t.Error("rgb() with a NaN component should fall back")
+		}
+	})
+	t.Run("digit_leading_selector", func(t *testing.T) {
+		// An invalid selector (a class starting with a digit) is ignored by CSS, so
+		// the stylesheet parse must fail rather than apply it to class="1".
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><style>.1{display:none}</style><rect class="1" width="10" height="10" fill="red"/></svg>`)); ok {
+			t.Error("digit-leading class selector should fall back")
+		}
+	})
+	t.Run("hyphen_digit_selector", func(t *testing.T) {
+		// A leading-hyphen-digit identifier is likewise invalid.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><style>.-1{display:none}</style><rect class="-1" width="10" height="10" fill="red"/></svg>`)); ok {
+			t.Error("hyphen-digit class selector should fall back")
+		}
+	})
+	t.Run("valid_class_selector", func(t *testing.T) {
+		// A valid identifier selector still applies.
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><style>.a{fill:red}</style><rect class="a" width="1" height="1"/></svg>`)
+		if g.Geoms[0].Fill.Color != "ff0000" {
+			t.Fatalf("valid class selector should apply, got %#v", g.Geoms[0].Fill)
+		}
+	})
+	t.Run("invalid_enumerated_values", func(t *testing.T) {
+		// An invalid enumerated value (fill-rule/visibility) is a dropped CSS
+		// declaration; treating it as a default could flip rendering, so fall back.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><path d="M0 0h10v10h-10z" fill-rule="bogus"/></svg>`)); ok {
+			t.Error("invalid fill-rule should fall back")
+		}
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect width="10" height="10" visibility="sometimes"/></svg>`)); ok {
+			t.Error("invalid visibility should fall back")
+		}
+	})
+	t.Run("comment_inside_quoted_string", func(t *testing.T) {
+		// A comment-like sequence inside a quoted CSS string must not be stripped,
+		// so the selector still matches and converts.
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><style>rect{fill:red;font-family:"A/*B*/"}</style><rect width="1" height="1"/></svg>`)
+		if g.Geoms[0].Fill.Color != "ff0000" {
+			t.Fatalf("CSS comment inside a string must not break parsing, got %#v", g.Geoms[0].Fill)
+		}
+	})
+}
+
+func TestConvertTextLayout(t *testing.T) {
+	t.Run("child_order_and_zero_insets", func(t *testing.T) {
+		// Converted SVG text carries zero insets and preserves document order.
+		g := mustConvert(t, `<svg viewBox="0 0 100 100"><rect width="1" height="1" fill="red"/><text x="1" y="20" fill="blue" font-size="10">Hi</text></svg>`)
+		if len(g.Children) != 2 || g.Children[0].Geom == nil || g.Children[1].Text == nil {
+			t.Fatalf("expected ordered geom then text children: %#v", g.Children)
+		}
+		if !g.Children[1].Text.NoInset {
+			t.Error("svg text should use zero insets")
+		}
+	})
+	t.Run("colored_tspan_under_no_fill", func(t *testing.T) {
+		// Text fill:none with a colored tspan still renders the tspan.
+		g := mustConvert(t, `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="none" font-size="10"><tspan fill="red">Hi</tspan></text></svg>`)
+		if len(g.Texts) != 1 || len(g.Texts[0].Paragraphs[0].Runs) != 1 || g.Texts[0].Paragraphs[0].Runs[0].Color != "ff0000" {
+			t.Fatalf("fill:none text with colored tspan should render tspan: %#v", g.Texts)
+		}
+	})
+	t.Run("text_to_tspan_separator", func(t *testing.T) {
+		// Whitespace between a text node and a tspan is preserved as a separator.
+		g := mustConvert(t, `<svg viewBox="0 0 200 100"><text x="1" y="20" fill="blue" font-size="10">Hello <tspan>world</tspan></text></svg>`)
+		runs := g.Texts[0].Paragraphs[0].Runs
+		var joined string
+		for _, r := range runs {
+			joined += r.Text
+		}
+		if joined != "Hello world" {
+			t.Fatalf("whitespace separator lost: %q", joined)
+		}
+	})
+	t.Run("whitespace_between_tspans_falls_back", func(t *testing.T) {
+		// Whitespace-only text between tspans is order-significant -> fallback.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10"><tspan>Hello</tspan> <tspan>world</tspan></text></svg>`)); ok {
+			t.Error("whitespace between tspans should fall back")
+		}
+	})
+	t.Run("trailing_display_none_tspan", func(t *testing.T) {
+		// A hidden tspan after the visible content is skipped; the sibling renders.
+		g := mustConvert(t, `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10"><tspan>ok</tspan><tspan display="none">x</tspan></text></svg>`)
+		if len(g.Texts) != 1 || len(g.Texts[0].Paragraphs[0].Runs) != 1 || g.Texts[0].Paragraphs[0].Runs[0].Text != "ok" {
+			t.Fatalf("trailing display:none tspan should be skipped: %#v", g.Texts)
+		}
+	})
+	t.Run("leading_display_none_tspan", func(t *testing.T) {
+		// A display:none tspan with text *before* visible text does not advance the
+		// position (display:none is removed from layout), so the visible run stays
+		// anchored and conversion succeeds.
+		g := mustConvert(t, `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10"><tspan display="none">x</tspan><tspan>ok</tspan></text></svg>`)
+		if len(g.Texts[0].Paragraphs[0].Runs) != 1 || g.Texts[0].Paragraphs[0].Runs[0].Text != "ok" {
+			t.Fatalf("display:none run before visible text should be dropped without advancing: %#v", g.Texts)
+		}
+	})
+	t.Run("leading_hidden_tspan_falls_back", func(t *testing.T) {
+		// A visibility:hidden tspan before visible text *does* advance, so it falls
+		// back.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10"><tspan visibility="hidden">x</tspan><tspan>ok</tspan></text></svg>`)); ok {
+			t.Error("visibility:hidden text before visible text should fall back")
+		}
+	})
+	t.Run("visible_tspan_under_hidden_text", func(t *testing.T) {
+		// Hidden text with a visibility:visible tspan still renders the child.
+		g := mustConvert(t, `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10" visibility="hidden"><tspan visibility="visible">seen</tspan></text></svg>`)
+		if len(g.Texts) != 1 || len(g.Texts[0].Paragraphs[0].Runs) != 1 || g.Texts[0].Paragraphs[0].Runs[0].Text != "seen" {
+			t.Fatalf("visible tspan under hidden text lost: %#v", g.Texts)
+		}
+	})
+	t.Run("inherited_xml_space", func(t *testing.T) {
+		// xml:space=preserve on an ancestor forces fallback for descendant text.
+		if _, ok := Convert([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" xml:space="preserve"><g><text x="1" y="10" fill="red" font-size="10">a   b</text></g></svg>`)); ok {
+			t.Error("inherited xml:space=preserve should fall back")
+		}
+	})
+	t.Run("unsupported_tspan_attribute", func(t *testing.T) {
+		// An unsupported presentation attribute on a tspan forces fallback.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10"><tspan font-weight="bold">Hi</tspan></text></svg>`)); ok {
+			t.Error("tspan font-weight should fall back")
+		}
+	})
+	t.Run("no_wrap", func(t *testing.T) {
+		// SVG text is emitted with no-wrap.
+		g := mustConvert(t, `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="red" font-size="10">Hi</text></svg>`)
+		if !g.Texts[0].NoWrap {
+			t.Fatal("SVG text should be no-wrap")
+		}
+	})
+	t.Run("invisible_leading_text", func(t *testing.T) {
+		// Invisible text before visible text shifts position -> fallback.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="1" y="10" fill="none" font-size="10">XX<tspan fill="red">Hi</tspan></text></svg>`)); ok {
+			t.Error("invisible text before visible run should fall back")
+		}
+	})
+	t.Run("collapse_cross_run_whitespace", func(t *testing.T) {
+		// Whitespace across a run boundary collapses to a single separator and is
+		// preserved on the run.
+		g := mustConvert(t, `<svg viewBox="0 0 200 100"><text x="1" y="10" fill="blue" font-size="10">Hello <tspan> world</tspan></text></svg>`)
+		runs := g.Texts[0].Paragraphs[0].Runs
+		var joined string
+		for _, r := range runs {
+			joined += r.Text
+		}
+		if joined != "Hello world" {
+			t.Fatalf("cross-run whitespace should collapse to one space, got %q", joined)
+		}
+	})
+	t.Run("whitespace_only_tspan_separator", func(t *testing.T) {
+		// A whitespace-only tspan between visible runs is a word separator, not
+		// dropped.
+		g := mustConvert(t, `<svg viewBox="0 0 200 40"><text x="1" y="20" fill="blue" font-size="10"><tspan>Hello</tspan><tspan> </tspan><tspan>world</tspan></text></svg>`)
+		var joined string
+		for _, r := range g.Texts[0].Paragraphs[0].Runs {
+			joined += r.Text
+		}
+		if joined != "Hello world" {
+			t.Fatalf("whitespace-only tspan separator lost: %q", joined)
+		}
+	})
+	t.Run("oversized_tspan_viewport_overflow", func(t *testing.T) {
+		// A large tspan inside small parent text that would overflow the viewport
+		// falls back (vertical bounds use the max run size).
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 100 20"><text x="1" y="18" fill="red" font-size="5"><tspan font-size="200">Big</tspan></text></svg>`)); ok {
+			t.Error("oversized tspan overflowing the viewport should fall back")
+		}
+	})
+	t.Run("quoted_font_family_comma", func(t *testing.T) {
+		// A quoted font-family containing a comma is one family, not split on the
+		// comma.
+		g := mustConvert(t, `<svg viewBox="0 0 200 40"><text x="1" y="20" fill="blue" font-size="10" font-family='"ACME, Inc.", sans-serif'>Hi</text></svg>`)
+		if fam := g.Texts[0].Paragraphs[0].Runs[0].FontFamily; fam != "ACME, Inc." {
+			t.Fatalf("quoted family with comma mis-parsed, got %q", fam)
+		}
+	})
+	t.Run("drawingml_font_minimum", func(t *testing.T) {
+		// A font-size below the DrawingML 1pt minimum can't be represented.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="1" y="10" font-size="0.5">Hi</text></svg>`)); ok {
+			t.Error("sub-1pt font size should fall back")
+		}
+	})
+	t.Run("drawingml_font_maximum", func(t *testing.T) {
+		// A font-size above the 4000pt maximum can't be represented.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 100000 100000"><text x="1" y="10" font-size="6000">Hi</text></svg>`)); ok {
+			t.Error("oversized font size should fall back")
+		}
+	})
+	t.Run("drawingml_tspan_font_minimum", func(t *testing.T) {
+		// A tspan font-size override outside the range also falls back.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="1" y="10" font-size="10"><tspan font-size="0.5">Hi</tspan></text></svg>`)); ok {
+			t.Error("tspan sub-1pt font size should fall back")
+		}
+	})
+	t.Run("display_none_between_visible_runs", func(t *testing.T) {
+		// display:none removes a run from layout without advancing, so the
+		// surrounding visible runs stay adjacent and conversion succeeds.
+		g := mustConvert(t, `<svg viewBox="0 0 100 40"><text x="1" y="20" fill="blue" font-size="10"><tspan>A</tspan><tspan display="none">X</tspan><tspan>B</tspan></text></svg>`)
+		var joined string
+		for _, r := range g.Texts[0].Paragraphs[0].Runs {
+			joined += r.Text
+		}
+		if joined != "AB" {
+			t.Fatalf("display:none run should be dropped without advancing, got %q", joined)
+		}
+	})
+	t.Run("hidden_whitespace_advances", func(t *testing.T) {
+		// visibility:hidden whitespace still advances the position, so a later
+		// visible run can't be faithfully placed: fall back.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 100 40"><text x="1" y="20" fill="blue" font-size="10"><tspan>A</tspan><tspan visibility="hidden"> </tspan><tspan>B</tspan></text></svg>`)); ok {
+			t.Error("visibility:hidden whitespace separator should fall back")
+		}
+	})
+	t.Run("invisible_whitespace_advances", func(t *testing.T) {
+		// A whitespace-only invisible run advances the SVG text position, so a
+		// later visible run must trigger the fallback rather than emit adjacent
+		// text ("A B" collapsed to "AB").
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 100 40"><text x="1" y="20" fill="blue" font-size="10"><tspan>A</tspan><tspan fill="none"> </tspan><tspan>B</tspan></text></svg>`)); ok {
+			t.Error("whitespace-only invisible run before a visible run should fall back")
+		}
+	})
+	t.Run("text_within_viewport", func(t *testing.T) {
+		// Text that fits well within the viewport still converts under the
+		// full-em width upper bound.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 200 40"><text x="1" y="20" fill="blue" font-size="10">Hi</text></svg>`)); !ok {
+			t.Error("short text within the viewport should still convert")
+		}
+	})
+	t.Run("wide_text_overflows", func(t *testing.T) {
+		// Wide text near the right edge overflows under the full-em bound and falls
+		// back instead of clipping.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 50 20"><text x="1" y="15" fill="blue" font-size="10">WWWWW</text></svg>`)); ok {
+			t.Error("wide text near the right edge should fall back")
+		}
+	})
+}
+
+func TestConvertReferences(t *testing.T) {
+	t.Run("symbol_instantiation", func(t *testing.T) {
+		// Standalone <symbol> renders nothing; via <use> it renders.
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><symbol id="s"><rect width="1" height="1" fill="red"/></symbol></svg>`)
+		if len(g.Geoms) != 0 {
+			t.Fatalf("standalone symbol should render nothing, got %d", len(g.Geoms))
+		}
+		g = mustConvert(t, `<svg viewBox="0 0 10 10"><defs><symbol id="s"><rect width="1" height="1" fill="red"/></symbol></defs><use href="#s"/></svg>`)
+		if len(g.Geoms) != 1 {
+			t.Fatalf("symbol via use should render, got %d", len(g.Geoms))
+		}
+	})
+	t.Run("stylesheet_processing_instruction", func(t *testing.T) {
+		// xml-stylesheet PI forces fallback.
+		if _, ok := Convert([]byte(`<?xml version="1.0"?><?xml-stylesheet href="s.css" type="text/css"?><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="1" height="1"/></svg>`)); ok {
+			t.Error("xml-stylesheet PI should fall back")
+		}
+	})
+	t.Run("href_precedes_xlink", func(t *testing.T) {
+		// href takes precedence over xlink:href; an external href doesn't fall
+		// through to a local xlink:href.
+		if _, ok := Convert([]byte(`<svg xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 10 10"><defs><linearGradient id="base" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/><linearGradient id="g" href="ext.svg#x" xlink:href="#base"/></svg>`)); ok {
+			t.Error("external href should not fall through to xlink:href")
+		}
+	})
+	t.Run("hidden_symbol", func(t *testing.T) {
+		// A symbol with display:none instantiated by <use> renders nothing.
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><defs><symbol id="s" display="none"><rect width="1" height="1" fill="red"/></symbol></defs><use href="#s"/></svg>`)
+		if len(g.Geoms) != 0 {
+			t.Fatalf("display:none symbol should render nothing, got %d", len(g.Geoms))
+		}
+	})
+	t.Run("clipped_symbol", func(t *testing.T) {
+		// A symbol with a clip-path (unsupported) instantiated by <use> falls back.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><defs><symbol id="s" clip-path="url(#c)"><rect width="1" height="1"/></symbol></defs><use href="#s"/></svg>`)); ok {
+			t.Error("symbol with clip-path should fall back")
+		}
+	})
+	t.Run("xml_base", func(t *testing.T) {
+		// xml:base rebases href/url references; the converter can't honor it.
+		if _, ok := Convert([]byte(`<svg xml:base="http://example.com/" viewBox="0 0 10 10"><rect width="1" height="1" fill="red"/></svg>`)); ok {
+			t.Error("xml:base should force the fallback")
+		}
+	})
+	t.Run("doctype_defaults", func(t *testing.T) {
+		// A DOCTYPE may carry ATTLIST defaults or an external DTD the parser doesn't
+		// apply; converting could differ from a faithful render, so fall back.
+		if _, ok := Convert([]byte(`<!DOCTYPE svg [ <!ATTLIST rect fill CDATA "red"> ]><svg viewBox="0 0 10 10"><rect width="10" height="10"/></svg>`)); ok {
+			t.Error("SVG with a DOCTYPE should fall back")
+		}
+	})
+}
+
+func TestConvertNamespaces(t *testing.T) {
+	t.Run("foreign_element", func(t *testing.T) {
+		// Foreign-namespace element is not rendered.
+		g := mustConvert(t, `<svg xmlns="http://www.w3.org/2000/svg" xmlns:foo="urn:example" viewBox="0 0 10 10"><foo:rect x="0" y="0" width="1" height="1" fill="red"/><rect width="1" height="1" fill="green"/></svg>`)
+		if len(g.Geoms) != 1 || g.Geoms[0].Fill.Color != "008000" {
+			t.Fatalf("foreign element should not render: %#v", g.Geoms)
+		}
+	})
+	t.Run("foreign_root", func(t *testing.T) {
+		// Foreign-namespace root named "svg" is rejected (not an empty success).
+		if _, ok := Convert([]byte(`<svg xmlns="urn:example"><rect width="1" height="1"/></svg>`)); ok {
+			t.Error("foreign-namespace root should fall back")
+		}
+	})
+	t.Run("wrong_case_stop", func(t *testing.T) {
+		// A wrong-case <STOP> (lowercased to "stop" during parsing) is not a real
+		// gradient stop and must be ignored, leaving only the two valid stops.
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="red"/><STOP offset="0.5" stop-color="lime"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)
+		stops := g.Geoms[0].Fill.Gradient.Stops
+		for _, s := range stops {
+			if s.Color == "00ff00" {
+				t.Fatalf("wrong-case <STOP> must not inject a gradient stop")
+			}
+		}
+	})
+	t.Run("wrong_case_tspan", func(t *testing.T) {
+		// A wrong-case <TSPAN> child inside <text> can't be a real tspan; fall back.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 100 40"><text x="1" y="20" font-size="10" fill="blue">A<TSPAN>B</TSPAN></text></svg>`)); ok {
+			t.Error("wrong-case <TSPAN> child should fall back")
+		}
+	})
+	t.Run("reset_namespace", func(t *testing.T) {
+		// Under an SVG-namespaced root, an element that resets to no namespace
+		// (xmlns="") is not SVG content and renders nothing.
+		g := mustConvert(t, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect xmlns="" width="10" height="10" fill="red"/></svg>`)
+		if len(g.Geoms) != 0 {
+			t.Fatalf("xmlns=\"\" rect should not render, got %d geoms", len(g.Geoms))
+		}
+	})
+	t.Run("prefixed_fill", func(t *testing.T) {
+		// A prefixed svg:fill is not the unqualified presentation attribute, so it's
+		// ignored and the default (black) fill applies.
+		g := mustConvert(t, `<svg xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="1" height="1" svg:fill="red"/></svg>`)
+		if g.Geoms[0].Fill.Color != "000000" {
+			t.Fatalf("prefixed svg:fill must be ignored (default black), got %#v", g.Geoms[0].Fill)
+		}
+	})
+	t.Run("wrong_case_elements", func(t *testing.T) {
+		// A known SVG element in the wrong case is not that element and must not be
+		// converted into geometry/gradients.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><RECT width="10" height="10" fill="red"/></svg>`)); ok {
+			t.Error("wrong-case <RECT> should fall back")
+		}
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><defs><lineargradient id="g"><stop offset="0" stop-color="red"/></lineargradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)); ok {
+			t.Error("wrong-case <lineargradient> should fall back")
+		}
+	})
+	t.Run("wrong_case_attribute", func(t *testing.T) {
+		// A known SVG attribute in the wrong case is unknown and must not activate.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect width="10" height="10" FILL="red"/></svg>`)); ok {
+			t.Error("wrong-case FILL attribute should fall back")
+		}
+	})
+	t.Run("correct_case_element_and_attribute", func(t *testing.T) {
+		// The correct case still converts.
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><rect width="10" height="10" fill="red"/></svg>`)
+		if g.Geoms[0].Fill.Color != "ff0000" {
+			t.Fatalf("correct-case rect/fill should convert, got %#v", g.Geoms[0].Fill)
+		}
+	})
+	t.Run("spread_method_case", func(t *testing.T) {
+		// A camelCase attribute (spreadMethod) still works in its canonical case,
+		// but its wrong-case form is rejected.
+		g := mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="g" spreadMethod="pad" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)
+		if g.Geoms[0].Fill.Kind != pptx.FillGradient {
+			t.Fatalf("canonical spreadMethod should convert to a gradient, got %#v", g.Geoms[0].Fill)
+		}
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><defs><linearGradient id="g" SPREADMETHOD="pad" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)); ok {
+			t.Error("wrong-case SPREADMETHOD should fall back")
+		}
+	})
+}
+
+func TestConvertPathGeometry(t *testing.T) {
+	t.Run("identical_arc_endpoints", func(t *testing.T) {
+		// An arc with identical endpoints emits no cubic (no visible dot).
+		if cubs := arcToCubics(5, 5, 3, 3, 0, false, false, 5, 5); cubs != nil {
+			t.Fatalf("identical-endpoint arc should emit no cubic, got %v", cubs)
+		}
+	})
+	t.Run("explicit_zero_corner_radius", func(t *testing.T) {
+		// An explicit rx="0" disables rounding on that axis even when ry is set, so
+		// the rect keeps square corners (no cubic segments).
+		g := mustConvert(t, `<svg viewBox="0 0 20 20"><rect width="10" height="10" rx="0" ry="4"/></svg>`)
+		for _, p := range g.Geoms[0].Paths {
+			for _, cmd := range p.Cmds {
+				if cmd.Verb == pptx.CubicTo {
+					t.Fatalf("explicit rx=0 should keep square corners, got a cubic segment")
+				}
+			}
+		}
+	})
+	t.Run("omitted_corner_radius", func(t *testing.T) {
+		// An omitted rx still inherits ry (auto), producing rounded corners.
+		g := mustConvert(t, `<svg viewBox="0 0 20 20"><rect width="10" height="10" ry="4"/></svg>`)
+		var rounded bool
+		for _, p := range g.Geoms[0].Paths {
+			for _, cmd := range p.Cmds {
+				if cmd.Verb == pptx.CubicTo {
+					rounded = true
+				}
+			}
+		}
+		if !rounded {
+			t.Fatalf("omitted rx should inherit ry and round the corners")
+		}
+	})
+	t.Run("negative_corner_radius", func(t *testing.T) {
+		// A negative corner radius is invalid and forces the fallback.
+		if _, ok := Convert([]byte(`<svg viewBox="0 0 20 20"><rect width="10" height="10" rx="-4"/></svg>`)); ok {
+			t.Error("negative rx should fall back")
+		}
+	})
+}
+
+func TestConvertLimits(t *testing.T) {
+	t.Run("exponential_use_graph", func(t *testing.T) {
+		// A crafted diamond <use> graph (exponential expansion, no shapes) is bounded.
+		var b strings.Builder
+		b.WriteString(`<svg viewBox="0 0 10 10"><defs>`)
+		b.WriteString(`<g id="g0"><rect width="1" height="1"/></g>`)
+		for i := 1; i <= 40; i++ {
+			fmt.Fprintf(&b, `<g id="g%d"><use href="#g%d"/><use href="#g%d"/></g>`, i, i-1, i-1)
+		}
+		b.WriteString(`</defs><use href="#g40"/></svg>`)
+		if _, ok := Convert([]byte(b.String())); ok {
+			t.Error("exponential <use> graph should hit the visit limit and fall back")
+		}
+	})
+	t.Run("path_command_budget", func(t *testing.T) {
+		// A <path> with more than maxCommands segments must fall back. The budget is
+		// enforced within parsePath's inner loop so the parser aborts without
+		// building a slice of maxCommands elements first.
+		pathSVG := `<svg viewBox="0 0 10 10"><path d="M0 0` +
+			strings.Repeat(" H1", maxCommands+1) +
+			`" fill="none" stroke="black"/></svg>`
+		if _, ok := Convert([]byte(pathSVG)); ok {
+			t.Fatal("path with more than maxCommands commands should fall back")
+		}
+	})
+	t.Run("polygon_point_budget", func(t *testing.T) {
+		// A <polygon> with more than maxCommands points must also fall back. The
+		// budget is forwarded into parsePoints/scanNumbers so the full point list is
+		// never allocated before rejection.
+		polySVG := `<svg viewBox="0 0 10 10"><polygon points="` +
+			strings.Repeat("1 1 ", maxCommands+1) +
+			`" fill="red"/></svg>`
+		if _, ok := Convert([]byte(polySVG)); ok {
+			t.Fatal("polygon with more than maxCommands points should fall back")
+		}
+	})
+}
+
+func TestConvertOpacityFallbacks(t *testing.T) {
 	for name, svg := range map[string]string{
-		"operandless command":    `<svg viewBox="0 0 100 100"><path d="M0 0 L Z L20 0" fill="red"/></svg>`,
-		"gradient external href": `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg" href="ext.svg#g"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`,
+		"group opacity":           `<svg viewBox="0 0 10 10"><g opacity="0.5"><rect width="1" height="1" fill="red"/></g></svg>`,
+		"opacity fill and stroke": `<svg viewBox="0 0 10 10"><rect width="5" height="5" fill="red" stroke="blue" stroke-width="1" opacity="0.5"/></svg>`,
+		"NaN opacity":             `<svg viewBox="0 0 10 10"><rect width="5" height="5" fill="red" opacity="NaN"/></svg>`,
 	} {
-		if _, ok := Convert([]byte(svg)); ok {
-			t.Errorf("%s: expected fallback", name)
-		}
-	}
-	// An arc with identical endpoints emits no cubic (no visible dot).
-	if cubs := arcToCubics(5, 5, 3, 3, 0, false, false, 5, 5); cubs != nil {
-		t.Fatalf("identical-endpoint arc should emit no cubic, got %v", cubs)
-	}
-	// A crafted diamond <use> graph (exponential expansion, no shapes) is bounded.
-	var b strings.Builder
-	b.WriteString(`<svg viewBox="0 0 10 10"><defs>`)
-	b.WriteString(`<g id="g0"><rect width="1" height="1"/></g>`)
-	for i := 1; i <= 40; i++ {
-		fmt.Fprintf(&b, `<g id="g%d"><use href="#g%d"/><use href="#g%d"/></g>`, i, i-1, i-1)
-	}
-	b.WriteString(`</defs><use href="#g40"/></svg>`)
-	if _, ok := Convert([]byte(b.String())); ok {
-		t.Error("exponential <use> graph should hit the visit limit and fall back")
+		t.Run(name, func(t *testing.T) {
+			if _, ok := Convert([]byte(svg)); ok {
+				t.Error("expected fallback")
+			}
+		})
 	}
 }
 
-func TestReviewBatch10(t *testing.T) {
-	// Compound class selector .foo.bar is rejected (mis-matched as one class).
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><style>.foo.bar{fill:red}</style><rect class="foo" width="1" height="1"/></svg>`)); ok {
-		t.Error("compound selector should fall back")
-	}
-	// xml-stylesheet PI forces fallback.
-	if _, ok := Convert([]byte(`<?xml version="1.0"?><?xml-stylesheet href="s.css" type="text/css"?><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="1" height="1"/></svg>`)); ok {
-		t.Error("xml-stylesheet PI should fall back")
-	}
-	// href takes precedence over xlink:href; an external href doesn't fall
-	// through to a local xlink:href.
-	if _, ok := Convert([]byte(`<svg xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 10 10"><defs><linearGradient id="base" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/><linearGradient id="g" href="ext.svg#x" xlink:href="#base"/></svg>`)); ok {
-		t.Error("external href should not fall through to xlink:href")
-	}
-	// A large stroke that would paint well outside the viewport falls back.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><line x1="1" y1="5" x2="9" y2="5" stroke="black" stroke-width="1000"/></svg>`)); ok {
-		t.Error("huge stroke crossing the viewport should fall back")
-	}
-	// An edge-aligned stroked border paints half its width outside the viewport,
-	// which a PowerPoint group would show beyond the image rect; fall back.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect x="0" y="0" width="10" height="10" fill="none" stroke="black" stroke-width="1" stroke-linejoin="round"/></svg>`)); ok {
-		t.Error("edge-aligned stroked border should fall back (stroke overhang)")
-	}
-	// An inset border whose stroke stays within the viewport still converts.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" fill="none" stroke="black" stroke-width="1" stroke-linejoin="round"/></svg>`)); !ok {
-		t.Error("inset border within the viewport should convert")
-	}
-	// Invisible text before visible text shifts position -> fallback.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="1" y="10" fill="none" font-size="10">XX<tspan fill="red">Hi</tspan></text></svg>`)); ok {
-		t.Error("invisible text before visible run should fall back")
-	}
-	// Whitespace across a run boundary collapses to a single separator and is
-	// preserved on the run.
-	g := mustConvert(t, `<svg viewBox="0 0 200 100"><text x="1" y="10" fill="blue" font-size="10">Hello <tspan> world</tspan></text></svg>`)
-	runs := g.Texts[0].Paragraphs[0].Runs
-	var joined string
-	for _, r := range runs {
-		joined += r.Text
-	}
-	if joined != "Hello world" {
-		t.Fatalf("cross-run whitespace should collapse to one space, got %q", joined)
-	}
-}
-
-func TestReviewBatch11(t *testing.T) {
-	// Foreign-namespace root named "svg" is rejected (not an empty success).
-	if _, ok := Convert([]byte(`<svg xmlns="urn:example"><rect width="1" height="1"/></svg>`)); ok {
-		t.Error("foreign-namespace root should fall back")
-	}
-	// stop-color set on the gradient must not leak into a stop lacking one.
-	g := mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg" style="stop-color:#00ff00"><stop offset="0" stop-color="#ff0000"/><stop offset="1" stop-color="#0000ff"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`)
-	if g.Geoms[0].Fill.Gradient.Stops[0].Color != "ff0000" {
-		t.Fatalf("gradient stop-color leaked, got %s", g.Geoms[0].Fill.Gradient.Stops[0].Color)
-	}
-	// visibility:unset under a hidden parent stays hidden.
-	g = mustConvert(t, `<svg viewBox="0 0 10 10"><g visibility="hidden"><rect width="1" height="1" fill="red" visibility="unset"/></g><rect width="1" height="1" fill="green"/></svg>`)
-	if len(g.Geoms) != 1 || g.Geoms[0].Fill.Color != "008000" {
-		t.Fatalf("visibility:unset should inherit hidden: %#v", g.Geoms)
-	}
-	// A type selector is case-sensitive: RECT must not match <rect>.
-	g = mustConvert(t, `<svg viewBox="0 0 10 10"><style>RECT{fill:#0000ff}</style><rect width="1" height="1" fill="green"/></svg>`)
-	if g.Geoms[0].Fill.Color != "008000" {
-		t.Fatalf("RECT should not match <rect>, got %s", g.Geoms[0].Fill.Color)
-	}
-	// camelCase type selector still matches the camelCase element.
-	g = mustConvert(t, `<svg viewBox="0 0 10 10"><style>rect{fill:#00ff00}</style><rect width="1" height="1"/></svg>`)
-	if g.Geoms[0].Fill.Color != "00ff00" {
-		t.Fatalf("lowercase type selector should match, got %s", g.Geoms[0].Fill.Color)
-	}
-}
-
-func TestReviewBatch12(t *testing.T) {
-	// fill:initial restores the default (black), not "no fill".
-	g := mustConvert(t, `<svg viewBox="0 0 10 10"><rect width="1" height="1" fill="initial"/></svg>`)
-	if g.Geoms[0].Fill.Kind != pptx.FillSolid || g.Geoms[0].Fill.Color != "000000" {
-		t.Fatalf("fill:initial should be solid black, got %#v", g.Geoms[0].Fill)
-	}
-	// A symbol with display:none instantiated by <use> renders nothing.
-	g = mustConvert(t, `<svg viewBox="0 0 10 10"><defs><symbol id="s" display="none"><rect width="1" height="1" fill="red"/></symbol></defs><use href="#s"/></svg>`)
-	if len(g.Geoms) != 0 {
-		t.Fatalf("display:none symbol should render nothing, got %d", len(g.Geoms))
-	}
-	// A symbol with a clip-path (unsupported) instantiated by <use> falls back.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><defs><symbol id="s" clip-path="url(#c)"><rect width="1" height="1"/></symbol></defs><use href="#s"/></svg>`)); ok {
-		t.Error("symbol with clip-path should fall back")
-	}
-	// A whitespace-only tspan between visible runs is a word separator, not
-	// dropped.
-	g = mustConvert(t, `<svg viewBox="0 0 200 40"><text x="1" y="20" fill="blue" font-size="10"><tspan>Hello</tspan><tspan> </tspan><tspan>world</tspan></text></svg>`)
-	var joined string
-	for _, r := range g.Texts[0].Paragraphs[0].Runs {
-		joined += r.Text
-	}
-	if joined != "Hello world" {
-		t.Fatalf("whitespace-only tspan separator lost: %q", joined)
-	}
-	// A large tspan inside small parent text that would overflow the viewport
-	// falls back (vertical bounds use the max run size).
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 20"><text x="1" y="18" fill="red" font-size="5"><tspan font-size="200">Big</tspan></text></svg>`)); ok {
-		t.Error("oversized tspan overflowing the viewport should fall back")
-	}
-}
-
-func TestReviewBatch23(t *testing.T) {
-	// An empty CSS declaration is invalid and must not override the presentation
-	// attribute: fill stays red rather than becoming empty.
-	g := mustConvert(t, `<svg viewBox="0 0 10 10"><rect fill="red" style="fill:" width="10" height="10"/></svg>`)
-	if g.Geoms[0].Fill.Color != "ff0000" {
-		t.Fatalf("empty fill declaration should keep the red attribute, got %#v", g.Geoms[0].Fill)
-	}
-}
-
-func TestReviewBatch24(t *testing.T) {
-	// A <path> with more than maxCommands segments must fall back. The budget is
-	// enforced within parsePath's inner loop so the parser aborts without
-	// building a slice of maxCommands elements first.
-	pathSVG := `<svg viewBox="0 0 10 10"><path d="M0 0` +
-		strings.Repeat(" H1", maxCommands+1) +
-		`" fill="none" stroke="black"/></svg>`
-	if _, ok := Convert([]byte(pathSVG)); ok {
-		t.Fatal("path with more than maxCommands commands should fall back")
-	}
-
-	// A <polygon> with more than maxCommands points must also fall back. The
-	// budget is forwarded into parsePoints/scanNumbers so the full point list is
-	// never allocated before rejection.
-	polySVG := `<svg viewBox="0 0 10 10"><polygon points="` +
-		strings.Repeat("1 1 ", maxCommands+1) +
-		`" fill="red"/></svg>`
-	if _, ok := Convert([]byte(polySVG)); ok {
-		t.Fatal("polygon with more than maxCommands points should fall back")
-	}
-}
-
-func TestReviewBatch22(t *testing.T) {
-	// The exported Convert must not emit geometry for an SVG whose root width or
-	// height is an explicit zero (its viewport renders nothing), independent of
-	// the render pipeline's Dimensions prefilter.
-	for _, svg := range []string{
-		`<svg width="0" height="10" viewBox="0 0 10 10"><rect width="1" height="1" fill="red"/></svg>`,
-		`<svg width="0%" height="10" viewBox="0 0 10 10"><rect width="1" height="1" fill="red"/></svg>`,
-		`<svg width="0em" height="10" viewBox="0 0 10 10"><rect width="1" height="1" fill="red"/></svg>`,
-		`<svg width="10" height="0" viewBox="0 0 10 10"><rect width="1" height="1" fill="red"/></svg>`,
+func TestConvertCSSFallbacks(t *testing.T) {
+	for name, svg := range map[string]string{
+		"unsupported css":    `<svg viewBox="0 0 10 10"><rect width="1" height="1" style="mix-blend-mode:multiply"/></svg>`,
+		"important":          `<svg viewBox="0 0 10 10"><rect width="1" height="1" style="display:none !important"/></svg>`,
+		"style media print":  `<svg viewBox="0 0 10 10"><style media="print">rect{fill:red}</style><rect width="1" height="1"/></svg>`,
+		"style non-css type": `<svg viewBox="0 0 10 10"><style type="text/less">rect{fill:red}</style><rect width="1" height="1"/></svg>`,
 	} {
-		if _, ok := Convert([]byte(svg)); ok {
-			t.Errorf("explicit zero root size should not convert: %s", svg)
-		}
-	}
-	// An invalid (non-zero) dimension unit isn't a zero, so it still converts.
-	if _, ok := Convert([]byte(`<svg width="0foo" height="10" viewBox="0 0 10 10"><rect width="1" height="1" fill="red"/></svg>`)); !ok {
-		t.Error("invalid (non-zero) dimension should still convert")
-	}
-}
-
-func TestReviewBatch21(t *testing.T) {
-	// A wrong-case <STOP> (lowercased to "stop" during parsing) is not a real
-	// gradient stop and must be ignored, leaving only the two valid stops.
-	g := mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="red"/><STOP offset="0.5" stop-color="lime"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)
-	stops := g.Geoms[0].Fill.Gradient.Stops
-	for _, s := range stops {
-		if s.Color == "00ff00" {
-			t.Fatalf("wrong-case <STOP> must not inject a gradient stop")
-		}
-	}
-	// A wrong-case <TSPAN> child inside <text> can't be a real tspan; fall back.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 40"><text x="1" y="20" font-size="10" fill="blue">A<TSPAN>B</TSPAN></text></svg>`)); ok {
-		t.Error("wrong-case <TSPAN> child should fall back")
-	}
-	// An invalid inline display value must not un-hide a display:none element;
-	// the invalid declaration forces the fallback.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect width="1" height="1" display="none" style="display:bogus"/></svg>`)); ok {
-		t.Error("invalid display value should fall back")
-	}
-	// stop-color:inherit resolves to the parent's computed initial value
-	// (black), not the lower-priority red presentation attribute.
-	g = mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="red" style="stop-color:inherit"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)
-	if g.Geoms[0].Fill.Gradient.Stops[0].Color != "000000" {
-		t.Fatalf("stop-color:inherit should be initial black, got %#v", g.Geoms[0].Fill.Gradient.Stops[0])
-	}
-	// A valid display value still converts.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect width="1" height="1" fill="red" style="display:inline"/></svg>`)); !ok {
-		t.Error("valid display:inline should convert")
-	}
-}
-
-func TestReviewBatch20(t *testing.T) {
-	// No-viewBox: a relative height (1em) is resolved for the child viewport, so
-	// a 32px x 1em SVG has a 32x16 child space (not 32x150), matching Dimensions.
-	g := mustConvert(t, `<svg width="32px" height="1em"><rect width="1" height="1" fill="red"/></svg>`)
-	if g.ChW != round(32*emuPerUnit) || g.ChH != round(16*emuPerUnit) {
-		t.Fatalf("no-viewBox em child space = %dx%d, want %dx%d", g.ChW, g.ChH, round(32*emuPerUnit), round(16*emuPerUnit))
-	}
-	// A square line cap on a diagonal extends up to sqrt(2)*half-width past the
-	// endpoint; a cap reaching the viewport corner falls back.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><line x1="50" y1="50" x2="2" y2="2" stroke="black" stroke-width="4" stroke-linecap="square"/></svg>`)); ok {
-		t.Error("square cap reaching the viewport corner should fall back")
-	}
-	// The same diagonal square-capped line comfortably inside still converts.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><line x1="50" y1="50" x2="20" y2="20" stroke="black" stroke-width="4" stroke-linecap="square"/></svg>`)); !ok {
-		t.Error("inset diagonal square-capped line should convert")
-	}
-	// A path's second subpath is evaluated independently: a miter corner near
-	// the edge there must still trigger the fallback.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><path d="M20 20 L40 20 L40 40 M10 50 L1 50 L1 60" fill="none" stroke="black" stroke-width="2"/></svg>`)); ok {
-		t.Error("miter corner in a later subpath near the edge should fall back")
-	}
-	// Two separate, safe subpaths must not be joined across the MoveTo (no false
-	// cross-subpath join), so they still convert.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><path d="M20 20 L40 20 L40 40 M50 50 L70 50 L70 70" fill="none" stroke="black" stroke-width="2"/></svg>`)); !ok {
-		t.Error("two independent safe subpaths should convert")
-	}
-}
-
-func TestReviewBatch19(t *testing.T) {
-	// A gradient stop's currentColor inherits the color computed at the
-	// gradient's own ancestors, not defaultStyle: here ancestor color="red".
-	g := mustConvert(t, `<svg viewBox="0 0 10 10" color="red"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="currentColor"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)
-	if g.Geoms[0].Fill.Gradient.Stops[0].Color != "ff0000" {
-		t.Fatalf("gradient currentColor should inherit ancestor red, got %#v", g.Geoms[0].Fill.Gradient.Stops[0])
-	}
-	// A stroke wider than the DrawingML a:ln@w limit (even inside a large
-	// viewBox) can't be represented; fall back.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 1000000 1000000"><line x1="1" y1="5" x2="9" y2="5" stroke="black" stroke-width="500000"/></svg>`)); ok {
-		t.Error("stroke width beyond the DrawingML limit should fall back")
-	}
-	// A viewBox whose EMU extent exceeds ST_PositiveCoordinate can't be written;
-	// fall back.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 9000000000 9000000000"><rect width="1" height="1" fill="red"/></svg>`)); ok {
-		t.Error("oversized viewBox should fall back")
-	}
-	// xml:base rebases href/url references; the converter can't honor it.
-	if _, ok := Convert([]byte(`<svg xml:base="http://example.com/" viewBox="0 0 10 10"><rect width="1" height="1" fill="red"/></svg>`)); ok {
-		t.Error("xml:base should force the fallback")
-	}
-	// A relative root height (1em) gives a real aspect (32x16) that differs from
-	// a square viewBox, which needs letterboxing this model can't do; fall back.
-	if _, ok := Convert([]byte(`<svg width="32px" height="1em" viewBox="0 0 32 32"><rect width="1" height="1" fill="red"/></svg>`)); ok {
-		t.Error("mismatched em-based aspect should fall back")
-	}
-}
-
-func TestReviewBatch18(t *testing.T) {
-	// A sharp miter corner whose apex points past the viewport edge leaks
-	// outside the non-clipping group; fall back.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><polyline points="15,2 1,50 15,98" fill="none" stroke="black" stroke-width="2"/></svg>`)); ok {
-		t.Error("sharp miter spike near the edge should fall back")
-	}
-	// The same corner comfortably inside the viewport still converts (the actual
-	// miter apex, not a worst-case, is used).
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><polyline points="30,2 16,50 30,98" fill="none" stroke="black" stroke-width="2"/></svg>`)); !ok {
-		t.Error("inset miter corner should convert")
-	}
-	// Under an SVG-namespaced root, an element that resets to no namespace
-	// (xmlns="") is not SVG content and renders nothing.
-	g := mustConvert(t, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect xmlns="" width="10" height="10" fill="red"/></svg>`)
-	if len(g.Geoms) != 0 {
-		t.Fatalf("xmlns=\"\" rect should not render, got %d geoms", len(g.Geoms))
-	}
-	// A prefixed svg:fill is not the unqualified presentation attribute, so it's
-	// ignored and the default (black) fill applies.
-	g = mustConvert(t, `<svg xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="1" height="1" svg:fill="red"/></svg>`)
-	if g.Geoms[0].Fill.Color != "000000" {
-		t.Fatalf("prefixed svg:fill must be ignored (default black), got %#v", g.Geoms[0].Fill)
-	}
-	// stop-color:initial restores the initial value (black), not the red
-	// presentation attribute; the gradient's first stop is black.
-	g = mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="red" style="stop-color:initial"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)
-	if g.Geoms[0].Fill.Kind != pptx.FillGradient || g.Geoms[0].Fill.Gradient.Stops[0].Color != "000000" {
-		t.Fatalf("stop-color:initial should be black, got %#v", g.Geoms[0].Fill.Gradient)
-	}
-	// An invalid rgb() component (NaN) is not a valid color; the declaration is
-	// rejected and the element falls back.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect width="1" height="1" fill="rgb(NaN%,0%,0%)"/></svg>`)); ok {
-		t.Error("rgb() with a NaN component should fall back")
-	}
-}
-
-func TestReviewBatch17(t *testing.T) {
-	// A DOCTYPE may carry ATTLIST defaults or an external DTD the parser doesn't
-	// apply; converting could differ from a faithful render, so fall back.
-	if _, ok := Convert([]byte(`<!DOCTYPE svg [ <!ATTLIST rect fill CDATA "red"> ]><svg viewBox="0 0 10 10"><rect width="10" height="10"/></svg>`)); ok {
-		t.Error("SVG with a DOCTYPE should fall back")
-	}
-	// An invalid selector (a class starting with a digit) is ignored by CSS, so
-	// the stylesheet parse must fail rather than apply it to class="1".
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><style>.1{display:none}</style><rect class="1" width="10" height="10" fill="red"/></svg>`)); ok {
-		t.Error("digit-leading class selector should fall back")
-	}
-	// A leading-hyphen-digit identifier is likewise invalid.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><style>.-1{display:none}</style><rect class="-1" width="10" height="10" fill="red"/></svg>`)); ok {
-		t.Error("hyphen-digit class selector should fall back")
-	}
-	// A valid identifier selector still applies.
-	g := mustConvert(t, `<svg viewBox="0 0 10 10"><style>.a{fill:red}</style><rect class="a" width="1" height="1"/></svg>`)
-	if g.Geoms[0].Fill.Color != "ff0000" {
-		t.Fatalf("valid class selector should apply, got %#v", g.Geoms[0].Fill)
-	}
-	// An edge-aligned stroke paints half its width outside the viewport, which a
-	// PowerPoint group can't clip; fall back.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><line x1="0" y1="5" x2="10" y2="5" stroke="black" stroke-width="1"/></svg>`)); ok {
-		t.Error("edge-touching stroke should fall back (half-width overhang)")
-	}
-}
-
-func TestReviewBatch16(t *testing.T) {
-	// A known SVG element in the wrong case is not that element and must not be
-	// converted into geometry/gradients.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><RECT width="10" height="10" fill="red"/></svg>`)); ok {
-		t.Error("wrong-case <RECT> should fall back")
-	}
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><defs><lineargradient id="g"><stop offset="0" stop-color="red"/></lineargradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)); ok {
-		t.Error("wrong-case <lineargradient> should fall back")
-	}
-	// A known SVG attribute in the wrong case is unknown and must not activate.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect width="10" height="10" FILL="red"/></svg>`)); ok {
-		t.Error("wrong-case FILL attribute should fall back")
-	}
-	// The correct case still converts.
-	g := mustConvert(t, `<svg viewBox="0 0 10 10"><rect width="10" height="10" fill="red"/></svg>`)
-	if g.Geoms[0].Fill.Color != "ff0000" {
-		t.Fatalf("correct-case rect/fill should convert, got %#v", g.Geoms[0].Fill)
-	}
-	// A camelCase attribute (spreadMethod) still works in its canonical case,
-	// but its wrong-case form is rejected.
-	g = mustConvert(t, `<svg viewBox="0 0 10 10"><defs><linearGradient id="g" spreadMethod="pad" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)
-	if g.Geoms[0].Fill.Kind != pptx.FillGradient {
-		t.Fatalf("canonical spreadMethod should convert to a gradient, got %#v", g.Geoms[0].Fill)
-	}
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><defs><linearGradient id="g" SPREADMETHOD="pad" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`)); ok {
-		t.Error("wrong-case SPREADMETHOD should fall back")
-	}
-	// A quoted font-family containing a comma is one family, not split on the
-	// comma.
-	g = mustConvert(t, `<svg viewBox="0 0 200 40"><text x="1" y="20" fill="blue" font-size="10" font-family='"ACME, Inc.", sans-serif'>Hi</text></svg>`)
-	if fam := g.Texts[0].Paragraphs[0].Runs[0].FontFamily; fam != "ACME, Inc." {
-		t.Fatalf("quoted family with comma mis-parsed, got %q", fam)
-	}
-}
-
-func TestReviewBatch15(t *testing.T) {
-	// A font-size below the DrawingML 1pt minimum can't be represented.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="1" y="10" font-size="0.5">Hi</text></svg>`)); ok {
-		t.Error("sub-1pt font size should fall back")
-	}
-	// A font-size above the 4000pt maximum can't be represented.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 100000 100000"><text x="1" y="10" font-size="6000">Hi</text></svg>`)); ok {
-		t.Error("oversized font size should fall back")
-	}
-	// A tspan font-size override outside the range also falls back.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 100"><text x="1" y="10" font-size="10"><tspan font-size="0.5">Hi</tspan></text></svg>`)); ok {
-		t.Error("tspan sub-1pt font size should fall back")
-	}
-	// An invalid enumerated value (fill-rule/visibility) is a dropped CSS
-	// declaration; treating it as a default could flip rendering, so fall back.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><path d="M0 0h10v10h-10z" fill-rule="bogus"/></svg>`)); ok {
-		t.Error("invalid fill-rule should fall back")
-	}
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><rect width="10" height="10" visibility="sometimes"/></svg>`)); ok {
-		t.Error("invalid visibility should fall back")
-	}
-	// display:none removes a run from layout without advancing, so the
-	// surrounding visible runs stay adjacent and conversion succeeds.
-	g := mustConvert(t, `<svg viewBox="0 0 100 40"><text x="1" y="20" fill="blue" font-size="10"><tspan>A</tspan><tspan display="none">X</tspan><tspan>B</tspan></text></svg>`)
-	var joined string
-	for _, r := range g.Texts[0].Paragraphs[0].Runs {
-		joined += r.Text
-	}
-	if joined != "AB" {
-		t.Fatalf("display:none run should be dropped without advancing, got %q", joined)
-	}
-	// visibility:hidden whitespace still advances the position, so a later
-	// visible run can't be faithfully placed: fall back.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 40"><text x="1" y="20" fill="blue" font-size="10"><tspan>A</tspan><tspan visibility="hidden"> </tspan><tspan>B</tspan></text></svg>`)); ok {
-		t.Error("visibility:hidden whitespace separator should fall back")
-	}
-}
-
-func TestReviewBatch14(t *testing.T) {
-	// An explicit rx="0" disables rounding on that axis even when ry is set, so
-	// the rect keeps square corners (no cubic segments).
-	g := mustConvert(t, `<svg viewBox="0 0 20 20"><rect width="10" height="10" rx="0" ry="4"/></svg>`)
-	for _, p := range g.Geoms[0].Paths {
-		for _, cmd := range p.Cmds {
-			if cmd.Verb == pptx.CubicTo {
-				t.Fatalf("explicit rx=0 should keep square corners, got a cubic segment")
+		t.Run(name, func(t *testing.T) {
+			if _, ok := Convert([]byte(svg)); ok {
+				t.Error("expected fallback")
 			}
-		}
-	}
-	// An omitted rx still inherits ry (auto), producing rounded corners.
-	g = mustConvert(t, `<svg viewBox="0 0 20 20"><rect width="10" height="10" ry="4"/></svg>`)
-	var rounded bool
-	for _, p := range g.Geoms[0].Paths {
-		for _, cmd := range p.Cmds {
-			if cmd.Verb == pptx.CubicTo {
-				rounded = true
-			}
-		}
-	}
-	if !rounded {
-		t.Fatalf("omitted rx should inherit ry and round the corners")
-	}
-	// A negative corner radius is invalid and forces the fallback.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 20 20"><rect width="10" height="10" rx="-4"/></svg>`)); ok {
-		t.Error("negative rx should fall back")
-	}
-	// A comment-like sequence inside a quoted CSS string must not be stripped,
-	// so the selector still matches and converts.
-	g = mustConvert(t, `<svg viewBox="0 0 10 10"><style>rect{fill:red;font-family:"A/*B*/"}</style><rect width="1" height="1"/></svg>`)
-	if g.Geoms[0].Fill.Color != "ff0000" {
-		t.Fatalf("CSS comment inside a string must not break parsing, got %#v", g.Geoms[0].Fill)
+		})
 	}
 }
 
-func TestReviewBatch13(t *testing.T) {
-	// A whitespace-only invisible run advances the SVG text position, so a
-	// later visible run must trigger the fallback rather than emit adjacent
-	// text ("A B" collapsed to "AB").
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 100 40"><text x="1" y="20" fill="blue" font-size="10"><tspan>A</tspan><tspan fill="none"> </tspan><tspan>B</tspan></text></svg>`)); ok {
-		t.Error("whitespace-only invisible run before a visible run should fall back")
+func TestConvertStrokesFallbacks(t *testing.T) {
+	for name, svg := range map[string]string{
+		"dash array":                    `<svg viewBox="0 0 10 10"><rect width="1" height="1" fill="none" stroke="black" stroke-width="1" stroke-dasharray="1 2"/></svg>`,
+		"explicit miterlimit":           `<svg viewBox="0 0 10 10"><rect width="2" height="2" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter" stroke-miterlimit="10"/></svg>`,
+		"unsupported presentation attr": `<svg viewBox="0 0 10 10"><rect width="1" height="1" fill="red" vector-effect="non-scaling-stroke"/></svg>`,
+		"zero scale stroked":            `<svg viewBox="0 0 10 10"><rect width="5" height="5" fill="none" stroke="black" stroke-width="1" transform="scale(0)"/></svg>`,
+		"negative stroke width":         `<svg viewBox="0 0 10 10"><rect width="5" height="5" fill="none" stroke="black" stroke-width="-1"/></svg>`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, ok := Convert([]byte(svg)); ok {
+				t.Error("expected fallback")
+			}
+		})
 	}
-	// Text that fits well within the viewport still converts under the
-	// full-em width upper bound.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 200 40"><text x="1" y="20" fill="blue" font-size="10">Hi</text></svg>`)); !ok {
-		t.Error("short text within the viewport should still convert")
+}
+
+func TestConvertGradientsFallbacks(t *testing.T) {
+	for name, svg := range map[string]string{
+		"radial geometry":              `<svg viewBox="0 0 10 10"><defs><radialGradient id="g" cx="0" cy="0" r="50%"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></radialGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`,
+		"gradient under rotation":      `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)" transform="rotate(90)"/></svg>`,
+		"partial gradient override":    `<svg viewBox="0 0 10 10"><defs><linearGradient id="p" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient><linearGradient id="c" href="#p" x2="1"/></defs><rect width="10" height="10" fill="url(#c)"/></svg>`,
+		"zero-length gradient":         `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg" x1="0.5" y1="0.5" x2="0.5" y2="0.5"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`,
+		"gradient axis reflection":     `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect x="-5" width="5" height="5" fill="url(#lg)" transform="translate(10,0) scale(-1,1)"/></svg>`,
+		"NaN gradient coord":           `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg" x1="NaN"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`,
+		"gradient color-interpolation": `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg" color-interpolation="linearRGB"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`,
+		"gradient coord out of range":  `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg" x1="-100%" x2="200%"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`,
+		"stop unsupported attr":        `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg"><stop offset="0" stop-color="red" color-interpolation="linearRGB"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`,
+		"gradient external href":       `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg" href="ext.svg#g"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, ok := Convert([]byte(svg)); ok {
+				t.Error("expected fallback")
+			}
+		})
 	}
-	// Wide text near the right edge overflows under the full-em bound and falls
-	// back instead of clipping.
-	if _, ok := Convert([]byte(`<svg viewBox="0 0 50 20"><text x="1" y="15" fill="blue" font-size="10">WWWWW</text></svg>`)); ok {
-		t.Error("wide text near the right edge should fall back")
+}
+
+func TestConvertReferencesFallbacks(t *testing.T) {
+	for name, svg := range map[string]string{
+		"use width":      `<svg viewBox="0 0 10 10"><defs><rect id="r" width="2" height="2"/></defs><use href="#r" width="5" height="5"/></svg>`,
+		"symbol viewbox": `<svg viewBox="0 0 10 10"><defs><symbol id="s" viewBox="0 0 4 4"><rect width="4" height="4"/></symbol></defs><use href="#s"/></svg>`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, ok := Convert([]byte(svg)); ok {
+				t.Error("expected fallback")
+			}
+		})
+	}
+}
+
+func TestConvertTextLayoutFallbacks(t *testing.T) {
+	for name, svg := range map[string]string{
+		"text scale":               `<svg viewBox="0 0 100 100"><text x="1" y="1" transform="scale(2)" fill="red" font-size="10">Hi</text></svg>`,
+		"mixed text ordering":      `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10">A<tspan>B</tspan>C</text></svg>`,
+		"tspan positioned":         `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="red" font-size="10"><tspan x="5">Hi</tspan></text></svg>`,
+		"tspan nested":             `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="red" font-size="10"><tspan><tspan>Hi</tspan></tspan></text></svg>`,
+		"font-weight attr":         `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10" font-weight="bold">Hi</text></svg>`,
+		"xml:space preserve text":  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10" xml:space="preserve">a   b</text></svg>`,
+		"text with stroke":         `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="none" stroke="red" stroke-width="1" font-size="10">Hi</text></svg>`,
+		"tspan with stroke":        `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10"><tspan stroke="blue" stroke-width="1">Hi</tspan></text></svg>`,
+		"text outside viewport":    `<svg viewBox="0 0 100 100"><text x="1" y="200" fill="red" font-size="10">Hi</text></svg>`,
+		"negative font-size":       `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="red" font-size="-10">Hi</text></svg>`,
+		"negative tspan font-size": `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="red" font-size="10"><tspan font-size="-5">Hi</tspan></text></svg>`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, ok := Convert([]byte(svg)); ok {
+				t.Error("expected fallback")
+			}
+		})
+	}
+}
+
+func TestConvertViewportFallbacks(t *testing.T) {
+	for name, svg := range map[string]string{
+		"circle outside viewport": `<svg viewBox="0 0 10 10"><circle cx="0" cy="5" r="3" fill="red"/></svg>`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, ok := Convert([]byte(svg)); ok {
+				t.Error("expected fallback")
+			}
+		})
+	}
+}
+
+func TestConvertPathGeometryFallbacks(t *testing.T) {
+	for name, svg := range map[string]string{
+		"path starts with L":  `<svg viewBox="0 0 10 10"><path d="L5 5" fill="red"/></svg>`,
+		"operandless command": `<svg viewBox="0 0 100 100"><path d="M0 0 L Z L20 0" fill="red"/></svg>`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, ok := Convert([]byte(svg)); ok {
+				t.Error("expected fallback")
+			}
+		})
 	}
 }

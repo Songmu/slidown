@@ -5,23 +5,26 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Songmu/slidown/internal/testutil"
 )
 
-// unzipToStringMap unzips a .pptx into a name->contents map with string values,
-// for tests that assert on XML text. It builds on unzipToMap.
-func unzipToStringMap(t *testing.T, data []byte) map[string]string {
+// unzipToMap reads the byte parts of a presentation.
+func unzipToMap(t testing.TB, data []byte) map[string][]byte {
 	t.Helper()
-	raw := unzipToMap(t, data)
-	parts := make(map[string]string, len(raw))
-	for name, b := range raw {
-		parts[name] = string(b)
-	}
+	parts, _ := testutil.ReadZIP(t, data)
 	return parts
+}
+
+// unzipToStringMap reads parts for tests that assert on XML text.
+func unzipToStringMap(t testing.TB, data []byte) map[string]string {
+	t.Helper()
+	return testutil.ReadZIPStrings(t, data)
 }
 
 // writeToParts serializes a presentation and returns its package parts as a
 // name->contents string map, folding the WriteTo + unzip boilerplate.
-func writeToParts(t *testing.T, p *Presentation) map[string]string {
+func writeToParts(t testing.TB, p *Presentation) map[string]string {
 	t.Helper()
 	var buf bytes.Buffer
 	if _, err := p.WriteTo(&buf); err != nil {
@@ -32,7 +35,7 @@ func writeToParts(t *testing.T, p *Presentation) map[string]string {
 
 // writeTempPPTX writes pptx bytes to a fresh temporary file and returns its
 // path, for APIs (e.g. MergeWithExisting, LoadTemplate) that take a file path.
-func writeTempPPTX(t *testing.T, data []byte) string {
+func writeTempPPTX(t testing.TB, data []byte) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "deck.pptx")
 	if err := os.WriteFile(path, data, 0o600); err != nil {

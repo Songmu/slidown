@@ -1,11 +1,10 @@
 package pptx
 
 import (
-	"archive/zip"
-	"bytes"
-	"io"
 	"strings"
 	"testing"
+
+	"github.com/Songmu/slidown/internal/testutil"
 )
 
 // TestContentTypesPreservesTemplateDefaults guards against regressing the bug
@@ -115,30 +114,15 @@ func TestLoadTemplateGCsOrphanedMedia(t *testing.T) {
 		"ppt/media/slide1.png": []byte("old-slide-image-bytes"),
 	}
 
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
+	zipParts := make(map[string][]byte)
 	for name, data := range textParts {
-		fw, err := zw.Create(name)
-		if err != nil {
-			t.Fatalf("zip create %s: %v", name, err)
-		}
-		if _, err := io.WriteString(fw, data); err != nil {
-			t.Fatalf("zip write %s: %v", name, err)
-		}
+		zipParts[name] = []byte(data)
 	}
 	for name, data := range binParts {
-		fw, err := zw.Create(name)
-		if err != nil {
-			t.Fatalf("zip create %s: %v", name, err)
-		}
-		if _, err := fw.Write(data); err != nil {
-			t.Fatalf("zip write %s: %v", name, err)
-		}
+		zipParts[name] = data
 	}
-	if err := zw.Close(); err != nil {
-		t.Fatalf("zip close: %v", err)
-	}
-	tmplPath := writeTempPPTX(t, buf.Bytes())
+	zipData := testutil.WriteZIP(t, zipParts, nil)
+	tmplPath := writeTempPPTX(t, zipData)
 
 	tmpl, err := LoadTemplate(tmplPath)
 	if err != nil {
@@ -213,20 +197,11 @@ func writeMinimalTemplate(t *testing.T, extras map[string]string) string {
 		"ppt/slideLayouts/_rels/slideLayout1.xml.rels": slideLayout1Rels,
 	}
 
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
+	zipParts := make(map[string][]byte)
 	for name, data := range parts {
-		fw, err := zw.Create(name)
-		if err != nil {
-			t.Fatalf("zip create %s: %v", name, err)
-		}
-		if _, err := io.WriteString(fw, data); err != nil {
-			t.Fatalf("zip write %s: %v", name, err)
-		}
+		zipParts[name] = []byte(data)
 	}
-	if err := zw.Close(); err != nil {
-		t.Fatalf("zip close: %v", err)
-	}
+	zipData := testutil.WriteZIP(t, zipParts, nil)
 
-	return writeTempPPTX(t, buf.Bytes())
+	return writeTempPPTX(t, zipData)
 }

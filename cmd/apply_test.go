@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/xml"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/config"
+	"github.com/Songmu/slidown/internal/testutil"
 	"github.com/Songmu/slidown/md"
 	"github.com/Songmu/slidown/pptx"
 	"github.com/Songmu/slidown/render"
@@ -164,30 +164,10 @@ func TestWritePresentationUpdatesExistingFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
-	parts, _ := zipPartsForTest(t, data)
+	parts := testutil.ReadZIPStrings(t, data)
 	if !strings.Contains(parts["ppt/slides/slide1.xml"], "Changed") {
 		t.Fatalf("updated slide does not contain new title")
 	}
-}
-
-// zipPartsForTest returns the text parts of a .pptx given its bytes.
-func zipPartsForTest(t *testing.T, data []byte) (map[string]string, error) {
-	t.Helper()
-	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
-	if err != nil {
-		return nil, err
-	}
-	parts := map[string]string{}
-	for _, f := range zr.File {
-		rc, err := f.Open()
-		if err != nil {
-			return nil, err
-		}
-		b, _ := io.ReadAll(rc)
-		rc.Close()
-		parts[f.Name] = string(b)
-	}
-	return parts, nil
 }
 
 func buildTemplateFileForTest(t *testing.T) string {
@@ -303,26 +283,11 @@ func applyTwiceForTest(t *testing.T, v1, v2, templatePath string) (orig, now map
 
 func readSlidePartsForTest(t *testing.T, path string) map[string][]byte {
 	t.Helper()
-	zr, err := zip.OpenReader(path)
-	if err != nil {
-		t.Fatalf("zip.OpenReader: %v", err)
-	}
-	defer zr.Close()
-	parts := map[string][]byte{}
-	for _, f := range zr.File {
-		if !strings.HasPrefix(f.Name, "ppt/slides/slide") || !strings.HasSuffix(f.Name, ".xml") {
-			continue
+	parts := zipRawPartsForTest(t, path)
+	for name := range parts {
+		if !strings.HasPrefix(name, "ppt/slides/slide") || !strings.HasSuffix(name, ".xml") {
+			delete(parts, name)
 		}
-		rc, err := f.Open()
-		if err != nil {
-			t.Fatalf("open %s: %v", f.Name, err)
-		}
-		b, err := io.ReadAll(rc)
-		rc.Close()
-		if err != nil {
-			t.Fatalf("read %s: %v", f.Name, err)
-		}
-		parts[f.Name] = b
 	}
 	return parts
 }
@@ -330,24 +295,7 @@ func readSlidePartsForTest(t *testing.T, path string) map[string][]byte {
 // zipRawPartsForTest reads every entry of a .pptx file into a name->bytes map.
 func zipRawPartsForTest(t *testing.T, path string) map[string][]byte {
 	t.Helper()
-	zr, err := zip.OpenReader(path)
-	if err != nil {
-		t.Fatalf("zip.OpenReader: %v", err)
-	}
-	defer zr.Close()
-	parts := map[string][]byte{}
-	for _, f := range zr.File {
-		rc, err := f.Open()
-		if err != nil {
-			t.Fatalf("open %s: %v", f.Name, err)
-		}
-		b, err := io.ReadAll(rc)
-		rc.Close()
-		if err != nil {
-			t.Fatalf("read %s: %v", f.Name, err)
-		}
-		parts[f.Name] = b
-	}
+	parts, _ := testutil.ReadZIP(t, mustReadFileForTest(t, path))
 	return parts
 }
 
@@ -355,29 +303,9 @@ func zipRawPartsForTest(t *testing.T, path string) map[string][]byte {
 // simulating an out-of-band part added by PowerPoint or a user.
 func injectZipPartForTest(t *testing.T, path, name string, data []byte) {
 	t.Helper()
-	existing := zipRawPartsForTest(t, path)
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-	for n, d := range existing {
-		fw, err := zw.Create(n)
-		if err != nil {
-			t.Fatalf("zip create %s: %v", n, err)
-		}
-		if _, err := fw.Write(d); err != nil {
-			t.Fatalf("zip write %s: %v", n, err)
-		}
-	}
-	fw, err := zw.Create(name)
-	if err != nil {
-		t.Fatalf("zip create %s: %v", name, err)
-	}
-	if _, err := fw.Write(data); err != nil {
-		t.Fatalf("zip write %s: %v", name, err)
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatalf("zip close: %v", err)
-	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+	parts, order := testutil.ReadZIP(t, mustReadFileForTest(t, path))
+	parts[name] = data
+	if err := os.WriteFile(path, testutil.WriteZIP(t, parts, order), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 }
@@ -391,28 +319,15 @@ var slideMetaExtRe = regexp.MustCompile(`<p:extLst><p:ext uri="\{[^"]+\}"><slido
 // extension from every slide, simulating slides pasted in from another deck.
 func stripSlideMetaForTest(t *testing.T, path string) {
 	t.Helper()
-	parts := zipRawPartsForTest(t, path)
+	parts, order := testutil.ReadZIP(t, mustReadFileForTest(t, path))
 	for name, data := range parts {
 		if !strings.HasPrefix(name, "ppt/slides/slide") || !strings.HasSuffix(name, ".xml") {
 			continue
 		}
 		parts[name] = slideMetaExtRe.ReplaceAll(data, nil)
 	}
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-	for n, d := range parts {
-		fw, err := zw.Create(n)
-		if err != nil {
-			t.Fatalf("zip create %s: %v", n, err)
-		}
-		if _, err := fw.Write(d); err != nil {
-			t.Fatalf("zip write %s: %v", n, err)
-		}
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatalf("zip close: %v", err)
-	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+	zipData := testutil.WriteZIP(t, parts, order)
+	if err := os.WriteFile(path, zipData, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 }
@@ -814,10 +729,7 @@ func TestApplyIgnoresFrontmatterTemplate(t *testing.T) {
 
 	applyFreshForTest(t, deck, out, "")
 
-	parts, err := zipPartsForTest(t, mustReadFileForTest(t, out))
-	if err != nil {
-		t.Fatalf("zipPartsForTest: %v", err)
-	}
+	parts := testutil.ReadZIPStrings(t, mustReadFileForTest(t, out))
 	if strings.Contains(parts["ppt/theme/theme1.xml"], "FF0000") {
 		t.Errorf("frontmatter template was honored: theme carries the alt template accent color FF0000")
 	}
@@ -935,23 +847,7 @@ func readVisibleSlidePartsForTest(t *testing.T, pptxPath string) [][]byte {
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
-	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
-	if err != nil {
-		t.Fatalf("zip.NewReader: %v", err)
-	}
-	parts := map[string][]byte{}
-	for _, f := range zr.File {
-		rc, err := f.Open()
-		if err != nil {
-			t.Fatalf("open %s: %v", f.Name, err)
-		}
-		b, err := io.ReadAll(rc)
-		rc.Close()
-		if err != nil {
-			t.Fatalf("read %s: %v", f.Name, err)
-		}
-		parts[f.Name] = b
-	}
+	parts, _ := testutil.ReadZIP(t, data)
 
 	var p testPresentation
 	if err := xml.Unmarshal(parts["ppt/presentation.xml"], &p); err != nil {
@@ -1002,25 +898,7 @@ func reorderPresentationAndMarkSlidesInFileForTest(t *testing.T, path string) {
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
-	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
-	if err != nil {
-		t.Fatalf("zip.NewReader: %v", err)
-	}
-	parts := map[string][]byte{}
-	order := make([]string, 0, len(zr.File))
-	for _, f := range zr.File {
-		rc, err := f.Open()
-		if err != nil {
-			t.Fatalf("open %s: %v", f.Name, err)
-		}
-		b, err := io.ReadAll(rc)
-		rc.Close()
-		if err != nil {
-			t.Fatalf("read %s: %v", f.Name, err)
-		}
-		parts[f.Name] = b
-		order = append(order, f.Name)
-	}
+	parts, order := testutil.ReadZIP(t, data)
 
 	parts["ppt/presentation.xml"] = reorderPresentationXMLForApplyTest(t, parts["ppt/presentation.xml"])
 
@@ -1038,21 +916,8 @@ func reorderPresentationAndMarkSlidesInFileForTest(t *testing.T, path string) {
 	}
 	parts["ppt/slides/slide2.xml"] = s2Updated
 
-	var outBuf bytes.Buffer
-	zw := zip.NewWriter(&outBuf)
-	for _, name := range order {
-		fw, err := zw.Create(name)
-		if err != nil {
-			t.Fatalf("zip create %s: %v", name, err)
-		}
-		if _, err := fw.Write(parts[name]); err != nil {
-			t.Fatalf("zip write %s: %v", name, err)
-		}
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatalf("zip close: %v", err)
-	}
-	if err := os.WriteFile(path, outBuf.Bytes(), 0o600); err != nil {
+	data = testutil.WriteZIP(t, parts, order)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 }
@@ -1091,27 +956,7 @@ func buildAltTemplateFileForTest(t *testing.T) string {
 	basePath := buildTemplateFileForTest(t)
 
 	// Open the base template zip, modify the theme part, write a new zip.
-	zr, err := zip.OpenReader(basePath)
-	if err != nil {
-		t.Fatalf("buildAltTemplateFileForTest OpenReader: %v", err)
-	}
-	defer zr.Close()
-
-	parts := map[string][]byte{}
-	order := make([]string, 0, len(zr.File))
-	for _, f := range zr.File {
-		rc, err := f.Open()
-		if err != nil {
-			t.Fatalf("buildAltTemplateFileForTest open %s: %v", f.Name, err)
-		}
-		b, err := io.ReadAll(rc)
-		rc.Close()
-		if err != nil {
-			t.Fatalf("buildAltTemplateFileForTest read %s: %v", f.Name, err)
-		}
-		parts[f.Name] = b
-		order = append(order, f.Name)
-	}
+	parts, order := testutil.ReadZIP(t, mustReadFileForTest(t, basePath))
 
 	// Patch the theme: replace the default accent1 blue with red.
 	const (
@@ -1125,23 +970,10 @@ func buildAltTemplateFileForTest(t *testing.T) string {
 	}
 	parts[themeKey] = patched
 
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-	for _, name := range order {
-		fw, err := zw.Create(name)
-		if err != nil {
-			t.Fatalf("buildAltTemplateFileForTest zip create %s: %v", name, err)
-		}
-		if _, err := fw.Write(parts[name]); err != nil {
-			t.Fatalf("buildAltTemplateFileForTest zip write %s: %v", name, err)
-		}
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatalf("buildAltTemplateFileForTest zip close: %v", err)
-	}
+	zipData := testutil.WriteZIP(t, parts, order)
 
 	altPath := filepath.Join(t.TempDir(), "alt_template.pptx")
-	if err := os.WriteFile(altPath, buf.Bytes(), 0o600); err != nil {
+	if err := os.WriteFile(altPath, zipData, 0o600); err != nil {
 		t.Fatalf("buildAltTemplateFileForTest WriteFile: %v", err)
 	}
 	return altPath
@@ -1196,27 +1028,14 @@ func assertSlideRelsResolveInPackage(t *testing.T, parts map[string]string) {
 // manual edit made in PowerPoint.
 func rewriteSlidePartForTest(t *testing.T, path, name string, transform func([]byte) []byte) {
 	t.Helper()
-	parts := zipRawPartsForTest(t, path)
+	parts, order := testutil.ReadZIP(t, mustReadFileForTest(t, path))
 	got, ok := parts[name]
 	if !ok {
 		t.Fatalf("part %q not found in %s", name, path)
 	}
 	parts[name] = transform(got)
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-	for n, d := range parts {
-		fw, err := zw.Create(n)
-		if err != nil {
-			t.Fatalf("zip create %s: %v", n, err)
-		}
-		if _, err := fw.Write(d); err != nil {
-			t.Fatalf("zip write %s: %v", n, err)
-		}
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatalf("zip close: %v", err)
-	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+	zipData := testutil.WriteZIP(t, parts, order)
+	if err := os.WriteFile(path, zipData, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 }
