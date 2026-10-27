@@ -7,6 +7,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -1350,6 +1351,68 @@ func TestAnchorsReordered(t *testing.T) {
 	}
 	if !anchorsReordered([]int{1, 0}) {
 		t.Error("descending anchors not flagged as reordered")
+	}
+}
+
+func TestAlignSlidesAnchorSelection(t *testing.T) {
+	unchanged := &slidown.Slide{Titles: []string{"unchanged"}}
+	changed := &slidown.Slide{Titles: []string{"changed"}}
+	tests := []struct {
+		name     string
+		source   slidown.Slides
+		existing []pptx.SlideMeta
+		want     map[int]string
+	}{
+		{
+			name:   "key anchor retains original existing index",
+			source: slidown.Slides{{Key: "k", Freeze: true}},
+			existing: []pptx.SlideMeta{
+				{PartName: "ppt/slides/slide9.xml"},
+				{Key: "k", PartName: "ppt/slides/slide2.xml"},
+			},
+			want: map[int]string{1: "ppt/slides/slide2.xml"},
+		},
+		{
+			name:   "duplicate existing keys never anchor",
+			source: slidown.Slides{{Key: "k", Freeze: true}},
+			existing: []pptx.SlideMeta{
+				{Key: "k", PartName: "ppt/slides/slide1.xml"},
+				{Key: "k", PartName: "ppt/slides/slide2.xml"},
+				{Key: "k", PartName: "ppt/slides/slide3.xml"},
+			},
+			want: map[int]string{},
+		},
+		{
+			name:   "fingerprint ties favor earlier index and consume it once",
+			source: slidown.Slides{nil, changed, unchanged, unchanged},
+			existing: []pptx.SlideMeta{
+				{Fingerprint: unchanged.Fingerprint(), PartName: "ppt/slides/slide9.xml"},
+				{PartName: "ppt/slides/slide1.xml"},
+				{Fingerprint: unchanged.Fingerprint(), PartName: "ppt/slides/slide2.xml"},
+			},
+			want: map[int]string{2: "ppt/slides/slide9.xml", 3: "ppt/slides/slide2.xml"},
+		},
+		{
+			name:   "fingerprint prefers nearest over first match",
+			source: slidown.Slides{changed, changed, unchanged},
+			existing: []pptx.SlideMeta{
+				{Fingerprint: unchanged.Fingerprint(), PartName: "ppt/slides/slide9.xml"},
+				{PartName: "ppt/slides/slide1.xml"},
+				{Fingerprint: unchanged.Fingerprint(), PartName: "ppt/slides/slide2.xml"},
+			},
+			want: map[int]string{3: "ppt/slides/slide2.xml"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reuse, shapeMerge := alignSlides(tt.source, tt.existing, nil, nil)
+			if !maps.Equal(reuse, tt.want) {
+				t.Errorf("reuse = %v, want %v", reuse, tt.want)
+			}
+			if len(shapeMerge) != 0 {
+				t.Errorf("shapeMerge = %v, want empty without signatures", shapeMerge)
+			}
+		})
 	}
 }
 

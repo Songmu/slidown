@@ -477,33 +477,40 @@ func alignSlides(source slidown.Slides, existing []pptx.SlideMeta,
 	// subsequence to keep 1-based positions in step with ppt/slides/slideN.xml
 	// and the shape-signature maps.
 	rendered := renderedSlides(source)
-	n := len(rendered)
-	m := len(existing)
-
-	// sourceKeySet holds the stable keys still present in the deck source. An
-	// existing slide whose key is not in this set is "orphaned" (its source page
-	// was renamed or removed). Orphaned-key slides are eligible for positional
-	// re-pairing, but only by a keyed source slide (see keyBlocksPositional), so
-	// a renamed keyed page can re-claim its slide while a keyless page cannot
-	// accidentally divert onto an unrelated removed keyed slide.
-	sourceKeySet := make(map[string]bool)
-	for _, s := range rendered {
-		if s.Key != "" {
-			sourceKeySet[s.Key] = true
-		}
+	a := slideAlignment{
+		rendered:       rendered,
+		existing:       existing,
+		pairOld:        make([]int, len(rendered)),
+		keyed:          make([]bool, len(rendered)),
+		oldUsed:        make([]bool, len(existing)),
+		isAnchorTarget: make([]bool, len(existing)),
+	}
+	for i := range a.pairOld {
+		a.pairOld[i] = -1
 	}
 
-	pairOld := make([]int, n)
-	for i := range pairOld {
-		pairOld[i] = -1
-	}
-	keyed := make([]bool, n)
-	oldUsed := make([]bool, m)
-	isAnchorTarget := make([]bool, m)
+	a.anchorByKey()
+	a.anchorByFingerprint()
+	// Detect reordering before positional pairs are added: only anchors are
+	// evidence that positional shape-level merging is unreliable.
+	reordered := anchorsReordered(a.pairOld)
+	a.pairPositionally()
+	return a.classify(newSigs, oldSigs, reordered)
+}
 
-	// Phase 1a: anchor by stable key (unique within a deck).
+type slideAlignment struct {
+	rendered       []*slidown.Slide
+	existing       []pptx.SlideMeta
+	pairOld        []int
+	keyed          []bool
+	oldUsed        []bool
+	isAnchorTarget []bool
+}
+
+// anchorByKey anchors by stable key (unique within a deck).
+func (a *slideAlignment) anchorByKey() {
 	oldByKey := map[string]int{}
-	for j, e := range existing {
+	for j, e := range a.existing {
 		if e.Key == "" {
 			continue
 		}
@@ -513,96 +520,113 @@ func alignSlides(source slidown.Slides, existing []pptx.SlideMeta,
 			oldByKey[e.Key] = j
 		}
 	}
-	for i, s := range rendered {
+	for i, s := range a.rendered {
 		if s.Key == "" {
 			continue
 		}
 		j, ok := oldByKey[s.Key]
-		if !ok || j < 0 || oldUsed[j] {
+		if !ok || j < 0 || a.oldUsed[j] {
 			continue
 		}
-		pairOld[i] = j
-		keyed[i] = true
-		oldUsed[j] = true
-		isAnchorTarget[j] = true
+		a.pairOld[i] = j
+		a.keyed[i] = true
+		a.oldUsed[j] = true
+		a.isAnchorTarget[j] = true
 	}
+}
 
-	// Phase 1b: anchor unchanged slides by fingerprint, preferring the nearest
-	// still-unused existing slide so anchors stay locally ordered.
-	for i, s := range rendered {
-		if pairOld[i] >= 0 {
+// anchorByFingerprint anchors unchanged slides, preferring the nearest
+// still-unused existing slide so anchors stay locally ordered.
+func (a *slideAlignment) anchorByFingerprint() {
+	for i := range a.rendered {
+		if a.pairOld[i] >= 0 {
 			continue
 		}
-		best := -1
-		for j := 0; j < m; j++ {
-			if oldUsed[j] || !s.MatchesFingerprint(existing[j].Fingerprint) {
-				continue
-			}
-			if best < 0 || abs(j-i) < abs(best-i) {
-				best = j
-			}
-		}
+		best := a.nearestFingerprint(i)
 		if best >= 0 {
-			pairOld[i] = best
-			oldUsed[best] = true
-			isAnchorTarget[best] = true
+			a.pairOld[i] = best
+			a.oldUsed[best] = true
+			a.isAnchorTarget[best] = true
+		}
+	}
+}
+
+func (a *slideAlignment) nearestFingerprint(i int) int {
+	best := -1
+	for j, e := range a.existing {
+		if a.oldUsed[j] || !a.rendered[i].MatchesFingerprint(e.Fingerprint) {
+			continue
+		}
+		if best < 0 || abs(j-i) < abs(best-i) {
+			best = j
+		}
+	}
+	return best
+}
+
+// pairPositionally aligns the remaining slides in order within anchor-bounded
+// segments. A two-pointer walk never pairs across an anchor target, so
+// mis-pairing is confined to a single gap between unchanged slides. Existing
+// slides whose stable key is still present in the source are reserved for key
+// matching: they are never claimed positionally, so a keyless source can't
+// accidentally reuse (or freeze onto) a keyed page that was merely reordered
+// out of this segment. A slide with an orphaned key (one no longer present in
+// the source) may be claimed only by a keyed source slide — a likely key rename —
+// so its slide is re-paired and later re-stamped, while a keyless source (e.g.
+// a frozen page after an unrelated keyed slide was deleted) still skips it and
+// keeps its own positional counterpart.
+func (a *slideAlignment) pairPositionally() {
+	sourceKeySet := make(map[string]bool)
+	for _, s := range a.rendered {
+		if s.Key != "" {
+			sourceKeySet[s.Key] = true
 		}
 	}
 
-	// Detect reordering: anchors whose existing indices are not monotonically
-	// increasing in rendered order indicate the deck was reordered. In that case
-	// positional (Phase 2) pairing is unreliable, so shape-level merge is
-	// restricted to key-anchored pairs, whose identity is certain.
-	reordered := anchorsReordered(pairOld)
-
-	// Phase 2: align the remaining slides in order within anchor-bounded
-	// segments. A two-pointer walk never pairs across an anchor target, so
-	// mis-pairing is confined to a single gap between unchanged slides. Existing
-	// slides whose stable key is still present in the source are reserved for key
-	// matching (Phase 1a): they are never claimed positionally, so a keyless
-	// source can't accidentally reuse (or freeze onto) a keyed page that was
-	// merely reordered out of this segment. A slide with an orphaned key (one no
-	// longer present in the source) may be claimed only by a keyed source slide —
-	// a likely key rename — so its slide is re-paired and later re-stamped, while
-	// a keyless source (e.g. a frozen page after an unrelated keyed slide was
-	// deleted) still skips it and keeps its own positional counterpart.
+	m := len(a.existing)
 	ei := 0
-	for i := range rendered {
-		if pairOld[i] >= 0 {
-			if pairOld[i]+1 > ei {
-				ei = pairOld[i] + 1
+	for i := range a.rendered {
+		if a.pairOld[i] >= 0 {
+			if a.pairOld[i]+1 > ei {
+				ei = a.pairOld[i] + 1
 			}
 			continue
 		}
-		srcKeyed := rendered[i].Key != ""
-		for ei < m && !isAnchorTarget[ei] && (oldUsed[ei] || keyBlocksPositional(existing[ei].Key, srcKeyed, sourceKeySet)) {
+		srcKeyed := a.rendered[i].Key != ""
+		for ei < m && !a.isAnchorTarget[ei] && (a.oldUsed[ei] || keyBlocksPositional(a.existing[ei].Key, srcKeyed, sourceKeySet)) {
 			ei++
 		}
-		if ei < m && !oldUsed[ei] && !isAnchorTarget[ei] && !keyBlocksPositional(existing[ei].Key, srcKeyed, sourceKeySet) {
-			pairOld[i] = ei
-			oldUsed[ei] = true
+		if ei < m && !a.oldUsed[ei] && !a.isAnchorTarget[ei] && !keyBlocksPositional(a.existing[ei].Key, srcKeyed, sourceKeySet) {
+			a.pairOld[i] = ei
+			a.oldUsed[ei] = true
 			ei++
 		}
 	}
+}
 
-	// Phase 3: classify each pair as whole-slide reuse or shape-level merge.
+// classify separates whole-slide reuse from shape-level merge. When anchors
+// were reordered, shape-level merge is restricted to key-anchored pairs,
+// whose identity is certain.
+func (a *slideAlignment) classify(newSigs map[int][]pptx.ShapeSignature,
+	oldSigs map[string][]pptx.ShapeSignature, reordered bool,
+) (map[int]string, map[int]string) {
 	reuse := map[int]string{}
 	shapeMerge := map[int]string{}
-	for i, s := range rendered {
-		if pairOld[i] < 0 {
+	for i, s := range a.rendered {
+		if a.pairOld[i] < 0 {
 			continue
 		}
-		j := pairOld[i]
+		j := a.pairOld[i]
 		pos := i + 1
-		part := existing[j].PartName
-		if s.Freeze || s.MatchesFingerprint(existing[j].Fingerprint) {
+		part := a.existing[j].PartName
+		if s.Freeze || s.MatchesFingerprint(a.existing[j].Fingerprint) {
 			reuse[pos] = part
 			continue
 		}
 		// Changed slide: only merge shapes when the pairing is trustworthy
 		// (key-anchored, or no reordering was detected) and the two slides are
 		// clearly the same slide lightly edited.
-		if reordered && !keyed[i] {
+		if reordered && !a.keyed[i] {
 			continue
 		}
 		newSig := newSigs[pos]
