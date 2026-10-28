@@ -608,7 +608,11 @@ func TestWatchApplyReturnsWhenDebouncedChannelCloses(t *testing.T) {
 	}
 
 	orig := debounceWatchSignals
-	debounceWatchSignals = func(context.Context, <-chan struct{}, time.Duration) <-chan struct{} {
+	var debounceCtx context.Context
+	var triggers <-chan struct{}
+	debounceWatchSignals = func(ctx context.Context, in <-chan struct{}, _ time.Duration) <-chan struct{} {
+		debounceCtx = ctx
+		triggers = in
 		ch := make(chan struct{})
 		close(ch)
 		return ch
@@ -627,6 +631,12 @@ func TestWatchApplyReturnsWhenDebouncedChannelCloses(t *testing.T) {
 	}
 	if applyCalls != 0 {
 		t.Fatalf("watchApply called apply %d times after the debounced channel closed, want 0", applyCalls)
+	}
+	if debounceCtx.Err() != context.Canceled {
+		t.Fatalf("debounce context error = %v, want cancellation after watchApply returns", debounceCtx.Err())
+	}
+	if _, ok := <-triggers; ok {
+		t.Fatal("trigger channel must be closed after watchApply returns")
 	}
 }
 
