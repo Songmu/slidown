@@ -45,6 +45,90 @@ func bounds(gp pptx.GeomPath) (minX, minY, maxX, maxY int64) {
 	return
 }
 
+func TestParseXMLNodeClassification(t *testing.T) {
+	tests := []struct {
+		name, svg                          string
+		rootForeign, childForeign, badCase bool
+		childName, rawName                 string
+	}{
+		{"unqualified", `<svg><rect/></svg>`, false, false, false, "rect", "rect"},
+		{"svg_namespace", `<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>`, false, false, false, "rect", "rect"},
+		{"namespace_reset", `<svg xmlns="http://www.w3.org/2000/svg"><rect xmlns=""/></svg>`, false, true, false, "rect", "rect"},
+		{"namespace_added", `<svg><rect xmlns="http://www.w3.org/2000/svg"/></svg>`, false, true, false, "rect", "rect"},
+		{"foreign_root", `<svg xmlns="urn:other"><rect/></svg>`, true, false, false, "rect", "rect"},
+		{"wrong_case", `<svg><lineargradient/></svg>`, false, false, true, "lineargradient", "lineargradient"},
+		{"canonical_case", `<svg><linearGradient/></svg>`, false, false, false, "lineargradient", "linearGradient"},
+		{"unknown_case", `<svg><Custom/></svg>`, false, false, false, "custom", "Custom"},
+		{"foreign_wrong_case", `<svg><RECT xmlns="urn:other"/></svg>`, false, true, true, "rect", "RECT"},
+		{"new_unqualified_root", `<svg xmlns="urn:other"/><svg><rect/></svg>`, false, false, false, "rect", "rect"},
+		{"new_svg_root", `<svg/><svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>`, false, false, false, "rect", "rect"},
+		{"new_foreign_root", `<svg/><svg xmlns="urn:other"><rect/></svg>`, true, false, false, "rect", "rect"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root, err := parseXML([]byte(tt.svg))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if root == nil || root.Name != "svg" || root.rawName != "svg" || root.badCase ||
+				root.foreign != tt.rootForeign || root.parent != nil || len(root.Children) != 1 {
+				t.Fatalf("unexpected root: %#v", root)
+			}
+			child := root.Children[0]
+			if child.Name != tt.childName || child.rawName != tt.rawName || child.foreign != tt.childForeign ||
+				child.badCase != tt.badCase || child.parent != root {
+				t.Fatalf("unexpected child: %#v", child)
+			}
+		})
+	}
+}
+
+func TestParseXMLNamespaceRestorationAndText(t *testing.T) {
+	root, err := parseXML([]byte(`<svg xmlns="http://www.w3.org/2000/svg">A<!--split-->B<g xmlns="urn:other"><text xmlns="http://www.w3.org/2000/svg" id=" label ">C<![CDATA[D]]></text></g>E</svg>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root == nil || root.Text != "ABE" || root.textB != nil || !root.textAfterChild || len(root.Children) != 1 {
+		t.Fatalf("unexpected root: %#v", root)
+	}
+	group := root.Children[0]
+	if !group.foreign || group.parent != root || len(group.Children) != 1 {
+		t.Fatalf("unexpected group: %#v", group)
+	}
+	text := group.Children[0]
+	if text.foreign || text.parent != group || text.Text != "CD" || text.textB != nil ||
+		text.textAfterChild || text.Attrs["id"] != "label" {
+		t.Fatalf("unexpected text: %#v", text)
+	}
+}
+
+func TestParseXMLResourceLimits(t *testing.T) {
+	tests := []struct {
+		name, svg string
+		wantErr   error
+	}{
+		{"depth_at_limit", strings.Repeat("<g>", maxDepth) + strings.Repeat("</g>", maxDepth), nil},
+		{"depth_over_limit", strings.Repeat("<g>", maxDepth+1) + strings.Repeat("</g>", maxDepth+1), errTooComplex},
+		{"nodes_at_limit", strings.Repeat("<g/>", maxShapes), nil},
+		{"nodes_over_limit", strings.Repeat("<g/>", maxShapes+1), errTooComplex},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root, err := parseXML([]byte(tt.svg))
+			if err != tt.wantErr {
+				t.Fatalf("parseXML() error = %v, want %v", err, tt.wantErr)
+			}
+			if tt.wantErr != nil {
+				if root != nil {
+					t.Fatalf("expected no root on error, got %#v", root)
+				}
+			} else if root == nil || root.Name != "g" {
+				t.Fatalf("expected g root, got %#v", root)
+			}
+		})
+	}
+}
+
 func TestBasicShapes(t *testing.T) {
 	cases := []struct {
 		name, svg, color string
