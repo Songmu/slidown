@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Songmu/slidown/internal/svgutil"
 	"github.com/corona10/goimagehash"
 	"github.com/k1LoW/errors"
 	"github.com/srwiley/oksvg"
@@ -331,41 +332,7 @@ func svgRootAttr(b []byte, name string) string {
 // an explicit zero (including "0%"), which per SVG disables rendering.
 func svgHasExplicitZeroSize(b []byte) bool {
 	ws, hs, _ := svgRootSize(b)
-	return isExplicitZeroLength(ws) || isExplicitZeroLength(hs)
-}
-
-// cssLengthUnits is the set of unit suffixes recognized on a length. A value
-// with any other (unknown) suffix is an invalid declaration, not a zero.
-var cssLengthUnits = map[string]bool{
-	"": true, "%": true,
-	"px": true, "pt": true, "pc": true, "mm": true, "cm": true, "in": true,
-	"em": true, "rem": true, "ex": true, "ch": true, "q": true,
-	"vw": true, "vh": true, "vmin": true, "vmax": true,
-}
-
-// isExplicitZeroLength reports whether s is an explicit zero length: a unitless
-// zero, zero percent, or zero in a recognized CSS length unit. An unknown or
-// malformed unit (e.g. "0foo", "0e") is an invalid declaration and returns
-// false so the viewBox/default size is used instead of dropping the SVG.
-func isExplicitZeroLength(s string) bool {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return false
-	}
-	n := len(s)
-	for n > 0 {
-		c := s[n-1]
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '%' {
-			n--
-			continue
-		}
-		break
-	}
-	if !cssLengthUnits[strings.ToLower(strings.TrimSpace(s[n:]))] {
-		return false
-	}
-	v, err := strconv.ParseFloat(strings.TrimSpace(s[:n]), 64)
-	return err == nil && v == 0
+	return svgutil.IsExplicitZeroLength(ws) || svgutil.IsExplicitZeroLength(hs)
 }
 
 // svgExplicitSize returns the SVG's intrinsic width and height in px-equivalent
