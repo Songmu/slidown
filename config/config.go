@@ -68,24 +68,23 @@ func Load(profile string) (*Config, error) {
 // or `os.UserDataDir`, etc. It is more intuitive for CLI applications.
 
 func configHomePath() string {
-	if v := os.Getenv("XDG_CONFIG_HOME"); v != "" {
-		return filepath.Join(v, "slidown")
-	}
-	return filepath.Join(homeDir, ".config", "slidown")
+	return xdgHomePath("XDG_CONFIG_HOME", filepath.Join(homeDir, ".config"))
 }
 
 func dataHomePath() string {
-	if v := os.Getenv("XDG_DATA_HOME"); v != "" {
-		return filepath.Join(v, "slidown")
-	}
-	return filepath.Join(homeDir, ".local", "share", "slidown")
+	return xdgHomePath("XDG_DATA_HOME", filepath.Join(homeDir, ".local", "share"))
 }
 
 func stateHomePath() string {
-	if v := os.Getenv("XDG_STATE_HOME"); v != "" {
-		return filepath.Join(v, "slidown")
+	return xdgHomePath("XDG_STATE_HOME", filepath.Join(homeDir, ".local", "state"))
+}
+
+func xdgHomePath(env, fallback string) string {
+	base := os.Getenv(env)
+	if base == "" {
+		base = fallback
 	}
-	return filepath.Join(homeDir, ".local", "state", "slidown")
+	return filepath.Join(base, "slidown")
 }
 
 // DataHomePath returns the path to the data home directory.
