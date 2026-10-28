@@ -682,7 +682,7 @@ func renderTableCell(cell *TableCell, header bool, style *TableStyleSpec, rowIdx
 	}
 	var cellStyle TableCellStyleSpec
 	if style != nil {
-		cellStyle = tableRegionCellStyle(style, header, colIdx)
+		cellStyle = tableRegion(style, header, colIdx).cellStyle
 		if align == AlignNone {
 			align = alignmentFromOOXML(cellStyle.HAlign)
 		}
@@ -760,43 +760,39 @@ func alignmentFromOOXML(algn string) Alignment {
 	}
 }
 
-func tableRegionCellStyle(style *TableStyleSpec, header bool, colIdx int) TableCellStyleSpec {
-	if header {
-		if colIdx == 0 {
-			return style.HeaderFirstCol
-		}
-		return style.HeaderOtherCols
-	}
-	if colIdx == 0 {
-		return style.DataFirstCol
-	}
-	return style.DataOtherCols
+type tableRegionStyle struct {
+	cellStyle    TableCellStyleSpec
+	rightBorder  TableBorderSpec
+	bottomBorder TableBorderSpec
 }
 
-func tableRegionRightBorder(style *TableStyleSpec, header bool, colIdx int) TableBorderSpec {
+func tableRegion(style *TableStyleSpec, header bool, colIdx int) tableRegionStyle {
 	if header {
 		if colIdx == 0 {
-			return style.HeaderFirstColRight
+			return tableRegionStyle{
+				cellStyle:    style.HeaderFirstCol,
+				rightBorder:  style.HeaderFirstColRight,
+				bottomBorder: style.HeaderFirstColBottom,
+			}
 		}
-		return style.HeaderOtherColRight
+		return tableRegionStyle{
+			cellStyle:    style.HeaderOtherCols,
+			rightBorder:  style.HeaderOtherColRight,
+			bottomBorder: style.HeaderOtherColBottom,
+		}
 	}
 	if colIdx == 0 {
-		return style.DataFirstColRight
-	}
-	return style.DataOtherColRight
-}
-
-func tableRegionBottomBorder(style *TableStyleSpec, header bool, colIdx int) TableBorderSpec {
-	if header {
-		if colIdx == 0 {
-			return style.HeaderFirstColBottom
+		return tableRegionStyle{
+			cellStyle:    style.DataFirstCol,
+			rightBorder:  style.DataFirstColRight,
+			bottomBorder: style.DataFirstColBottom,
 		}
-		return style.HeaderOtherColBottom
 	}
-	if colIdx == 0 {
-		return style.DataFirstColBottom
+	return tableRegionStyle{
+		cellStyle:    style.DataOtherCols,
+		rightBorder:  style.DataOtherColRight,
+		bottomBorder: style.DataOtherColBottom,
 	}
-	return style.DataOtherColBottom
 }
 
 func tableCellBorders(style *TableStyleSpec, rowIdx, colIdx, nRows, nCols int, headerRows []bool) (lnL, lnR, lnT, lnB TableBorderSpec) {
@@ -804,23 +800,23 @@ func tableCellBorders(style *TableStyleSpec, rowIdx, colIdx, nRows, nCols int, h
 	if colIdx == 0 {
 		lnL = style.OuterVertical
 	} else {
-		lnL = tableRegionRightBorder(style, header, colIdx-1)
+		lnL = tableRegion(style, header, colIdx-1).rightBorder
 	}
 	if colIdx == nCols-1 {
 		lnR = style.OuterVertical
 	} else {
-		lnR = tableRegionRightBorder(style, header, colIdx)
+		lnR = tableRegion(style, header, colIdx).rightBorder
 	}
 	if rowIdx == 0 {
 		lnT = style.OuterHorizontal
 	} else {
 		aboveHeader := rowIdx-1 >= 0 && rowIdx-1 < len(headerRows) && headerRows[rowIdx-1]
-		lnT = tableRegionBottomBorder(style, aboveHeader, colIdx)
+		lnT = tableRegion(style, aboveHeader, colIdx).bottomBorder
 	}
 	if rowIdx == nRows-1 {
 		lnB = style.OuterHorizontal
 	} else {
-		lnB = tableRegionBottomBorder(style, header, colIdx)
+		lnB = tableRegion(style, header, colIdx).bottomBorder
 	}
 	return lnL, lnR, lnT, lnB
 }
