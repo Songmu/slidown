@@ -7,6 +7,42 @@ import (
 	"testing"
 )
 
+func TestHomePaths(t *testing.T) {
+	for _, tc := range []struct {
+		env      string
+		path     func() string
+		fallback string
+	}{
+		{"XDG_CONFIG_HOME", configHomePath, filepath.Join(homeDir, ".config", "slidown")},
+		{"XDG_DATA_HOME", DataHomePath, filepath.Join(homeDir, ".local", "share", "slidown")},
+		{"XDG_STATE_HOME", StateHomePath, filepath.Join(homeDir, ".local", "state", "slidown")},
+	} {
+		t.Run(tc.env, func(t *testing.T) {
+			for _, name := range []string{"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"} {
+				t.Setenv(name, filepath.Join(t.TempDir(), name))
+			}
+			for _, setting := range []struct {
+				name, base string
+			}{
+				{"fallback", ""},
+				{"absolute override", t.TempDir()},
+				{"relative override", "relative"},
+			} {
+				t.Run(setting.name, func(t *testing.T) {
+					t.Setenv(tc.env, setting.base)
+					want := tc.fallback
+					if setting.base != "" {
+						want = filepath.Join(setting.base, "slidown")
+					}
+					if got := tc.path(); got != want {
+						t.Fatalf("path = %q, want %q", got, want)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestLoad(t *testing.T) {
 	for _, tc := range []struct {
 		name, profile, want string
