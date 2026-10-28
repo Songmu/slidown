@@ -420,73 +420,96 @@ func tightenGradientBounds(gs *pptx.GeomShape) bool {
 // geomPathBounds returns the tight bounding box of a path in EMU, evaluating
 // Bezier extrema (not just control points, which can lie outside the curve).
 func geomPathBounds(gs *pptx.GeomShape) (minX, minY, maxX, maxY int64, ok bool) {
-	first := true
-	var cur, start pptx.PathPoint
-	acc := func(p pptx.PathPoint) {
-		if first {
-			minX, minY, maxX, maxY = p.X, p.Y, p.X, p.Y
-			first = false
-			return
-		}
-		if p.X < minX {
-			minX = p.X
-		}
-		if p.Y < minY {
-			minY = p.Y
-		}
-		if p.X > maxX {
-			maxX = p.X
-		}
-		if p.Y > maxY {
-			maxY = p.Y
-		}
-	}
-	accF := func(x, y float64) { acc(pptx.PathPoint{X: int64(math.Round(x)), Y: int64(math.Round(y))}) }
+	var b geomBounds
 	for _, p := range gs.Paths {
 		for _, cmd := range p.Cmds {
-			switch cmd.Verb {
-			case pptx.MoveTo:
-				if len(cmd.Pts) >= 1 {
-					cur = cmd.Pts[0]
-					start = cur
-					acc(cur)
-				}
-			case pptx.LineTo:
-				if len(cmd.Pts) >= 1 {
-					cur = cmd.Pts[0]
-					acc(cur)
-				}
-			case pptx.ClosePath:
-				// A subsequent segment resumes from the subpath's start point.
-				cur = start
-			case pptx.CubicTo:
-				if len(cmd.Pts) >= 3 {
-					p0, p1, p2, p3 := cur, cmd.Pts[0], cmd.Pts[1], cmd.Pts[2]
-					acc(p3)
-					for _, t := range cubicExtrema(float64(p0.X), float64(p1.X), float64(p2.X), float64(p3.X)) {
-						accF(cubicAt(float64(p0.X), float64(p1.X), float64(p2.X), float64(p3.X), t), cubicAt(float64(p0.Y), float64(p1.Y), float64(p2.Y), float64(p3.Y), t))
-					}
-					for _, t := range cubicExtrema(float64(p0.Y), float64(p1.Y), float64(p2.Y), float64(p3.Y)) {
-						accF(cubicAt(float64(p0.X), float64(p1.X), float64(p2.X), float64(p3.X), t), cubicAt(float64(p0.Y), float64(p1.Y), float64(p2.Y), float64(p3.Y), t))
-					}
-					cur = p3
-				}
-			case pptx.QuadTo:
-				if len(cmd.Pts) >= 2 {
-					p0, p1, p2 := cur, cmd.Pts[0], cmd.Pts[1]
-					acc(p2)
-					for _, t := range quadExtrema(float64(p0.X), float64(p1.X), float64(p2.X)) {
-						accF(quadAt(float64(p0.X), float64(p1.X), float64(p2.X), t), quadAt(float64(p0.Y), float64(p1.Y), float64(p2.Y), t))
-					}
-					for _, t := range quadExtrema(float64(p0.Y), float64(p1.Y), float64(p2.Y)) {
-						accF(quadAt(float64(p0.X), float64(p1.X), float64(p2.X), t), quadAt(float64(p0.Y), float64(p1.Y), float64(p2.Y), t))
-					}
-					cur = p2
-				}
-			}
+			b.addCommand(cmd)
 		}
 	}
-	return minX, minY, maxX, maxY, !first
+	return b.min.X, b.min.Y, b.max.X, b.max.Y, b.hasPoint
+}
+
+type geomBounds struct {
+	min, max   pptx.PathPoint
+	cur, start pptx.PathPoint
+	hasPoint   bool
+}
+
+func (b *geomBounds) addPoint(p pptx.PathPoint) {
+	if !b.hasPoint {
+		b.min, b.max = p, p
+		b.hasPoint = true
+		return
+	}
+	if p.X < b.min.X {
+		b.min.X = p.X
+	}
+	if p.Y < b.min.Y {
+		b.min.Y = p.Y
+	}
+	if p.X > b.max.X {
+		b.max.X = p.X
+	}
+	if p.Y > b.max.Y {
+		b.max.Y = p.Y
+	}
+}
+
+func (b *geomBounds) addRoundedPoint(x, y float64) {
+	b.addPoint(pptx.PathPoint{X: int64(math.Round(x)), Y: int64(math.Round(y))})
+}
+
+func (b *geomBounds) addCommand(cmd pptx.PathCmd) {
+	switch cmd.Verb {
+	case pptx.MoveTo:
+		if len(cmd.Pts) < 1 {
+			return
+		}
+		b.cur = cmd.Pts[0]
+		b.start = b.cur
+		b.addPoint(b.cur)
+	case pptx.LineTo:
+		if len(cmd.Pts) < 1 {
+			return
+		}
+		b.cur = cmd.Pts[0]
+		b.addPoint(b.cur)
+	case pptx.ClosePath:
+		// A subsequent segment resumes from the subpath's start point.
+		b.cur = b.start
+	case pptx.CubicTo:
+		if len(cmd.Pts) < 3 {
+			return
+		}
+		b.addCubic(b.cur, cmd.Pts[0], cmd.Pts[1], cmd.Pts[2])
+		b.cur = cmd.Pts[2]
+	case pptx.QuadTo:
+		if len(cmd.Pts) < 2 {
+			return
+		}
+		b.addQuadratic(b.cur, cmd.Pts[0], cmd.Pts[1])
+		b.cur = cmd.Pts[1]
+	}
+}
+
+func (b *geomBounds) addCubic(p0, p1, p2, p3 pptx.PathPoint) {
+	b.addPoint(p3)
+	for _, t := range cubicExtrema(float64(p0.X), float64(p1.X), float64(p2.X), float64(p3.X)) {
+		b.addRoundedPoint(cubicAt(float64(p0.X), float64(p1.X), float64(p2.X), float64(p3.X), t), cubicAt(float64(p0.Y), float64(p1.Y), float64(p2.Y), float64(p3.Y), t))
+	}
+	for _, t := range cubicExtrema(float64(p0.Y), float64(p1.Y), float64(p2.Y), float64(p3.Y)) {
+		b.addRoundedPoint(cubicAt(float64(p0.X), float64(p1.X), float64(p2.X), float64(p3.X), t), cubicAt(float64(p0.Y), float64(p1.Y), float64(p2.Y), float64(p3.Y), t))
+	}
+}
+
+func (b *geomBounds) addQuadratic(p0, p1, p2 pptx.PathPoint) {
+	b.addPoint(p2)
+	for _, t := range quadExtrema(float64(p0.X), float64(p1.X), float64(p2.X)) {
+		b.addRoundedPoint(quadAt(float64(p0.X), float64(p1.X), float64(p2.X), t), quadAt(float64(p0.Y), float64(p1.Y), float64(p2.Y), t))
+	}
+	for _, t := range quadExtrema(float64(p0.Y), float64(p1.Y), float64(p2.Y)) {
+		b.addRoundedPoint(quadAt(float64(p0.X), float64(p1.X), float64(p2.X), t), quadAt(float64(p0.Y), float64(p1.Y), float64(p2.Y), t))
+	}
 }
 
 func cubicAt(p0, p1, p2, p3, t float64) float64 {
