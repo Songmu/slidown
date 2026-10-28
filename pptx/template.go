@@ -611,6 +611,10 @@ func (t *Template) copyRels(parts map[string][]byte, name string) {
 // referenced by the given design part's already-copied .rels, or "" when none
 // is found.
 func (t *Template) themeReferencedBy(partName string) string {
+	return t.referencedDesignPart(partName, "ppt/theme/")
+}
+
+func (t *Template) referencedDesignPart(partName, prefix string) string {
 	relsXML, ok := t.designParts[relsPath(partName)]
 	if !ok {
 		return ""
@@ -621,7 +625,7 @@ func (t *Template) themeReferencedBy(partName string) string {
 	}
 	for _, target := range relTargets(relsXML) {
 		resolved := path.Clean(path.Join(base, target))
-		if strings.HasPrefix(resolved, "ppt/theme/") {
+		if strings.HasPrefix(resolved, prefix) {
 			return resolved
 		}
 	}
@@ -737,21 +741,7 @@ func parseGeom(data []byte) map[int]phGeom {
 // masterOf resolves the slide master part referenced by the given layout part
 // via its .rels, or "" when none is found.
 func (t *Template) masterOf(layoutPart string) string {
-	relsXML, ok := t.designParts[relsPath(layoutPart)]
-	if !ok {
-		return ""
-	}
-	base := layoutPart
-	if i := strings.LastIndex(base, "/"); i >= 0 {
-		base = base[:i]
-	}
-	for _, target := range relTargets(relsXML) {
-		resolved := path.Clean(path.Join(base, target))
-		if strings.HasPrefix(resolved, "ppt/slideMasters/") {
-			return resolved
-		}
-	}
-	return ""
+	return t.referencedDesignPart(layoutPart, "ppt/slideMasters/")
 }
 
 // EffectiveGeometry returns a placeholder's geometry in EMUs, preferring the
