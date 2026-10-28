@@ -12,6 +12,76 @@ func slideWithMeta(fp, key string) string {
 	return `<p:sld><p:cSld><p:spTree></p:spTree></p:cSld>` + fingerprintExt(fp, key) + `</p:sld>`
 }
 
+func TestFingerprintExtXML(t *testing.T) {
+	tests := []struct {
+		name string
+		fp   string
+		key  string
+		want string
+	}{
+		{name: "blank"},
+		{
+			name: "fingerprint only",
+			fp:   "fp-1",
+			want: `<p:extLst><p:ext uri="{6F2A3B40-5C7D-4E21-9A6B-1D3F8C0E7B92}"><slidown:fp xmlns:slidown="https://github.com/Songmu/slidown/ns" v="fp-1"/></p:ext></p:extLst>`,
+		},
+		{
+			name: "key only",
+			key:  "intro",
+			want: `<p:extLst><p:ext uri="{6F2A3B40-5C7D-4E21-9A6B-1D3F8C0E7B92}"><slidown:fp xmlns:slidown="https://github.com/Songmu/slidown/ns" k="intro"/></p:ext></p:extLst>`,
+		},
+		{
+			name: "both",
+			fp:   "fp-1",
+			key:  "intro",
+			want: `<p:extLst><p:ext uri="{6F2A3B40-5C7D-4E21-9A6B-1D3F8C0E7B92}"><slidown:fp xmlns:slidown="https://github.com/Songmu/slidown/ns" v="fp-1" k="intro"/></p:ext></p:extLst>`,
+		},
+		{
+			name: "XML special characters",
+			fp:   `&<>"'`,
+			key:  `&<>"'`,
+			want: `<p:extLst><p:ext uri="{6F2A3B40-5C7D-4E21-9A6B-1D3F8C0E7B92}"><slidown:fp xmlns:slidown="https://github.com/Songmu/slidown/ns" v="&amp;&lt;&gt;&quot;&apos;" k="&amp;&lt;&gt;&quot;&apos;"/></p:ext></p:extLst>`,
+		},
+		{
+			name: "entity text is escaped",
+			fp:   "&amp;&#38;",
+			key:  "&lt;&#60;",
+			want: `<p:extLst><p:ext uri="{6F2A3B40-5C7D-4E21-9A6B-1D3F8C0E7B92}"><slidown:fp xmlns:slidown="https://github.com/Songmu/slidown/ns" v="&amp;amp;&amp;#38;" k="&amp;lt;&amp;#60;"/></p:ext></p:extLst>`,
+		},
+		{
+			name: "filtered fingerprint",
+			fp:   "\x00",
+			want: `<p:extLst><p:ext uri="{6F2A3B40-5C7D-4E21-9A6B-1D3F8C0E7B92}"><slidown:fp xmlns:slidown="https://github.com/Songmu/slidown/ns" v=""/></p:ext></p:extLst>`,
+		},
+		{
+			name: "filtered fingerprint with key",
+			fp:   "\x00",
+			key:  "intro",
+			want: `<p:extLst><p:ext uri="{6F2A3B40-5C7D-4E21-9A6B-1D3F8C0E7B92}"><slidown:fp xmlns:slidown="https://github.com/Songmu/slidown/ns" v="" k="intro"/></p:ext></p:extLst>`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := fingerprintExt(tt.fp, tt.key); got != tt.want {
+				t.Errorf("fingerprintExt() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStampSlideKeyPreservesRawFingerprintEntities(t *testing.T) {
+	const slide = `<p:sld><p:cSld><p:spTree></p:spTree></p:cSld><p:extLst><p:ext uri="{6F2A3B40-5C7D-4E21-9A6B-1D3F8C0E7B92}"><slidown:fp xmlns:slidown="https://github.com/Songmu/slidown/ns" v="&amp;&#38;&#x26;&lt;&gt;&quot;&apos;" k="old"/></p:ext></p:extLst></p:sld>`
+	const want = `<p:sld><p:cSld><p:spTree></p:spTree></p:cSld><p:extLst><p:ext uri="{6F2A3B40-5C7D-4E21-9A6B-1D3F8C0E7B92}"><slidown:fp xmlns:slidown="https://github.com/Songmu/slidown/ns" v="&amp;&#38;&#x26;&lt;&gt;&quot;&apos;" k="&amp;&lt;&gt;&quot;&apos;&amp;amp;"/></p:ext></p:extLst></p:sld>`
+	const key = `&<>"'&amp;`
+	got := stampSlideKey([]byte(slide), key)
+	if string(got) != want {
+		t.Fatalf("stampSlideKey() = %s, want %s", got, want)
+	}
+	if twice := stampSlideKey(got, key); !bytes.Equal(got, twice) {
+		t.Errorf("stamping twice changed the bytes: %s", twice)
+	}
+}
+
 func TestStampSlideKeyAddsKeyPreservingFingerprint(t *testing.T) {
 	got := string(stampSlideKey([]byte(slideWithMeta("fp-1", "")), "overview"))
 	if !strings.Contains(got, `k="overview"`) {

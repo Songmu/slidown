@@ -87,12 +87,22 @@ func stampSlideKey(slideXML []byte, key string) []byte {
 // (already XML-escaped) fingerprint value and unescaped key, matching the
 // format produced by fingerprintExt. It returns "" when both are empty.
 func buildFPElem(rawV, key string) string {
-	if rawV == "" && key == "" {
+	var v *string
+	if rawV != "" {
+		v = &rawV
+	}
+	return buildFPElemValue(v, key)
+}
+
+// buildFPElemValue distinguishes an absent fingerprint from one whose escaped
+// value is empty. rawV is already XML-escaped; key is unescaped.
+func buildFPElemValue(rawV *string, key string) string {
+	if rawV == nil && key == "" {
 		return ""
 	}
 	attrs := ` xmlns:slidown="` + fingerprintNS + `"`
-	if rawV != "" {
-		attrs += ` v="` + rawV + `"`
+	if rawV != nil {
+		attrs += ` v="` + *rawV + `"`
 	}
 	if key != "" {
 		attrs += ` k="` + escapeXML(key) + `"`
