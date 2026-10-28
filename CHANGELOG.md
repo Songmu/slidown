@@ -1,5 +1,24 @@
 # Changelog
 
+## [v0.0.11](https://github.com/Songmu/slidown/compare/v0.0.10...v0.0.11) - 2026-10-28
+
+### Other Changes
+- refactor: share explicit zero SVG length detection by @Songmu in https://github.com/Songmu/slidown/pull/110
+- Refactor template design-part relationship lookup by @Songmu in https://github.com/Songmu/slidown/pull/109
+- refactor(md): simplify default condition conversion by @Songmu in https://github.com/Songmu/slidown/pull/108
+- Refactor table region style selection by @Songmu in https://github.com/Songmu/slidown/pull/112
+- refactor(config): share XDG home path resolution by @Songmu in https://github.com/Songmu/slidown/pull/113
+- refactor(render): share placeholder position ordering by @Songmu in https://github.com/Songmu/slidown/pull/114
+- refactor(pptx): share fingerprint element serialization by @Songmu in https://github.com/Songmu/slidown/pull/115
+- refactor(svgshape): split color parsing by representation by @Songmu in https://github.com/Songmu/slidown/pull/116
+- refactor(pptx): separate table cell defaults and properties by @Songmu in https://github.com/Songmu/slidown/pull/117
+- refactor(svgshape): isolate XML node construction by @Songmu in https://github.com/Songmu/slidown/pull/118
+- Deduplicate slide-order fixtures and SVG dimension tests by @Songmu in https://github.com/Songmu/slidown/pull/119
+- test(pptx): protect shape-key stamping XML and uniqueness by @Songmu in https://github.com/Songmu/slidown/pull/120
+- refactor(svgshape): separate CSS selector validation by @Songmu in https://github.com/Songmu/slidown/pull/121
+- refactor(cmd): isolate the watch apply event loop by @Songmu in https://github.com/Songmu/slidown/pull/122
+- refactor(svgshape): clarify SVG path bounds accumulation by @Songmu in https://github.com/Songmu/slidown/pull/123
+
 ## [v0.0.10](https://github.com/Songmu/slidown/compare/v0.0.9...v0.0.10) - 2026-10-28
 
 ### Other Changes
