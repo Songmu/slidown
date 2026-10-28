@@ -96,37 +96,11 @@ func parseCSS(s string) ([]cssRule, bool) {
 		if !ok {
 			return nil, false
 		}
-		var sels []string
-		for _, raw := range strings.Split(selText, ",") {
-			sel := strings.TrimSpace(raw)
-			if sel == "" {
-				return nil, false
-			}
-			if strings.ContainsAny(sel, " >+~[:*") {
-				return nil, false
-			}
-			if strings.HasPrefix(sel, ".") || strings.HasPrefix(sel, "#") {
-				// Only a single simple class/ID selector is supported; a
-				// compound like ".foo.bar" would be mis-matched as one name, so
-				// reject anything but a bare identifier after the prefix.
-				if !isIdent(sel[1:]) {
-					return nil, false
-				}
-				// Class/ID selectors are case-sensitive in SVG/XML; preserve
-				// their spelling and compare exactly.
-				sels = append(sels, sel)
-			} else if isIdent(sel) {
-				// Element-name selectors are case-sensitive in SVG/XML; keep
-				// their original spelling and compare exactly.
-				sels = append(sels, sel)
-			} else {
-				return nil, false
-			}
-			totalSels++
-			if totalSels > maxCSSSelectors {
-				return nil, false
-			}
+		sels, ok := parseCSSSelectors(selText, maxCSSSelectors-totalSels)
+		if !ok {
+			return nil, false
 		}
+		totalSels += len(sels)
 		rules = append(rules, cssRule{sels: sels, decl: decl})
 		if len(rules) > maxCSSRules {
 			return nil, false
@@ -136,6 +110,33 @@ func parseCSS(s string) ([]cssRule, bool) {
 		return nil, false
 	}
 	return rules, true
+}
+
+func parseCSSSelectors(selText string, remaining int) ([]string, bool) {
+	var sels []string
+	for _, raw := range strings.Split(selText, ",") {
+		sel := strings.TrimSpace(raw)
+		if !isSimpleCSSSelector(sel) {
+			return nil, false
+		}
+		// All supported selectors are case-sensitive in SVG/XML.
+		sels = append(sels, sel)
+		if len(sels) > remaining {
+			return nil, false
+		}
+	}
+	return sels, true
+}
+
+func isSimpleCSSSelector(sel string) bool {
+	if sel == "" || strings.ContainsAny(sel, " >+~[:*") {
+		return false
+	}
+	if strings.HasPrefix(sel, ".") || strings.HasPrefix(sel, "#") {
+		// A compound like ".foo.bar" must not be matched as a single name.
+		return isIdent(sel[1:])
+	}
+	return isIdent(sel)
 }
 
 // stripCSSComments removes /* ... */ comments, but not comment-like sequences
