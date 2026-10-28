@@ -147,6 +147,11 @@ func TestRenderTableStyledCells(t *testing.T) {
 				tableCell("d2"),
 				tableCell("d3"),
 			}},
+			{Cells: []*TableCell{
+				tableCell("d4"),
+				tableCell("d5"),
+				tableCell("d6"),
+			}},
 		},
 		Style: &TableStyleSpec{
 			HeaderFirstCol:  TableCellStyleSpec{BgColor: "AA0000", Bold: true, Color: "111111", FontFamily: "Aptos", HAlign: "ctr", VAlign: "ctr"},
@@ -170,8 +175,8 @@ func TestRenderTableStyledCells(t *testing.T) {
 	var rels []slideRel
 	relIdx := 1
 	cells := tableCellXMLs(renderTable(tbl, 2, &relIdx, &rels))
-	if len(cells) != 6 {
-		t.Fatalf("expected 6 cells, got %d", len(cells))
+	if len(cells) != 9 {
+		t.Fatalf("expected 9 cells, got %d", len(cells))
 	}
 
 	wantInCell := map[int][]string{
@@ -191,15 +196,31 @@ func TestRenderTableStyledCells(t *testing.T) {
 			`<a:tcPr anchor="b">`,
 			`<a:lnL w="3333"><a:solidFill><a:srgbClr val="303030"/></a:solidFill></a:lnL>`,
 			`<a:lnR w="5555"><a:solidFill><a:srgbClr val="505050"/></a:solidFill></a:lnR>`,
+			`<a:lnB w="6666"><a:solidFill><a:srgbClr val="606060"/></a:solidFill></a:lnB>`,
 			`<a:solidFill><a:srgbClr val="00AA00"/></a:solidFill>`,
 		},
 		2: {
 			`<a:lnR w="2222"><a:solidFill><a:srgbClr val="202020"/></a:solidFill></a:lnR>`,
 		},
+		3: {
+			`<a:lnR w="7777"><a:solidFill><a:srgbClr val="707070"/></a:solidFill></a:lnR>`,
+			`<a:lnT w="4444"><a:solidFill><a:srgbClr val="404040"/></a:solidFill></a:lnT>`,
+			`<a:lnB w="8888"><a:solidFill><a:srgbClr val="808080"/></a:solidFill></a:lnB>`,
+			`<a:solidFill><a:srgbClr val="0000AA"/></a:solidFill>`,
+		},
 		4: {
+			`<a:lnL w="7777"><a:solidFill><a:srgbClr val="707070"/></a:solidFill></a:lnL>`,
 			`<a:lnT w="6666"><a:solidFill><a:srgbClr val="606060"/></a:solidFill></a:lnT>`,
 			`<a:lnR w="9999"><a:solidFill><a:srgbClr val="909090"/></a:solidFill></a:lnR>`,
+			`<a:lnB w="1010"><a:solidFill><a:srgbClr val="A0A0A0"/></a:solidFill></a:lnB>`,
 			`<a:solidFill><a:srgbClr val="AAAAAA"/></a:solidFill>`,
+		},
+		6: {
+			`<a:lnT w="8888"><a:solidFill><a:srgbClr val="808080"/></a:solidFill></a:lnT>`,
+			`<a:lnB w="1111"><a:solidFill><a:srgbClr val="101010"/></a:solidFill></a:lnB>`,
+		},
+		7: {
+			`<a:lnT w="1010"><a:solidFill><a:srgbClr val="A0A0A0"/></a:solidFill></a:lnT>`,
 		},
 	}
 	for idx, wants := range wantInCell {
