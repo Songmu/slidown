@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -280,6 +281,107 @@ func TestMultiBodyPlaceholderOrderedByPosition(t *testing.T) {
 	}
 	if !strings.Contains(shapeText(`<p:ph type="body" idx="1"/>`), "Bottom content") {
 		t.Errorf("visually-bottom placeholder (idx=1) should contain 'Bottom content'")
+	}
+}
+
+func TestPlaceholderPositionOrdering(t *testing.T) {
+	tmpl, err := pptx.LoadTemplate(buildTemplateFile(t))
+	if err != nil {
+		t.Fatalf("LoadTemplate: %v", err)
+	}
+	layout := tmpl.ContentLayout()
+	inherited := &pptx.PlaceholderInfo{Idx: 1}
+	x, y, _, _, ok := tmpl.EffectiveGeometry(layout, inherited)
+	if !ok {
+		t.Fatal("built-in body placeholder must inherit master geometry")
+	}
+	belowInherited := &pptx.PlaceholderInfo{HasGeom: true, X: x, Y: y + 1}
+
+	bottom := &pptx.PlaceholderInfo{HasGeom: true, X: 0, Y: 200}
+	right := &pptx.PlaceholderInfo{HasGeom: true, X: 200, Y: 100}
+	left := &pptx.PlaceholderInfo{HasGeom: true, X: 100, Y: 100}
+	equal := &pptx.PlaceholderInfo{HasGeom: true, X: 100, Y: 100}
+	unresolved := &pptx.PlaceholderInfo{Idx: 999}
+	for _, tt := range []struct {
+		name       string
+		tmpl       *pptx.Template
+		layout     *pptx.LayoutInfo
+		phs, want  []*pptx.PlaceholderInfo
+		expectCopy bool
+	}{
+		{
+			name: "stable Y then X", tmpl: tmpl,
+			phs:  []*pptx.PlaceholderInfo{bottom, right, left, equal},
+			want: []*pptx.PlaceholderInfo{left, equal, right, bottom}, expectCopy: true,
+		},
+		{
+			name: "already ordered still copied", tmpl: tmpl,
+			phs:  []*pptx.PlaceholderInfo{left, right},
+			want: []*pptx.PlaceholderInfo{left, right}, expectCopy: true,
+		},
+		{
+			name: "inherited geometry", tmpl: tmpl, layout: layout,
+			phs:  []*pptx.PlaceholderInfo{belowInherited, inherited},
+			want: []*pptx.PlaceholderInfo{inherited, belowInherited}, expectCopy: true,
+		},
+		{
+			name: "unresolved after sortable pair", tmpl: tmpl, layout: layout,
+			phs:  []*pptx.PlaceholderInfo{bottom, left, unresolved},
+			want: []*pptx.PlaceholderInfo{bottom, left, unresolved},
+		},
+		{
+			name: "nil after sortable pair", tmpl: tmpl, layout: layout,
+			phs:  []*pptx.PlaceholderInfo{bottom, left, nil},
+			want: []*pptx.PlaceholderInfo{bottom, left, nil},
+		},
+		{
+			name: "nil template",
+			phs:  []*pptx.PlaceholderInfo{bottom, left},
+			want: []*pptx.PlaceholderInfo{bottom, left},
+		},
+		{
+			name: "single unresolved", tmpl: tmpl,
+			phs: []*pptx.PlaceholderInfo{unresolved}, want: []*pptx.PlaceholderInfo{unresolved},
+		},
+		{name: "nil slice", tmpl: tmpl},
+		{
+			name: "empty slice", tmpl: tmpl,
+			phs: []*pptx.PlaceholderInfo{}, want: []*pptx.PlaceholderInfo{},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			original := slices.Clone(tt.phs)
+			got := orderPlaceholdersByPosition(tt.tmpl, tt.layout, tt.phs)
+			if !slices.Equal(got, tt.want) || (got == nil) != (tt.want == nil) {
+				t.Errorf("placeholder order = %v, want %v", got, tt.want)
+			}
+			if !slices.Equal(tt.phs, original) {
+				t.Error("placeholder ordering mutated the input")
+			}
+			if len(got) > 0 && (&got[0] != &tt.phs[0]) != tt.expectCopy {
+				t.Errorf("new backing slice = %v, want %v", &got[0] != &tt.phs[0], tt.expectCopy)
+			}
+
+			var slots, wantSlots []subtitleSlot
+			if tt.phs != nil {
+				slots = make([]subtitleSlot, len(tt.phs))
+				wantSlots = make([]subtitleSlot, len(tt.phs))
+			}
+			for i, ph := range tt.phs {
+				slot := subtitleSlot{ph: ph, fromHint: i%2 == 0}
+				slots[i] = slot
+				for j, want := range tt.want {
+					if ph == want {
+						wantSlots[j] = slot
+					}
+				}
+			}
+			alias := slots
+			orderSubtitleSlots(tt.tmpl, tt.layout, slots)
+			if !slices.Equal(alias, wantSlots) || (alias == nil) != (wantSlots == nil) {
+				t.Errorf("subtitle slots (including hints) = %v, want %v", alias, wantSlots)
+			}
+		})
 	}
 }
 
