@@ -208,32 +208,43 @@ func resolveLayout(s *slidown.Slide, tmpl *pptx.Template, first bool) *pptx.Layo
 // from. When any placeholder's geometry cannot be resolved the original
 // shape-tree order is preserved, so ordering never partially applies.
 func orderPlaceholdersByPosition(tmpl *pptx.Template, layout *pptx.LayoutInfo, phs []*pptx.PlaceholderInfo) []*pptx.PlaceholderInfo {
-	if tmpl == nil || len(phs) < 2 {
+	order := placeholderPositionOrder(tmpl, layout, phs)
+	if order == nil {
 		return phs
 	}
-	type positioned struct {
-		ph   *pptx.PlaceholderInfo
-		x, y int64
+	ordered := make([]*pptx.PlaceholderInfo, len(phs))
+	for i, index := range order {
+		ordered[i] = phs[index]
 	}
-	items := make([]positioned, len(phs))
+	return ordered
+}
+
+// placeholderPositionOrder computes a stable Y-then-X permutation, or nil when
+// no reordering should apply. Geometry must resolve for every placeholder.
+func placeholderPositionOrder(tmpl *pptx.Template, layout *pptx.LayoutInfo, phs []*pptx.PlaceholderInfo) []int {
+	if tmpl == nil || len(phs) < 2 {
+		return nil
+	}
+	positions := make([]struct {
+		x, y int64
+	}, len(phs))
+	order := make([]int, len(phs))
 	for i, ph := range phs {
 		x, y, _, _, ok := tmpl.EffectiveGeometry(layout, ph)
 		if !ok {
-			return phs
+			return nil
 		}
-		items[i] = positioned{ph: ph, x: x, y: y}
+		positions[i].x, positions[i].y = x, y
+		order[i] = i
 	}
-	sort.SliceStable(items, func(i, j int) bool {
-		if items[i].y != items[j].y {
-			return items[i].y < items[j].y
+	sort.SliceStable(order, func(i, j int) bool {
+		a, b := positions[order[i]], positions[order[j]]
+		if a.y != b.y {
+			return a.y < b.y
 		}
-		return items[i].x < items[j].x
+		return a.x < b.x
 	})
-	ordered := make([]*pptx.PlaceholderInfo, len(items))
-	for i := range items {
-		ordered[i] = items[i].ph
-	}
-	return ordered
+	return order
 }
 
 // subtitleSlot is a layout placeholder that receives subtitle content: either a
@@ -296,27 +307,19 @@ func orderSubtitleSlots(tmpl *pptx.Template, layout *pptx.LayoutInfo, slots []su
 	if tmpl == nil || len(slots) < 2 {
 		return
 	}
-	type positioned struct {
-		slot subtitleSlot
-		x, y int64
+	phs := make([]*pptx.PlaceholderInfo, len(slots))
+	for i, slot := range slots {
+		phs[i] = slot.ph
 	}
-	items := make([]positioned, len(slots))
-	for i, sl := range slots {
-		x, y, _, _, ok := tmpl.EffectiveGeometry(layout, sl.ph)
-		if !ok {
-			return
-		}
-		items[i] = positioned{slot: sl, x: x, y: y}
+	order := placeholderPositionOrder(tmpl, layout, phs)
+	if order == nil {
+		return
 	}
-	sort.SliceStable(items, func(i, j int) bool {
-		if items[i].y != items[j].y {
-			return items[i].y < items[j].y
-		}
-		return items[i].x < items[j].x
-	})
-	for i := range items {
-		slots[i] = items[i].slot
+	ordered := make([]subtitleSlot, len(slots))
+	for i, index := range order {
+		ordered[i] = slots[index]
 	}
+	copy(slots, ordered)
 }
 
 // distributeSubtitleContent places subtitle content into the subtitle slots. Each
