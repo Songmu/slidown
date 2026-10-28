@@ -1,5 +1,27 @@
 # Changelog
 
+## [v0.0.10](https://github.com/Songmu/slidown/compare/v0.0.9...v0.0.10) - 2026-10-28
+
+### Other Changes
+- Fix fontconfig discovery for LibreOffice visual tests by @Songmu in https://github.com/Songmu/slidown/pull/89
+- Refactor SVG path parsing into explicit state and command handlers by @Songmu in https://github.com/Songmu/slidown/pull/92
+- Refactor slide alignment into explicit matching phases by @Songmu in https://github.com/Songmu/slidown/pull/93
+- Refactor Markdown traversal into explicit walk state by @Songmu in https://github.com/Songmu/slidown/pull/91
+- Refactor incremental slide reuse into focused restoration helpers by @Songmu in https://github.com/Songmu/slidown/pull/94
+- chore: restore staticcheck compatibility with Go 1.27 by @Songmu in https://github.com/Songmu/slidown/pull/95
+- refactor: clarify presentation update stages by @Songmu in https://github.com/Songmu/slidown/pull/96
+- Refactor SVG conversion into responsibility-based stages by @Songmu in https://github.com/Songmu/slidown/pull/100
+- refactor: clarify shape parsing and incremental reuse by @Songmu in https://github.com/Songmu/slidown/pull/99
+- refactor: clarify SVG external resource scanning by @Songmu in https://github.com/Songmu/slidown/pull/97
+- test: share ZIP helpers and organize SVG regressions by @Songmu in https://github.com/Songmu/slidown/pull/101
+- refactor(md): clarify fragment conversion and default evaluation by @Songmu in https://github.com/Songmu/slidown/pull/98
+- Fix list indentation defaults and preserve template text styles by @Songmu in https://github.com/Songmu/slidown/pull/102
+- Test the real apply entrypoint instead of duplicating its pipeline by @Songmu in https://github.com/Songmu/slidown/pull/103
+- Separate SVG fill and stroke paint eligibility stages by @Songmu in https://github.com/Songmu/slidown/pull/105
+- Split template loading into focused stages and simplify preservation tests by @Songmu in https://github.com/Songmu/slidown/pull/106
+- Share SVG number scanning and separate transform matrix construction by @Songmu in https://github.com/Songmu/slidown/pull/104
+- chore(deps): bump Songmu/tagpr from 1.21.3 to 1.21.4 in the dependencies group by @dependabot[bot] in https://github.com/Songmu/slidown/pull/107
+
 ## [v0.0.9](https://github.com/Songmu/slidown/compare/v0.0.8...v0.0.9) - 2026-10-27
 
 ### Other Changes
