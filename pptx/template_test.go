@@ -4,6 +4,68 @@ import (
 	"testing"
 )
 
+func TestTemplateReferencedDesignParts(t *testing.T) {
+	for _, lookup := range []struct {
+		name string
+		dir  string
+		find func(*Template, string) string
+	}{
+		{"theme", "theme", (*Template).themeReferencedBy},
+		{"master", "slideMasters", (*Template).masterOf},
+	} {
+		t.Run(lookup.name, func(t *testing.T) {
+			for _, tc := range []struct {
+				name    string
+				part    string
+				targets []string
+				want    string
+			}{
+				{
+					name: "missing relationships",
+					part: "ppt/slideLayouts/layout.xml",
+				},
+				{
+					name:    "no matching prefix",
+					part:    "ppt/slideLayouts/layout.xml",
+					targets: []string{"../media/image.png", "../" + lookup.dir + "-other/part.xml"},
+				},
+				{
+					name:    "first matching target",
+					part:    "ppt/slideLayouts/layout.xml",
+					targets: []string{"../media/image.png", "../" + lookup.dir + "/nested/../first.xml", "../" + lookup.dir + "/second.xml"},
+					want:    "ppt/" + lookup.dir + "/first.xml",
+				},
+				{
+					name:    "part without directory",
+					part:    "part.xml",
+					targets: []string{"../ppt/" + lookup.dir + "/first.xml"},
+					want:    "ppt/" + lookup.dir + "/first.xml",
+				},
+				{
+					name:    "absolute target is joined",
+					part:    "ppt/slideLayouts/layout.xml",
+					targets: []string{"/ppt/" + lookup.dir + "/first.xml"},
+				},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					tmpl := &Template{designParts: map[string][]byte{}}
+					if tc.targets != nil {
+						rels := "<Relationships>"
+						for _, target := range tc.targets {
+							rels += `<Relationship Target="` + target + `"/>`
+						}
+						rels += "</Relationships>"
+						tmpl.designParts[relsPath(tc.part)] = []byte(rels)
+					}
+					if got := lookup.find(tmpl, tc.part); got != tc.want {
+						t.Errorf("lookup(%q) = %q, want %q", tc.part, got, tc.want)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestParseLayoutExtractsPlaceholderNameAndPrompt(t *testing.T) {
 	xmlData := []byte(`<?xml version="1.0" encoding="UTF-8"?>
 <p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
