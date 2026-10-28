@@ -679,40 +679,53 @@ func renderTableCell(cell *TableCell, header bool, style *TableStyleSpec, rowIdx
 	if cell != nil {
 		align = cell.Align
 	}
-	var cellStyle TableCellStyleSpec
+	var cellStyle *TableCellStyleSpec
 	if style != nil {
-		cellStyle = tableRegion(style, header, colIdx).cellStyle
+		region := tableRegion(style, header, colIdx)
+		cellStyle = &region.cellStyle
 		if align == AlignNone {
 			align = alignmentFromOOXML(cellStyle.HAlign)
 		}
 	}
 	for _, p := range paras {
-		if p.Align == AlignNone {
-			p.Align = align
-		}
-		if style != nil {
-			for _, run := range p.Runs {
-				// TODO: apply the remaining deck table-cell text properties
-				// (underline, strike, baseline, highlight/background color, font
-				// size) once TableCellStyleSpec carries them.
-				run.Bold = run.Bold || cellStyle.Bold
-				run.Italic = run.Italic || cellStyle.Italic
-				if cellStyle.Color != "" && run.Color == "" {
-					run.Color = cellStyle.Color
-				}
-				if cellStyle.FontFamily != "" && run.FontFamily == "" && !run.Code {
-					run.FontFamily = cellStyle.FontFamily
-				}
-			}
-		} else if header {
+		applyTableCellParagraphDefaults(p, align, header, cellStyle)
+		b.WriteString(renderParagraph(p, relIdx, rels))
+	}
+	b.WriteString(`</a:txBody>`)
+	b.WriteString(renderTableCellProperties(header, style, cellStyle, rowIdx, colIdx, nRows, nCols, headerRows))
+	b.WriteString(`</a:tc>`)
+	return b.String()
+}
+
+func applyTableCellParagraphDefaults(p *Paragraph, align Alignment, header bool, cellStyle *TableCellStyleSpec) {
+	if p.Align == AlignNone {
+		p.Align = align
+	}
+	if cellStyle == nil {
+		if header {
 			for _, run := range p.Runs {
 				run.Bold = true
 			}
 		}
-		b.WriteString(renderParagraph(p, relIdx, rels))
+		return
 	}
-	b.WriteString(`</a:txBody>`)
+	for _, run := range p.Runs {
+		// TODO: apply the remaining deck table-cell text properties
+		// (underline, strike, baseline, highlight/background color, font
+		// size) once TableCellStyleSpec carries them.
+		run.Bold = run.Bold || cellStyle.Bold
+		run.Italic = run.Italic || cellStyle.Italic
+		if cellStyle.Color != "" && run.Color == "" {
+			run.Color = cellStyle.Color
+		}
+		if cellStyle.FontFamily != "" && run.FontFamily == "" && !run.Code {
+			run.FontFamily = cellStyle.FontFamily
+		}
+	}
+}
 
+func renderTableCellProperties(header bool, style *TableStyleSpec, cellStyle *TableCellStyleSpec, rowIdx, colIdx, nRows, nCols int, headerRows []bool) string {
+	var b strings.Builder
 	if style != nil {
 		lnL, lnR, lnT, lnB := tableCellBorders(style, rowIdx, colIdx, nRows, nCols, headerRows)
 		b.WriteString(`<a:tcPr`)
@@ -727,7 +740,7 @@ func renderTableCell(cell *TableCell, header bool, style *TableStyleSpec, rowIdx
 		if cellStyle.BgColor != "" {
 			b.WriteString(fmt.Sprintf(`<a:solidFill><a:srgbClr val="%s"/></a:solidFill>`, escapeXML(cellStyle.BgColor)))
 		}
-		b.WriteString(`</a:tcPr></a:tc>`)
+		b.WriteString(`</a:tcPr>`)
 		return b.String()
 	}
 
@@ -740,7 +753,7 @@ func renderTableCell(cell *TableCell, header bool, style *TableStyleSpec, rowIdx
 	if header {
 		b.WriteString(`<a:solidFill><a:srgbClr val="D9E1F2"/></a:solidFill>`)
 	}
-	b.WriteString(`</a:tcPr></a:tc>`)
+	b.WriteString(`</a:tcPr>`)
 	return b.String()
 }
 
