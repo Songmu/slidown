@@ -303,6 +303,107 @@ func TestRenderTableStyledPreservesInlineEmphasis(t *testing.T) {
 	}
 }
 
+func TestRenderTableCellMutatesDefaultsInPlace(t *testing.T) {
+	tests := []struct {
+		name      string
+		style     *TableStyleSpec
+		header    bool
+		cellAlign Alignment
+		wantAlign Alignment
+		wantRuns  []Run
+	}{
+		{
+			name: "region defaults preserve inline overrides",
+			style: &TableStyleSpec{DataFirstCol: TableCellStyleSpec{
+				Bold: true, Color: "112233", FontFamily: "Aptos", HAlign: "ctr",
+			}},
+			wantAlign: AlignCenter,
+			wantRuns: []Run{
+				{Bold: true, Color: "112233", FontFamily: "Aptos"},
+				{Bold: true, Italic: true, Color: "AABBCC", FontFamily: "Custom"},
+				{Bold: true, Code: true, Color: "112233"},
+			},
+		},
+		{
+			name: "cell alignment overrides region and style adds italic",
+			style: &TableStyleSpec{HeaderFirstCol: TableCellStyleSpec{
+				Italic: true, HAlign: "ctr",
+			}},
+			header: true, cellAlign: AlignRight, wantAlign: AlignRight,
+			wantRuns: []Run{
+				{Italic: true},
+				{Bold: true, Italic: true, Color: "AABBCC", FontFamily: "Custom"},
+				{Italic: true, Code: true},
+			},
+		},
+		{
+			name:   "legacy header defaults",
+			header: true, cellAlign: AlignCenter, wantAlign: AlignCenter,
+			wantRuns: []Run{
+				{Bold: true},
+				{Bold: true, Italic: true, Color: "AABBCC", FontFamily: "Custom"},
+				{Bold: true, Code: true},
+			},
+		},
+		{
+			name:   "empty style suppresses legacy header bold",
+			header: true, style: &TableStyleSpec{},
+			wantRuns: []Run{
+				{},
+				{Bold: true, Italic: true, Color: "AABBCC", FontFamily: "Custom"},
+				{Code: true},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runs := []*Run{
+				{},
+				{Bold: true, Italic: true, Color: "AABBCC", FontFamily: "Custom"},
+				{Code: true},
+			}
+			p := &Paragraph{Runs: runs}
+			explicit := &Paragraph{Align: AlignLeft}
+			cell := &TableCell{Align: tt.cellAlign, Paragraphs: []*Paragraph{p, explicit}}
+			relIdx := 1
+			var rels []slideRel
+			renderTableCell(cell, tt.header, tt.style, 0, 0, 1, 1, []bool{tt.header}, &relIdx, &rels)
+			if cell.Paragraphs[0] != p || p.Align != tt.wantAlign || explicit.Align != AlignLeft {
+				t.Errorf("paragraph defaults or identity changed: %+v, %+v", p, explicit)
+			}
+			for i, run := range runs {
+				if p.Runs[i] != run || *run != tt.wantRuns[i] {
+					t.Errorf("run %d = %+v, want %+v in place", i, *run, tt.wantRuns[i])
+				}
+			}
+		})
+	}
+}
+
+func TestRenderTableCellEmptyParagraphsExactXML(t *testing.T) {
+	style := &TableStyleSpec{
+		HeaderFirstCol:  TableCellStyleSpec{VAlign: "ctr", BgColor: "AABBCC"},
+		OuterVertical:   TableBorderSpec{None: true},
+		OuterHorizontal: TableBorderSpec{Color: "112233", WidthEMU: 1200, Dash: "dash"},
+	}
+	want := `<a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr/></a:p></a:txBody>` +
+		`<a:tcPr anchor="ctr"><a:lnL><a:noFill/></a:lnL><a:lnR><a:noFill/></a:lnR>` +
+		`<a:lnT w="1200"><a:solidFill><a:srgbClr val="112233"/></a:solidFill><a:prstDash val="dash"/></a:lnT>` +
+		`<a:lnB w="1200"><a:solidFill><a:srgbClr val="112233"/></a:solidFill><a:prstDash val="dash"/></a:lnB>` +
+		`<a:solidFill><a:srgbClr val="AABBCC"/></a:solidFill></a:tcPr></a:tc>`
+	for _, cell := range []*TableCell{nil, {}, {Paragraphs: []*Paragraph{}}} {
+		relIdx := 7
+		var rels []slideRel
+		got := renderTableCell(cell, true, style, 0, 0, 1, 1, []bool{true}, &relIdx, &rels)
+		if got != want {
+			t.Errorf("cell %+v XML = %s, want %s", cell, got, want)
+		}
+		if relIdx != 7 || rels != nil {
+			t.Errorf("empty cell changed relationships: %d, %+v", relIdx, rels)
+		}
+	}
+}
+
 func TestRenderTableBorderWidthOnlyNoColor(t *testing.T) {
 	got := renderTableBorder("lnL", TableBorderSpec{WidthEMU: 1234})
 	if strings.Contains(got, `srgbClr`) {
