@@ -16,54 +16,65 @@ func parseColor(s string) (string, bool) {
 		return "000000", true
 	}
 	if strings.HasPrefix(s, "#") {
-		h := s[1:]
-		if len(h) == 3 {
-			h = string([]byte{h[0], h[0], h[1], h[1], h[2], h[2]})
-		}
-		if len(h) != 6 {
-			return "", false
-		}
-		for _, r := range h {
-			if !strings.ContainsRune("0123456789abcdef", r) {
-				return "", false
-			}
-		}
-		return h, true
+		return parseHexColor(s[1:])
 	}
 	if strings.HasPrefix(s, "rgb(") && strings.HasSuffix(s, ")") {
-		parts := strings.Split(s[4:len(s)-1], ",")
-		if len(parts) != 3 {
-			return "", false
-		}
-		vals := make([]int, 3)
-		for i, p := range parts {
-			p = strings.TrimSpace(p)
-			if strings.HasSuffix(p, "%") {
-				v, err := strconv.ParseFloat(strings.TrimSuffix(p, "%"), 64)
-				if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
-					return "", false
-				}
-				vals[i] = int(v*255/100 + 0.5)
-			} else {
-				v, err := strconv.Atoi(p)
-				if err != nil {
-					return "", false
-				}
-				vals[i] = v
-			}
-			if vals[i] < 0 {
-				vals[i] = 0
-			}
-			if vals[i] > 255 {
-				vals[i] = 255
-			}
-		}
-		return fmt.Sprintf("%02x%02x%02x", vals[0], vals[1], vals[2]), true
+		return parseRGBColor(s[4 : len(s)-1])
 	}
 	if h, ok := namedColors[s]; ok {
 		return h, true
 	}
 	return "", false
+}
+
+func parseHexColor(h string) (string, bool) {
+	if len(h) == 3 {
+		h = string([]byte{h[0], h[0], h[1], h[1], h[2], h[2]})
+	}
+	if len(h) != 6 {
+		return "", false
+	}
+	for _, r := range h {
+		if !strings.ContainsRune("0123456789abcdef", r) {
+			return "", false
+		}
+	}
+	return h, true
+}
+
+func parseRGBColor(s string) (string, bool) {
+	parts := strings.Split(s, ",")
+	if len(parts) != 3 {
+		return "", false
+	}
+	var vals [3]int
+	for i, p := range parts {
+		v, ok := parseRGBComponent(p)
+		if !ok {
+			return "", false
+		}
+		vals[i] = v
+	}
+	return fmt.Sprintf("%02x%02x%02x", vals[0], vals[1], vals[2]), true
+}
+
+func parseRGBComponent(s string) (int, bool) {
+	s = strings.TrimSpace(s)
+	var value int
+	if strings.HasSuffix(s, "%") {
+		v, err := strconv.ParseFloat(strings.TrimSuffix(s, "%"), 64)
+		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+			return 0, false
+		}
+		value = int(v*255/100 + 0.5)
+	} else {
+		v, err := strconv.Atoi(s)
+		if err != nil {
+			return 0, false
+		}
+		value = v
+	}
+	return min(max(value, 0), 255), true
 }
 
 var namedColors = map[string]string{
