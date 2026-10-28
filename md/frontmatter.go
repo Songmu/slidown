@@ -21,13 +21,7 @@ func (fm *Frontmatter) applyConfig(cfg *config.Config) *Frontmatter {
 	}
 	// append default conditions from config
 	for _, cond := range cfg.Defaults {
-		fm.Defaults = append(fm.Defaults, DefaultCondition{
-			If:     cond.If,
-			Layout: cond.Layout,
-			Freeze: cond.Freeze,
-			Ignore: cond.Ignore,
-			Skip:   cond.Skip,
-		})
+		fm.Defaults = append(fm.Defaults, DefaultCondition(cond))
 	}
 	return fm
 }
