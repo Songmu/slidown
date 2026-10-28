@@ -66,53 +66,8 @@ func parseTransform(s string) (matrix, bool) {
 		if !ok {
 			return matrix{}, false
 		}
-		var tm matrix
-		switch name {
-		case "matrix":
-			if len(nums) != 6 {
-				return matrix{}, false
-			}
-			tm = matrix{nums[0], nums[1], nums[2], nums[3], nums[4], nums[5]}
-		case "translate":
-			if len(nums) < 1 || len(nums) > 2 {
-				return matrix{}, false
-			}
-			ty := 0.0
-			if len(nums) == 2 {
-				ty = nums[1]
-			}
-			tm = matrix{a: 1, d: 1, e: nums[0], f: ty}
-		case "scale":
-			if len(nums) < 1 || len(nums) > 2 {
-				return matrix{}, false
-			}
-			sy := nums[0]
-			if len(nums) == 2 {
-				sy = nums[1]
-			}
-			tm = matrix{a: nums[0], d: sy}
-		case "rotate":
-			if len(nums) != 1 && len(nums) != 3 {
-				return matrix{}, false
-			}
-			a := nums[0] * math.Pi / 180
-			r := matrix{a: math.Cos(a), b: math.Sin(a), c: -math.Sin(a), d: math.Cos(a)}
-			if len(nums) == 3 {
-				tm = matrix{a: 1, d: 1, e: nums[1], f: nums[2]}.mul(r).mul(matrix{a: 1, d: 1, e: -nums[1], f: -nums[2]})
-			} else {
-				tm = r
-			}
-		case "skewx":
-			if len(nums) != 1 {
-				return matrix{}, false
-			}
-			tm = matrix{a: 1, d: 1, c: math.Tan(nums[0] * math.Pi / 180)}
-		case "skewy":
-			if len(nums) != 1 {
-				return matrix{}, false
-			}
-			tm = matrix{a: 1, d: 1, b: math.Tan(nums[0] * math.Pi / 180)}
-		default:
+		tm, ok := transformMatrix(name, nums)
+		if !ok {
 			return matrix{}, false
 		}
 		res = res.mul(tm)
@@ -123,6 +78,57 @@ func parseTransform(s string) (matrix, bool) {
 	}
 	return res, true
 }
+
+func transformMatrix(name string, nums []float64) (matrix, bool) {
+	switch name {
+	case "matrix":
+		if len(nums) != 6 {
+			return matrix{}, false
+		}
+		return matrix{nums[0], nums[1], nums[2], nums[3], nums[4], nums[5]}, true
+	case "translate":
+		if len(nums) < 1 || len(nums) > 2 {
+			return matrix{}, false
+		}
+		ty := 0.0
+		if len(nums) == 2 {
+			ty = nums[1]
+		}
+		return matrix{a: 1, d: 1, e: nums[0], f: ty}, true
+	case "scale":
+		if len(nums) < 1 || len(nums) > 2 {
+			return matrix{}, false
+		}
+		sy := nums[0]
+		if len(nums) == 2 {
+			sy = nums[1]
+		}
+		return matrix{a: nums[0], d: sy}, true
+	case "rotate":
+		if len(nums) != 1 && len(nums) != 3 {
+			return matrix{}, false
+		}
+		a := nums[0] * math.Pi / 180
+		r := matrix{a: math.Cos(a), b: math.Sin(a), c: -math.Sin(a), d: math.Cos(a)}
+		if len(nums) == 3 {
+			return matrix{a: 1, d: 1, e: nums[1], f: nums[2]}.mul(r).mul(matrix{a: 1, d: 1, e: -nums[1], f: -nums[2]}), true
+		}
+		return r, true
+	case "skewx":
+		if len(nums) != 1 {
+			return matrix{}, false
+		}
+		return matrix{a: 1, d: 1, c: math.Tan(nums[0] * math.Pi / 180)}, true
+	case "skewy":
+		if len(nums) != 1 {
+			return matrix{}, false
+		}
+		return matrix{a: 1, d: 1, b: math.Tan(nums[0] * math.Pi / 180)}, true
+	default:
+		return matrix{}, false
+	}
+}
+
 func findCloseParen(s string, open int) int {
 	depth := 0
 	for i := open; i < len(s); i++ {
