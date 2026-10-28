@@ -189,17 +189,7 @@ func TestMergeSlideShapesCarryOverIDAvoidsPictureID(t *testing.T) {
 }
 
 func TestStampShapeKeysIdempotent(t *testing.T) {
-	in := twoSlidePresentationWithFingerprints(t, "fp-1", "fp-2")
-	parts, order, err := readZipPartsFromBytes(in)
-	if err != nil {
-		t.Fatalf("readZipPartsFromBytes: %v", err)
-	}
-	parts["ppt/slides/slide1.xml"] = []byte(strings.Replace(string(parts["ppt/slides/slide1.xml"]), `</p:spTree>`,
-		`<p:sp><p:nvSpPr><p:cNvPr id="9" name="Manual Box"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>manual keep</a:t></a:r></a:p></p:txBody></p:sp></p:spTree>`, 1))
-	withManual, err := zipFromParts(order, parts)
-	if err != nil {
-		t.Fatalf("zipFromParts: %v", err)
-	}
+	withManual := presentationWithShapesForStampTest(t, manualShapeForStampTest("9", `<p:nvPr/>`))
 
 	once, err := StampShapeKeys(withManual)
 	if err != nil {
@@ -223,19 +213,9 @@ func TestStampShapeKeysIdempotent(t *testing.T) {
 }
 
 func TestStampShapeKeysHandlesSpacedSelfClosingNvPr(t *testing.T) {
-	in := twoSlidePresentationWithFingerprints(t, "fp-1", "fp-2")
-	parts, order, err := readZipPartsFromBytes(in)
-	if err != nil {
-		t.Fatalf("readZipPartsFromBytes: %v", err)
-	}
 	// Some serializers emit "<p:nvPr />" (space before the slash) for a
 	// hand-added text box; stamping must still apply.
-	parts["ppt/slides/slide1.xml"] = []byte(strings.Replace(string(parts["ppt/slides/slide1.xml"]), `</p:spTree>`,
-		`<p:sp><p:nvSpPr><p:cNvPr id="9" name="Manual Box"/><p:cNvSpPr/><p:nvPr /></p:nvSpPr><p:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>manual keep</a:t></a:r></a:p></p:txBody></p:sp></p:spTree>`, 1))
-	withManual, err := zipFromParts(order, parts)
-	if err != nil {
-		t.Fatalf("zipFromParts: %v", err)
-	}
+	withManual := presentationWithShapesForStampTest(t, manualShapeForStampTest("9", `<p:nvPr />`))
 
 	stamped, err := StampShapeKeys(withManual)
 	if err != nil {
