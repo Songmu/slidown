@@ -2,10 +2,6 @@ package pptx
 
 import (
 	"bytes"
-	"encoding/xml"
-	"fmt"
-	"regexp"
-	"strings"
 	"testing"
 
 	"github.com/Songmu/slidown/internal/testutil"
@@ -43,36 +39,6 @@ func TestReadSlideMetasFollowsPresentationSlideOrder(t *testing.T) {
 func reorderPresentationOrder(t *testing.T, in []byte) []byte {
 	t.Helper()
 	parts, order := testutil.ReadZIP(t, in)
-	parts["ppt/presentation.xml"] = reorderPresentationXMLForTest(t, parts["ppt/presentation.xml"])
+	parts["ppt/presentation.xml"] = testutil.SwapFirstTwoSlideIDs(t, parts["ppt/presentation.xml"])
 	return testutil.WriteZIP(t, parts, order)
-}
-
-func reorderPresentationXMLForTest(t *testing.T, presentationXML []byte) []byte {
-	t.Helper()
-	var p struct {
-		SlideIDs []struct {
-			RelID string `xml:"http://schemas.openxmlformats.org/officeDocument/2006/relationships id,attr"`
-		} `xml:"sldIdLst>sldId"`
-	}
-	if err := xml.Unmarshal(presentationXML, &p); err != nil {
-		t.Fatalf("xml.Unmarshal presentation.xml: %v", err)
-	}
-	if len(p.SlideIDs) < 2 {
-		t.Fatalf("presentation.xml has less than 2 slides")
-	}
-	p.SlideIDs[0], p.SlideIDs[1] = p.SlideIDs[1], p.SlideIDs[0]
-
-	var b strings.Builder
-	b.WriteString("<p:sldIdLst>")
-	for i, s := range p.SlideIDs {
-		b.WriteString(fmt.Sprintf(`<p:sldId id="%d" r:id="%s"/>`, 256+i, s.RelID))
-	}
-	b.WriteString("</p:sldIdLst>")
-
-	re := regexp.MustCompile(`(?s)<p:sldIdLst>.*?</p:sldIdLst>`)
-	updated := re.ReplaceAll(presentationXML, []byte(b.String()))
-	if bytes.Equal(updated, presentationXML) {
-		t.Fatalf("failed to rewrite sldIdLst in presentation.xml")
-	}
-	return updated
 }
