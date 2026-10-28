@@ -187,13 +187,25 @@ func watchApply(ctx context.Context, cmd *cobra.Command, deckPath string, apply 
 	triggers := make(chan struct{}, 1)
 	defer close(triggers)
 	debounced := debounceWatchSignals(ctx, triggers, applyWatchDebounce)
-	errorsCh := w.Errors
 
+	return watchApplyLoop(ctx, cmd, canonicalDeck, w.Events, w.Errors, triggers, debounced, apply)
+}
+
+func watchApplyLoop(
+	ctx context.Context,
+	cmd *cobra.Command,
+	canonicalDeck string,
+	events <-chan fswatcher.Event,
+	errorsCh <-chan error,
+	triggers chan<- struct{},
+	debounced <-chan struct{},
+	apply func(context.Context) error,
+) error {
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case ev, ok := <-w.Events:
+		case ev, ok := <-events:
 			if !ok {
 				return nil
 			}
