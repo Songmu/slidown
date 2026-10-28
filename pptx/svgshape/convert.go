@@ -148,27 +148,15 @@ func parseXML(data []byte) (*node, error) {
 			if nodeCount > maxShapes {
 				return nil, errTooComplex
 			}
-			n := &node{Name: strings.ToLower(t.Name.Local), rawName: t.Name.Local, Attrs: map[string]string{}}
-			// SVG/XML element names are case-sensitive; a known element spelled
-			// with the wrong case (e.g. <RECT>, <lineargradient>) is not that
-			// element and must not be converted into geometry/gradients.
-			if canon, known := canonicalSVGElement[n.Name]; known && t.Name.Local != canon {
-				n.badCase = true
-			}
-			if len(stack) == 0 {
+			isRoot := len(stack) == 0
+			if isRoot {
 				// The root establishes the document's namespace mode: either the
 				// SVG namespace or (leniently) no namespace. A root in any other
 				// namespace isn't SVG content.
 				rootNS = t.Name.Space
-				n.foreign = t.Name.Space != "" && t.Name.Space != svgNS
-			} else {
-				// Descendants must stay in the root's namespace mode. An element
-				// that switches namespace (e.g. <rect xmlns=""> under an
-				// SVG-namespaced root) is not SVG content and is not rendered.
-				n.foreign = t.Name.Space != rootNS
 			}
-			n.readXMLAttrs(t.Attr)
-			if len(stack) == 0 {
+			n := newXMLNode(t, rootNS, isRoot)
+			if isRoot {
 				root = n
 			} else {
 				parent := stack[len(stack)-1]
@@ -203,6 +191,26 @@ func parseXML(data []byte) (*node, error) {
 			return nil, errTooComplex
 		}
 	}
+}
+
+func newXMLNode(t xml.StartElement, rootNS string, isRoot bool) *node {
+	n := &node{Name: strings.ToLower(t.Name.Local), rawName: t.Name.Local, Attrs: map[string]string{}}
+	// SVG/XML element names are case-sensitive; a known element spelled
+	// with the wrong case (e.g. <RECT>, <lineargradient>) is not that
+	// element and must not be converted into geometry/gradients.
+	if canon, known := canonicalSVGElement[n.Name]; known && t.Name.Local != canon {
+		n.badCase = true
+	}
+	if isRoot {
+		n.foreign = t.Name.Space != "" && t.Name.Space != svgNS
+	} else {
+		// Descendants must stay in the root's namespace mode. An element
+		// that switches namespace (e.g. <rect xmlns=""> under an
+		// SVG-namespaced root) is not SVG content and is not rendered.
+		n.foreign = t.Name.Space != rootNS
+	}
+	n.readXMLAttrs(t.Attr)
+	return n
 }
 
 func (n *node) readXMLAttrs(attrs []xml.Attr) {
