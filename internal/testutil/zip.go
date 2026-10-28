@@ -1,4 +1,4 @@
-// Package testutil provides ZIP primitives shared by presentation tests.
+// Package testutil provides fixtures and ZIP primitives for presentation tests.
 // It must only be imported by tests.
 package testutil
 

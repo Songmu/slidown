@@ -230,22 +230,6 @@ func TestParsePreserveAspect(t *testing.T) {
 	}
 }
 
-func TestSVGZeroRelativeUnitSizeSkipped(t *testing.T) {
-	// width="0em" is an explicit zero in a relative unit; zero is
-	// unit-independent, so the SVG viewport is empty and must report 0x0.
-	img, err := newImageFromBuffer(bytes.NewReader([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="0em" height="100" viewBox="0 0 100 100"></svg>`)))
-	if err != nil {
-		t.Fatalf("newImageFromBuffer: %v", err)
-	}
-	w, h, err := img.Dimensions()
-	if err != nil {
-		t.Fatalf("Dimensions: %v", err)
-	}
-	if w != 0 || h != 0 {
-		t.Fatalf("width=0em should report 0x0, got %dx%d", w, h)
-	}
-}
-
 func TestSVGJSONRoundTrip(t *testing.T) {
 	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50"></svg>`)
 	img, err := newImageFromBuffer(bytes.NewReader(svg))
@@ -293,7 +277,7 @@ func TestSVGFingerprintUsesChecksum(t *testing.T) {
 	}
 }
 
-func TestSVGDimensionsUnits(t *testing.T) {
+func TestSVGDimensionRules(t *testing.T) {
 	cases := []struct {
 		name         string
 		svg          string
@@ -302,6 +286,17 @@ func TestSVGDimensionsUnits(t *testing.T) {
 		{"inches", `<svg xmlns="http://www.w3.org/2000/svg" width="1in" height="2in"></svg>`, 96, 192},
 		{"points", `<svg xmlns="http://www.w3.org/2000/svg" width="72pt" height="144pt"></svg>`, 96, 192},
 		{"percent with viewBox", `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 120 60"></svg>`, 120, 60},
+		// Explicit zero dimensions disable rendering regardless of unit.
+		{"zero relative unit", `<svg xmlns="http://www.w3.org/2000/svg" width="0em" height="100" viewBox="0 0 100 100"></svg>`, 0, 0},
+		{"zero unitless", `<svg xmlns="http://www.w3.org/2000/svg" width="0" height="100" viewBox="0 0 100 100"></svg>`, 0, 0},
+		{"zero percent", `<svg xmlns="http://www.w3.org/2000/svg" width="0%" height="100%" viewBox="0 0 100 100"></svg>`, 0, 0},
+		// The last equal-priority declaration wins; CSS overrides attributes.
+		{"CSS declaration order", `<svg xmlns="http://www.w3.org/2000/svg" height="50" style="width:0;width:100px" viewBox="0 0 100 50"></svg>`, 100, 50},
+		{"CSS overrides zero attribute", `<svg xmlns="http://www.w3.org/2000/svg" width="0" height="50" style="width:100px" viewBox="0 0 100 50"></svg>`, 100, 50},
+		// Resolve relative units at the default font size, not from viewBox.
+		{"relative unit", `<svg xmlns="http://www.w3.org/2000/svg" width="32px" height="1em" viewBox="0 0 32 32"></svg>`, 32, 16},
+		// Qualified attributes with matching local names do not set dimensions.
+		{"namespaced attributes", `<svg xmlns="http://www.w3.org/2000/svg" xmlns:foo="http://example.com/foo" foo:width="0" foo:height="0" viewBox="0 0 100 50"></svg>`, 100, 50},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -317,20 +312,6 @@ func TestSVGDimensionsUnits(t *testing.T) {
 				t.Fatalf("Dimensions = %dx%d, want %dx%d", w, h, tc.wantW, tc.wantH)
 			}
 		})
-	}
-}
-
-func TestSVGExplicitZeroSizeSkipped(t *testing.T) {
-	img, err := newImageFromBuffer(bytes.NewReader([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="0" height="100" viewBox="0 0 100 100"></svg>`)))
-	if err != nil {
-		t.Fatalf("newImageFromBuffer: %v", err)
-	}
-	w, h, err := img.Dimensions()
-	if err != nil {
-		t.Fatalf("Dimensions: %v", err)
-	}
-	if w != 0 || h != 0 {
-		t.Fatalf("explicit zero size should report 0x0, got %dx%d", w, h)
 	}
 }
 
@@ -369,58 +350,6 @@ func TestParseViewBoxWHRejectsNonFinite(t *testing.T) {
 	}
 	if _, _, ok := parseViewBoxWH("0 0 10 50"); !ok {
 		t.Error("parseViewBoxWH of a valid viewBox should succeed")
-	}
-}
-
-func TestSVGCSSSizeCascade(t *testing.T) {
-	// The CSS cascade wins: the last equal-priority declaration and any
-	// !important declaration outrank earlier ones. width:0;width:100px must
-	// resolve to 100px (not 0), so the SVG isn't dropped.
-	svg := `<svg xmlns="http://www.w3.org/2000/svg" height="50" style="width:0;width:100px" viewBox="0 0 100 50"></svg>`
-	img, err := newImageFromBuffer(bytes.NewReader([]byte(svg)))
-	if err != nil {
-		t.Fatalf("newImageFromBuffer: %v", err)
-	}
-	w, h, err := img.Dimensions()
-	if err != nil {
-		t.Fatalf("Dimensions: %v", err)
-	}
-	if w != 100 || h != 50 {
-		t.Fatalf("CSS cascade width: Dimensions = %dx%d, want 100x50", w, h)
-	}
-}
-
-func TestSVGCSSSizeOverridesAttr(t *testing.T) {
-	// SVG 2 CSS width/height override the presentation attributes, so a
-	// width="0" with style="width:100px" is sized 100x50, not dropped as zero.
-	svg := `<svg xmlns="http://www.w3.org/2000/svg" width="0" height="50" style="width:100px" viewBox="0 0 100 50"></svg>`
-	img, err := newImageFromBuffer(bytes.NewReader([]byte(svg)))
-	if err != nil {
-		t.Fatalf("newImageFromBuffer: %v", err)
-	}
-	w, h, err := img.Dimensions()
-	if err != nil {
-		t.Fatalf("Dimensions: %v", err)
-	}
-	if w != 100 || h != 50 {
-		t.Fatalf("CSS width override: Dimensions = %dx%d, want 100x50", w, h)
-	}
-}
-
-func TestSVGRelativeUnitDimensions(t *testing.T) {
-	// A relative height (1em = 16px at the default font) must be resolved, so a
-	// 32px x 1em SVG reports 32x16 rather than substituting the viewBox axis.
-	svg := `<svg xmlns="http://www.w3.org/2000/svg" width="32px" height="1em" viewBox="0 0 32 32"></svg>`
-	img, err := newImageFromBuffer(bytes.NewReader([]byte(svg)))
-	if err != nil {
-		t.Fatalf("newImageFromBuffer: %v", err)
-	}
-	w, h, err := img.Dimensions()
-	if err != nil {
-		t.Fatalf("Dimensions: %v", err)
-	}
-	if w != 32 || h != 16 {
-		t.Fatalf("Dimensions = %dx%d, want 32x16", w, h)
 	}
 }
 
@@ -464,37 +393,6 @@ func TestSVGRasterQuotedGtInAttr(t *testing.T) {
 	// The red fill must be present (not a transparent placeholder).
 	if _, _, _, a := decoded.At(48, 48).RGBA(); a == 0 {
 		t.Errorf("expected a rendered fill, got a transparent placeholder")
-	}
-}
-
-func TestSVGNamespacedSizeAttrIgnored(t *testing.T) {
-	// A namespaced foo:width shares Name.Local "width" but must not affect the
-	// intrinsic size; the real dimensions come from viewBox.
-	svg := `<svg xmlns="http://www.w3.org/2000/svg" xmlns:foo="http://example.com/foo" foo:width="0" foo:height="0" viewBox="0 0 100 50"></svg>`
-	img, err := newImageFromBuffer(bytes.NewReader([]byte(svg)))
-	if err != nil {
-		t.Fatalf("newImageFromBuffer: %v", err)
-	}
-	w, h, err := img.Dimensions()
-	if err != nil {
-		t.Fatalf("Dimensions: %v", err)
-	}
-	if w != 100 || h != 50 {
-		t.Fatalf("namespaced size attrs should be ignored, got %dx%d, want 100x50", w, h)
-	}
-}
-
-func TestSVGZeroPercentSizeSkipped(t *testing.T) {
-	img, err := newImageFromBuffer(bytes.NewReader([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="0%" height="100%" viewBox="0 0 100 100"></svg>`)))
-	if err != nil {
-		t.Fatalf("newImageFromBuffer: %v", err)
-	}
-	w, h, err := img.Dimensions()
-	if err != nil {
-		t.Fatalf("Dimensions: %v", err)
-	}
-	if w != 0 || h != 0 {
-		t.Fatalf("width=0%% should report 0x0, got %dx%d", w, h)
 	}
 }
 

@@ -860,7 +860,7 @@ func reorderPresentationAndMarkSlidesInFileForTest(t *testing.T, path string) {
 	}
 	parts, order := testutil.ReadZIP(t, data)
 
-	parts["ppt/presentation.xml"] = reorderPresentationXMLForApplyTest(t, parts["ppt/presentation.xml"])
+	parts["ppt/presentation.xml"] = testutil.SwapFirstTwoSlideIDs(t, parts["ppt/presentation.xml"])
 
 	s1 := parts["ppt/slides/slide1.xml"]
 	s1Updated := bytes.Replace(s1, []byte("body one"), []byte("body one "+testManualSecondMarker), 1)
@@ -880,32 +880,6 @@ func reorderPresentationAndMarkSlidesInFileForTest(t *testing.T, path string) {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-}
-
-func reorderPresentationXMLForApplyTest(t *testing.T, presentationXML []byte) []byte {
-	t.Helper()
-	var p testPresentation
-	if err := xml.Unmarshal(presentationXML, &p); err != nil {
-		t.Fatalf("xml.Unmarshal presentation.xml: %v", err)
-	}
-	if len(p.SlideIDs) < 2 {
-		t.Fatalf("presentation.xml has less than 2 slides")
-	}
-	p.SlideIDs[0], p.SlideIDs[1] = p.SlideIDs[1], p.SlideIDs[0]
-
-	var b strings.Builder
-	b.WriteString("<p:sldIdLst>")
-	for i, s := range p.SlideIDs {
-		b.WriteString(fmt.Sprintf(`<p:sldId id="%d" r:id="%s"/>`, 256+i, s.RelID))
-	}
-	b.WriteString("</p:sldIdLst>")
-
-	re := regexp.MustCompile(`(?s)<p:sldIdLst>.*?</p:sldIdLst>`)
-	updated := re.ReplaceAll(presentationXML, []byte(b.String()))
-	if bytes.Equal(updated, presentationXML) {
-		t.Fatalf("failed to rewrite sldIdLst in presentation.xml")
-	}
-	return updated
 }
 
 // buildAltTemplateFileForTest creates a template .pptx that is visually and
