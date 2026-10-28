@@ -88,18 +88,17 @@ const (
 // a slide imported from another presentation that a later key-stamping pass
 // tags so rebuilds can match it by key).
 func fingerprintExt(fp, key string) string {
-	if fp == "" && key == "" {
+	var rawV *string
+	if fp != "" {
+		escaped := escapeXML(fp)
+		rawV = &escaped
+	}
+	elem := buildFPElemValue(rawV, key)
+	if elem == "" {
 		return ""
 	}
-	attrs := ` xmlns:slidown="` + fingerprintNS + `"`
-	if fp != "" {
-		attrs += ` v="` + escapeXML(fp) + `"`
-	}
-	if key != "" {
-		attrs += ` k="` + escapeXML(key) + `"`
-	}
 	return `<p:extLst><p:ext uri="` + fingerprintURI + `">` +
-		`<slidown:fp` + attrs + `/>` +
+		elem +
 		`</p:ext></p:extLst>`
 }
 
