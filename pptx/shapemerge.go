@@ -377,6 +377,22 @@ func appendShapesToSpTree(slideXML, shapes []byte) ([]byte, bool) {
 // unionRootNamespaces adds missing namespace declarations to an XML root so
 // raw elements copied from another document keep their namespace bindings.
 func unionRootNamespaces(slideXML []byte, newRoot, oldRoot []xml.Attr) []byte {
+	inject := missingRootNamespaceDeclarations(newRoot, oldRoot)
+	if inject == "" {
+		return slideXML
+	}
+	idx := rootNamespaceInsertionIndex(slideXML)
+	if idx < 0 {
+		return slideXML
+	}
+	var out bytes.Buffer
+	out.Write(slideXML[:idx])
+	out.WriteString(inject)
+	out.Write(slideXML[idx:])
+	return out.Bytes()
+}
+
+func missingRootNamespaceDeclarations(newRoot, oldRoot []xml.Attr) string {
 	have := map[string]bool{}
 	for _, a := range newRoot {
 		if a.Name.Space == "xmlns" {
@@ -400,31 +416,28 @@ func unionRootNamespaces(slideXML []byte, newRoot, oldRoot []xml.Attr) []byte {
 			}
 		}
 	}
-	if inject.Len() == 0 {
-		return slideXML
-	}
+	return inject.String()
+}
+
+func rootNamespaceInsertionIndex(slideXML []byte) int {
 	// Insert the declarations just before the '>' that closes the root start tag.
 	idx := bytes.IndexByte(slideXML, '>')
 	if idx < 0 {
-		return slideXML
+		return -1
 	}
 	// Guard against a self-closing or PI '>'; the root <p:sld ...> start tag is
 	// a normal element, but be safe if the first '>' closes the XML declaration.
 	if idx > 0 && slideXML[idx-1] == '?' {
 		next := bytes.IndexByte(slideXML[idx+1:], '>')
 		if next < 0 {
-			return slideXML
+			return -1
 		}
 		idx = idx + 1 + next
 	}
 	if idx > 0 && slideXML[idx-1] == '/' {
 		idx--
 	}
-	var out bytes.Buffer
-	out.Write(slideXML[:idx])
-	out.WriteString(inject.String())
-	out.Write(slideXML[idx:])
-	return out.Bytes()
+	return idx
 }
 
 // ShapeSignature is a shape's slot key and per-shape fingerprint, used by the
