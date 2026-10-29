@@ -127,17 +127,7 @@ func (c *converter) distributeBodyContent(sl *pptx.Slide, s *slidown.Slide, hasS
 		} else {
 			bodyParas = c.bodyParagraphs(s) // subtitles folded in (emphasized)
 		}
-		if len(bodyParas) == 0 {
-			return false
-		}
-		sl.AddShape(&pptx.Shape{
-			Name:           "Content",
-			IsPlaceholder:  true,
-			Placeholder:    pptx.PlaceholderType(bodyPHs[0].Type),
-			PlaceholderIdx: bodyPHs[0].Idx,
-			Paragraphs:     bodyParas,
-		})
-		return true
+		return addBodyPlaceholder(sl, bodyPHs[0], bodyParas)
 	}
 
 	// Multiple placeholders: distribute s.Bodies one per placeholder.
@@ -172,18 +162,25 @@ func (c *converter) distributeBodyContent(sl *pptx.Slide, s *slidown.Slide, hasS
 			}
 		}
 
-		if len(paras) > 0 {
+		if addBodyPlaceholder(sl, ph, paras) {
 			hasBody = true
-			sl.AddShape(&pptx.Shape{
-				Name:           "Content",
-				IsPlaceholder:  true,
-				Placeholder:    pptx.PlaceholderType(ph.Type),
-				PlaceholderIdx: ph.Idx,
-				Paragraphs:     paras,
-			})
 		}
 	}
 	return hasBody
+}
+
+func addBodyPlaceholder(sl *pptx.Slide, ph *pptx.PlaceholderInfo, paras []*pptx.Paragraph) bool {
+	if len(paras) == 0 {
+		return false
+	}
+	sl.AddShape(&pptx.Shape{
+		Name:           "Content",
+		IsPlaceholder:  true,
+		Placeholder:    pptx.PlaceholderType(ph.Type),
+		PlaceholderIdx: ph.Idx,
+		Paragraphs:     paras,
+	})
+	return true
 }
 
 // resolveLayout selects a template layout for the slide: by explicit name if it
