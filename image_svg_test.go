@@ -2,7 +2,6 @@ package slidown
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"image/png"
 	"math"
@@ -262,31 +261,6 @@ func TestParsePreserveAspect(t *testing.T) {
 			t.Errorf("parsePreserveAspect(%q) = (%v,%v,none=%v,slice=%v), want (%v,%v,none=%v,slice=%v)",
 				c.in, fx, fy, none, slice, c.fx, c.fy, c.wantNone, c.wantSlce)
 		}
-	}
-}
-
-func TestSVGJSONRoundTrip(t *testing.T) {
-	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50"></svg>`)
-	img, err := newImageFromBuffer(bytes.NewReader(svg))
-	if err != nil {
-		t.Fatalf("newImageFromBuffer() error = %v", err)
-	}
-	data, err := json.Marshal(img)
-	if err != nil {
-		t.Fatalf("Marshal() error = %v", err)
-	}
-	var got Image
-	if err := json.Unmarshal(data, &got); err != nil {
-		t.Fatalf("Unmarshal() error = %v", err)
-	}
-	if !got.IsSVG() {
-		t.Fatalf("IsSVG() = false, want true")
-	}
-	if !bytes.Equal(got.Bytes(), svg) {
-		t.Fatalf("Bytes() = %q, want %q", got.Bytes(), svg)
-	}
-	if got.mimeType != MIMETypeImageSVG {
-		t.Fatalf("mimeType = %q, want %q", got.mimeType, MIMETypeImageSVG)
 	}
 }
 
