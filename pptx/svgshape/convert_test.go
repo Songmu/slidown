@@ -319,20 +319,25 @@ func TestColorsFallbackAndFillRule(t *testing.T) {
 	}
 }
 
-// TestMalformedPathTerminates ensures malformed path data cannot spin the
-// parser forever (progress guard). The whole test is bounded by a timeout so a
-// regression manifests as a timeout rather than a hang.
+// TestMalformedPathTerminates ensures malformed path data falls back without
+// spinning the parser forever (progress guard). The whole test is bounded by a
+// timeout so a regression manifests as a timeout rather than a hang.
 func TestMalformedPathTerminates(t *testing.T) {
-	done := make(chan struct{})
+	done := make(chan []string, 1)
 	go func() {
-		defer close(done)
+		var accepted []string
 		for _, d := range []string{"M0 0 Z 1", "M0 0 Lx", "Z", "M0 0 L", "M0 0 C 1 1", "garbage"} {
-			// Must not hang; result (ok) is irrelevant here.
-			Convert([]byte(`<svg viewBox="0 0 10 10"><path d="` + d + `"/></svg>`))
+			if _, ok := Convert([]byte(`<svg viewBox="0 0 10 10"><path d="` + d + `"/></svg>`)); ok {
+				accepted = append(accepted, d)
+			}
 		}
+		done <- accepted
 	}()
 	select {
-	case <-done:
+	case accepted := <-done:
+		for _, d := range accepted {
+			t.Errorf("expected fallback for malformed path %q", d)
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Convert did not terminate on malformed path data")
 	}
