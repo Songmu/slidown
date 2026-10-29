@@ -469,10 +469,7 @@ func ShapeSignaturesByPosition(pkg []byte) (map[int][]ShapeSignature, error) {
 	if err != nil {
 		return nil, err
 	}
-	names := slideNamesFromPresentationOrder(parts)
-	if len(names) == 0 {
-		names = slideNamesByFileName(parts)
-	}
+	names := orderedSlideNames(parts)
 	out := make(map[int][]ShapeSignature, len(names))
 	for i, name := range names {
 		out[i+1] = shapeSignatures(parts[name])

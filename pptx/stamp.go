@@ -35,10 +35,7 @@ func StampSlideKeys(pptxBytes []byte, keysByPos map[int]string) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
-	slideNames := slideNamesFromPresentationOrder(parts)
-	if len(slideNames) == 0 {
-		slideNames = slideNamesByFileName(parts)
-	}
+	slideNames := orderedSlideNames(parts)
 	changed := false
 	for i, name := range slideNames {
 		key, ok := keysByPos[i+1]
