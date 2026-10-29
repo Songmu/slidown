@@ -18,6 +18,17 @@ func mustConvert(t *testing.T, s string) *pptx.GroupShape {
 	}
 	return g
 }
+func testConvertFallbacks(t *testing.T, cases map[string]string) {
+	t.Helper()
+	for name, svg := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Helper()
+			if _, ok := Convert([]byte(svg)); ok {
+				t.Error("expected fallback")
+			}
+		})
+	}
+}
 func near(t *testing.T, got, want int64) {
 	t.Helper()
 	if got < want-3 || got > want+3 {
@@ -1266,52 +1277,34 @@ func TestConvertLimits(t *testing.T) {
 }
 
 func TestConvertOpacityFallbacks(t *testing.T) {
-	for name, svg := range map[string]string{
+	testConvertFallbacks(t, map[string]string{
 		"group opacity":           `<svg viewBox="0 0 10 10"><g opacity="0.5"><rect width="1" height="1" fill="red"/></g></svg>`,
 		"opacity fill and stroke": `<svg viewBox="0 0 10 10"><rect width="5" height="5" fill="red" stroke="blue" stroke-width="1" opacity="0.5"/></svg>`,
 		"NaN opacity":             `<svg viewBox="0 0 10 10"><rect width="5" height="5" fill="red" opacity="NaN"/></svg>`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			if _, ok := Convert([]byte(svg)); ok {
-				t.Error("expected fallback")
-			}
-		})
-	}
+	})
 }
 
 func TestConvertCSSFallbacks(t *testing.T) {
-	for name, svg := range map[string]string{
+	testConvertFallbacks(t, map[string]string{
 		"unsupported css":    `<svg viewBox="0 0 10 10"><rect width="1" height="1" style="mix-blend-mode:multiply"/></svg>`,
 		"important":          `<svg viewBox="0 0 10 10"><rect width="1" height="1" style="display:none !important"/></svg>`,
 		"style media print":  `<svg viewBox="0 0 10 10"><style media="print">rect{fill:red}</style><rect width="1" height="1"/></svg>`,
 		"style non-css type": `<svg viewBox="0 0 10 10"><style type="text/less">rect{fill:red}</style><rect width="1" height="1"/></svg>`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			if _, ok := Convert([]byte(svg)); ok {
-				t.Error("expected fallback")
-			}
-		})
-	}
+	})
 }
 
 func TestConvertStrokesFallbacks(t *testing.T) {
-	for name, svg := range map[string]string{
+	testConvertFallbacks(t, map[string]string{
 		"dash array":                    `<svg viewBox="0 0 10 10"><rect width="1" height="1" fill="none" stroke="black" stroke-width="1" stroke-dasharray="1 2"/></svg>`,
 		"explicit miterlimit":           `<svg viewBox="0 0 10 10"><rect width="2" height="2" fill="none" stroke="black" stroke-width="1" stroke-linejoin="miter" stroke-miterlimit="10"/></svg>`,
 		"unsupported presentation attr": `<svg viewBox="0 0 10 10"><rect width="1" height="1" fill="red" vector-effect="non-scaling-stroke"/></svg>`,
 		"zero scale stroked":            `<svg viewBox="0 0 10 10"><rect width="5" height="5" fill="none" stroke="black" stroke-width="1" transform="scale(0)"/></svg>`,
 		"negative stroke width":         `<svg viewBox="0 0 10 10"><rect width="5" height="5" fill="none" stroke="black" stroke-width="-1"/></svg>`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			if _, ok := Convert([]byte(svg)); ok {
-				t.Error("expected fallback")
-			}
-		})
-	}
+	})
 }
 
 func TestConvertGradientsFallbacks(t *testing.T) {
-	for name, svg := range map[string]string{
+	testConvertFallbacks(t, map[string]string{
 		"radial geometry":              `<svg viewBox="0 0 10 10"><defs><radialGradient id="g" cx="0" cy="0" r="50%"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></radialGradient></defs><rect width="10" height="10" fill="url(#g)"/></svg>`,
 		"gradient under rotation":      `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)" transform="rotate(90)"/></svg>`,
 		"partial gradient override":    `<svg viewBox="0 0 10 10"><defs><linearGradient id="p" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient><linearGradient id="c" href="#p" x2="1"/></defs><rect width="10" height="10" fill="url(#c)"/></svg>`,
@@ -1322,30 +1315,18 @@ func TestConvertGradientsFallbacks(t *testing.T) {
 		"gradient coord out of range":  `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg" x1="-100%" x2="200%"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`,
 		"stop unsupported attr":        `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg"><stop offset="0" stop-color="red" color-interpolation="linearRGB"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`,
 		"gradient external href":       `<svg viewBox="0 0 10 10"><defs><linearGradient id="lg" href="ext.svg#g"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs><rect width="10" height="10" fill="url(#lg)"/></svg>`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			if _, ok := Convert([]byte(svg)); ok {
-				t.Error("expected fallback")
-			}
-		})
-	}
+	})
 }
 
 func TestConvertReferencesFallbacks(t *testing.T) {
-	for name, svg := range map[string]string{
+	testConvertFallbacks(t, map[string]string{
 		"use width":      `<svg viewBox="0 0 10 10"><defs><rect id="r" width="2" height="2"/></defs><use href="#r" width="5" height="5"/></svg>`,
 		"symbol viewbox": `<svg viewBox="0 0 10 10"><defs><symbol id="s" viewBox="0 0 4 4"><rect width="4" height="4"/></symbol></defs><use href="#s"/></svg>`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			if _, ok := Convert([]byte(svg)); ok {
-				t.Error("expected fallback")
-			}
-		})
-	}
+	})
 }
 
 func TestConvertTextLayoutFallbacks(t *testing.T) {
-	for name, svg := range map[string]string{
+	testConvertFallbacks(t, map[string]string{
 		"text scale":               `<svg viewBox="0 0 100 100"><text x="1" y="1" transform="scale(2)" fill="red" font-size="10">Hi</text></svg>`,
 		"mixed text ordering":      `<svg viewBox="0 0 100 100"><text x="1" y="10" fill="red" font-size="10">A<tspan>B</tspan>C</text></svg>`,
 		"tspan positioned":         `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="red" font-size="10"><tspan x="5">Hi</tspan></text></svg>`,
@@ -1357,36 +1338,18 @@ func TestConvertTextLayoutFallbacks(t *testing.T) {
 		"text outside viewport":    `<svg viewBox="0 0 100 100"><text x="1" y="200" fill="red" font-size="10">Hi</text></svg>`,
 		"negative font-size":       `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="red" font-size="-10">Hi</text></svg>`,
 		"negative tspan font-size": `<svg viewBox="0 0 100 100"><text x="1" y="20" fill="red" font-size="10"><tspan font-size="-5">Hi</tspan></text></svg>`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			if _, ok := Convert([]byte(svg)); ok {
-				t.Error("expected fallback")
-			}
-		})
-	}
+	})
 }
 
 func TestConvertViewportFallbacks(t *testing.T) {
-	for name, svg := range map[string]string{
+	testConvertFallbacks(t, map[string]string{
 		"circle outside viewport": `<svg viewBox="0 0 10 10"><circle cx="0" cy="5" r="3" fill="red"/></svg>`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			if _, ok := Convert([]byte(svg)); ok {
-				t.Error("expected fallback")
-			}
-		})
-	}
+	})
 }
 
 func TestConvertPathGeometryFallbacks(t *testing.T) {
-	for name, svg := range map[string]string{
+	testConvertFallbacks(t, map[string]string{
 		"path starts with L":  `<svg viewBox="0 0 10 10"><path d="L5 5" fill="red"/></svg>`,
 		"operandless command": `<svg viewBox="0 0 100 100"><path d="M0 0 L Z L20 0" fill="red"/></svg>`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			if _, ok := Convert([]byte(svg)); ok {
-				t.Error("expected fallback")
-			}
-		})
-	}
+	})
 }
