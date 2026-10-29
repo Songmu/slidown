@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/internal/testutil"
 	"github.com/Songmu/slidown/pptx"
+	"github.com/google/go-cmp/cmp"
 )
 
 // buildTemplateFile generates a .pptx with the built-in design and returns its
@@ -135,6 +137,130 @@ func zipPartsFromFile(t *testing.T, path string) map[string][]byte {
 		t.Fatalf("ReadFile %s: %v", path, err)
 	}
 	return zipParts(t, b)
+}
+
+func TestDistributeBodyContent(t *testing.T) {
+	body := func(texts ...string) *slidown.Body {
+		b := &slidown.Body{}
+		for _, text := range texts {
+			b.Paragraphs = append(b.Paragraphs, &slidown.Paragraph{
+				Fragments: []*slidown.Fragment{{Value: text}},
+			})
+		}
+		return b
+	}
+	plain := func(text string) *pptx.Paragraph {
+		return &pptx.Paragraph{Runs: []*pptx.Run{{Text: text}}}
+	}
+	content := func(typ string, idx int, paras ...*pptx.Paragraph) *pptx.Shape {
+		return &pptx.Shape{
+			Name: "Content", IsPlaceholder: true,
+			Placeholder: pptx.PlaceholderType(typ), PlaceholderIdx: idx,
+			Paragraphs: paras,
+		}
+	}
+	tests := []struct {
+		name       string
+		slide      *slidown.Slide
+		slots      []*pptx.PlaceholderInfo
+		hasSubSlot bool
+		want       []*pptx.Shape
+		wantBody   bool
+	}{
+		{
+			name:  "no placeholders omit populated content",
+			slide: &slidown.Slide{Subtitles: []string{"Subtitle"}, Bodies: []*slidown.Body{body("Body")}},
+		},
+		{
+			name:  "empty single slot",
+			slide: &slidown.Slide{},
+			slots: []*pptx.PlaceholderInfo{{Type: "body", Idx: 4}},
+		},
+		{
+			name:  "empty multiple slots",
+			slide: &slidown.Slide{},
+			slots: []*pptx.PlaceholderInfo{{Type: "body", Idx: 4}, {Type: "obj", Idx: 9}},
+		},
+		{
+			name: "single slot concatenates subtitles bodies and quotes",
+			slide: &slidown.Slide{
+				SubtitleBodies: []*slidown.Body{body("Subtitle")},
+				Bodies:         []*slidown.Body{body("First", "Second"), body("Third")},
+				BlockQuotes:    []*slidown.BlockQuote{{Paragraphs: body("Quote").Paragraphs}},
+			},
+			slots: []*pptx.PlaceholderInfo{{Idx: 7}},
+			want: []*pptx.Shape{content("", 7,
+				&pptx.Paragraph{Runs: []*pptx.Run{{Text: "Subtitle", Bold: true}}},
+				plain("First"), plain("Second"), plain("Third"),
+				&pptx.Paragraph{Level: 1, Runs: []*pptx.Run{{Text: "Quote", Italic: true}}},
+			)},
+			wantBody: true,
+		},
+		{
+			name:       "dedicated subtitle does not count as single slot body",
+			slide:      &slidown.Slide{Subtitles: []string{"Subtitle"}},
+			slots:      []*pptx.PlaceholderInfo{{Type: "obj", Idx: 3}},
+			hasSubSlot: true,
+		},
+		{
+			name: "last slot absorbs overflow then quotes",
+			slide: &slidown.Slide{
+				Subtitles: []string{"Elsewhere"},
+				Bodies:    []*slidown.Body{body("First"), body("Second", "Third"), body("Overflow")},
+				BlockQuotes: []*slidown.BlockQuote{
+					{Paragraphs: body("Quote one", "Quote two").Paragraphs, Nesting: 1},
+				},
+			},
+			slots:      []*pptx.PlaceholderInfo{{Type: "obj", Idx: 9}, {Type: "body", Idx: 2}},
+			hasSubSlot: true,
+			want: []*pptx.Shape{
+				content("obj", 9, plain("First")),
+				content("body", 2, plain("Second"), plain("Third"), plain("Overflow"),
+					&pptx.Paragraph{Level: 2, Runs: []*pptx.Run{{Text: "Quote one", Italic: true}}},
+					&pptx.Paragraph{Level: 2, Runs: []*pptx.Run{{Text: "Quote two", Italic: true}}},
+				),
+			},
+			wantBody: true,
+		},
+		{
+			name: "subtitle folds into first slot and unused slots are omitted",
+			slide: &slidown.Slide{
+				SubtitleBodies: []*slidown.Body{body("Subtitle")},
+				Bodies:         []*slidown.Body{body("Body")},
+			},
+			slots: []*pptx.PlaceholderInfo{{Type: "body", Idx: 8}, {Type: "obj", Idx: 3}, {Type: "body", Idx: 5}},
+			want: []*pptx.Shape{content("body", 8,
+				&pptx.Paragraph{Runs: []*pptx.Run{{Text: "Subtitle", Bold: true}}},
+				plain("Body"),
+			)},
+			wantBody: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			existing := &pptx.Shape{Name: "Title"}
+			sl := &pptx.Slide{Shapes: []*pptx.Shape{existing}}
+			c := &converter{}
+			if got := c.distributeBodyContent(sl, tt.slide, tt.hasSubSlot, tt.slots); got != tt.wantBody {
+				t.Errorf("hasBody = %v, want %v", got, tt.wantBody)
+			}
+			if len(sl.Shapes) == 0 || sl.Shapes[0] != existing {
+				t.Fatal("existing shape was removed or reordered")
+			}
+			if got := sl.Shapes[1:]; !reflect.DeepEqual(got, tt.want) && !(len(got) == 0 && len(tt.want) == 0) {
+				t.Errorf("content shapes mismatch (-want +got):\n%s", cmp.Diff(tt.want, got))
+			}
+			for _, b := range tt.slide.SubtitleBodies {
+				for _, p := range b.Paragraphs {
+					for _, f := range p.Fragments {
+						if f.Bold {
+							t.Error("subtitle folding mutated the source fragment")
+						}
+					}
+				}
+			}
+		})
+	}
 }
 
 // TestMultiBodyPlaceholderDistribution verifies that when a layout has two body
