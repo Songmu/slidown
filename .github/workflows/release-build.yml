@@ -23,6 +23,7 @@ jobs:
         uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
+          cache: false
 
       - name: Build release artifacts
         uses: goreleaser/goreleaser-action@v7.3.0
