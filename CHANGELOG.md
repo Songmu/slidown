@@ -1,5 +1,24 @@
 # Changelog
 
+## [v0.0.12](https://github.com/Songmu/slidown/compare/v0.0.11...v0.0.12) - 2026-10-29
+
+### Other Changes
+- Deduplicate SVG fallback test execution by @Songmu in https://github.com/Songmu/slidown/pull/124
+- Separate root namespace collection from insertion to clarify shape merging by @Songmu in https://github.com/Songmu/slidown/pull/125
+- refactor: isolate SVG intrinsic image sizing by @Songmu in https://github.com/Songmu/slidown/pull/128
+- Separate gradient stop interpretation from offset ordering by @Songmu in https://github.com/Songmu/slidown/pull/126
+- Separate SVG symbol expansion from use reference handling by @Songmu in https://github.com/Songmu/slidown/pull/127
+- Centralize presentation-order slide fallback by @Songmu in https://github.com/Songmu/slidown/pull/130
+- Characterize SVG curves and serialized PPTX paths by @Songmu in https://github.com/Songmu/slidown/pull/131
+- Consolidate placeholder classification scenarios and assertions by @Songmu in https://github.com/Songmu/slidown/pull/134
+- Separate SVG text run bounds from shape emission by @Songmu in https://github.com/Songmu/slidown/pull/133
+- test: verify image JSON roundtrips and populated receiver replacement by @Songmu in https://github.com/Songmu/slidown/pull/132
+- refactor(pptx): separate default style dependency retention by @Songmu in https://github.com/Songmu/slidown/pull/135
+- refactor(render): share body placeholder emission by @Songmu in https://github.com/Songmu/slidown/pull/136
+- test: exercise CEL template evaluation contracts by @Songmu in https://github.com/Songmu/slidown/pull/138
+- test: cover theme color resolution precedence by @Songmu in https://github.com/Songmu/slidown/pull/139
+- test: cover fingerprint equivalence boundaries by @Songmu in https://github.com/Songmu/slidown/pull/137
+
 ## [v0.0.11](https://github.com/Songmu/slidown/compare/v0.0.10...v0.0.11) - 2026-10-28
 
 ### Other Changes
