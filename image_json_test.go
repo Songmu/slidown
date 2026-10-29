@@ -145,32 +145,35 @@ func TestImageJSONErrors(t *testing.T) {
 }
 
 func TestImageJSONReplacesPopulatedReceiver(t *testing.T) {
-	raster, err := NewImageFromMarkdown("testdata/test.png")
-	if err != nil {
-		t.Fatal(err)
-	}
-	raster.SetLink("https://example.com/old")
-	receiver := *raster
+	const rectSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 16"><rect width="8" height="16" fill="red"/></svg>`
+	const triangleSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 48"><path d="M0 0 L24 48 L0 48Z" fill="blue"/></svg>`
 	for _, tt := range []struct {
-		name, source string
+		name, source, destination string
 	}{
-		{"raster to SVG", `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 16"><rect width="8" height="16" fill="red"/></svg>`},
-		{"SVG to SVG", `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 48"><path d="M0 0 L24 48 L0 48Z" fill="blue"/></svg>`},
-		{"SVG to raster", "testdata/test.jpeg"},
-		{"raster to raster", "testdata/test.png"},
+		{"raster to SVG", "testdata/test.png", rectSVG},
+		{"SVG to SVG", rectSVG, triangleSVG},
+		{"SVG to raster", triangleSVG, "testdata/test.jpeg"},
+		{"raster to raster", "testdata/test.jpeg", "testdata/test.png"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			old := observeImageJSON(t, &receiver)
-			var want *Image
-			var err error
-			if strings.HasPrefix(tt.source, "<svg") {
-				want, err = newImageFromBuffer(strings.NewReader(tt.source))
-			} else {
-				want, err = NewImageFromMarkdown(tt.source)
+			load := func(source string) *Image {
+				t.Helper()
+				var img *Image
+				var err error
+				if strings.HasPrefix(source, "<svg") {
+					img, err = newImageFromBuffer(strings.NewReader(source))
+				} else {
+					img, err = NewImageFromMarkdown(source)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				return img
 			}
-			if err != nil {
-				t.Fatal(err)
-			}
+			receiver := load(tt.source)
+			receiver.SetLink("https://example.com/old")
+			old := observeImageJSON(t, receiver)
+			want := load(tt.destination)
 			expected := observeImageJSON(t, want)
 			if old.checksum == expected.checksum || old.pHash == expected.pHash || bytes.Equal(old.pixels, expected.pixels) {
 				t.Fatal("replacement fixture must distinguish content caches from the previous image")
@@ -179,11 +182,11 @@ func TestImageJSONReplacesPopulatedReceiver(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := json.Unmarshal(data, &receiver); err != nil {
+			if err := json.Unmarshal(data, receiver); err != nil {
 				t.Fatal(err)
 			}
-			assertImageJSONData(t, &receiver, want)
-			if got := observeImageJSON(t, &receiver); !reflect.DeepEqual(got, expected) {
+			assertImageJSONData(t, receiver, want)
+			if got := observeImageJSON(t, receiver); !reflect.DeepEqual(got, expected) {
 				t.Error("reused receiver dimensions, decoded pixels, checksum or PHash differ from a fresh image")
 			}
 		})
