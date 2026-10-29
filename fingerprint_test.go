@@ -8,23 +8,6 @@ import (
 	"github.com/Songmu/slidown/md"
 )
 
-func fpForMarkdown(t *testing.T, src string) []string {
-	t.Helper()
-	m, err := md.Parse("testdata", []byte(src), nil)
-	if err != nil {
-		t.Fatalf("md.Parse: %v", err)
-	}
-	slides, err := m.ToSlides(context.Background(), "")
-	if err != nil {
-		t.Fatalf("ToSlides: %v", err)
-	}
-	fps := make([]string, len(slides))
-	for i, s := range slides {
-		fps[i] = s.Fingerprint()
-	}
-	return fps
-}
-
 // TestFingerprintDetectsSourceChanges covers the formatting-only changes that a
 // plain-text comparison (the previous reuse heuristic) silently missed.
 func TestFingerprintDetectsSourceChanges(t *testing.T) {
@@ -42,18 +25,15 @@ func TestFingerprintDetectsSourceChanges(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			fa := fpForMarkdown(t, tc.a)
-			fb := fpForMarkdown(t, tc.b)
-			if len(fa) != 1 || len(fb) != 1 {
-				t.Fatalf("expected single slides, got %d and %d", len(fa), len(fb))
-			}
-			if fa[0] == "" {
+			fa := slideFor(t, tc.a).Fingerprint()
+			fb := slideFor(t, tc.b).Fingerprint()
+			if fa == "" {
 				t.Fatalf("empty fingerprint")
 			}
-			if tc.differ && fa[0] == fb[0] {
+			if tc.differ && fa == fb {
 				t.Errorf("fingerprints should differ for %s but matched", tc.name)
 			}
-			if !tc.differ && fa[0] != fb[0] {
+			if !tc.differ && fa != fb {
 				t.Errorf("fingerprints should match for %s but differed", tc.name)
 			}
 		})
