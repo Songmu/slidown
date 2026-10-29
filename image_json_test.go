@@ -147,17 +147,17 @@ func TestImageJSONReplacesPopulatedReceiver(t *testing.T) {
 		{"raster to SVG", "testdata/test.png", rectSVG},
 		{"SVG to SVG", rectSVG, triangleSVG},
 		{"SVG to raster", triangleSVG, "testdata/test.jpeg"},
-		{"raster to raster", "testdata/test.jpeg", "testdata/test.png"},
+		{"raster to raster", "testdata/test.jpeg", dummyPNG(t).String()},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			load := func(source string) *Image {
 				t.Helper()
 				var img *Image
 				var err error
-				if strings.HasPrefix(source, "<svg") {
-					img, err = newImageFromBuffer(strings.NewReader(source))
-				} else {
+				if strings.HasPrefix(source, "testdata/") {
 					img, err = NewImageFromMarkdown(source)
+				} else {
+					img, err = newImageFromBuffer(strings.NewReader(source))
 				}
 				if err != nil {
 					t.Fatal(err)
@@ -169,6 +169,9 @@ func TestImageJSONReplacesPopulatedReceiver(t *testing.T) {
 			old := observeImageJSON(t, receiver)
 			want := load(tt.destination)
 			expected := observeImageJSON(t, want)
+			if old.width == expected.width && old.height == expected.height {
+				t.Fatal("replacement fixture must distinguish cached dimensions from the previous image")
+			}
 			if old.checksum == expected.checksum || old.pHash == expected.pHash || bytes.Equal(old.pixels, expected.pixels) {
 				t.Fatal("replacement fixture must distinguish content caches from the previous image")
 			}
