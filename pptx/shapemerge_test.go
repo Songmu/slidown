@@ -1,9 +1,135 @@
 package pptx
 
 import (
+	"bytes"
+	"encoding/xml"
+	"slices"
 	"strings"
 	"testing"
 )
+
+func TestUnionRootNamespaces(t *testing.T) {
+	prefixed := func(prefix, uri string) xml.Attr {
+		return xml.Attr{Name: xml.Name{Space: "xmlns", Local: prefix}, Value: uri}
+	}
+	defaultNS := func(uri string) xml.Attr {
+		return xml.Attr{Name: xml.Name{Local: "xmlns"}, Value: uri}
+	}
+	tests := []struct {
+		name             string
+		input            string
+		newRoot, oldRoot []xml.Attr
+		want             string
+	}{
+		{
+			name:  "default and prefixed declarations retain old order",
+			input: `<sld></sld>`,
+			oldRoot: []xml.Attr{
+				prefixed("z", "urn:z"), defaultNS("urn:default"), prefixed("a", "urn:a"),
+			},
+			want: `<sld xmlns:z="urn:z" xmlns="urn:default" xmlns:a="urn:a"></sld>`,
+		},
+		{
+			name:    "new root wins prefix and default collisions",
+			input:   `<sld xmlns="urn:new" xmlns:x="urn:new-x"></sld>`,
+			newRoot: []xml.Attr{defaultNS("urn:new"), prefixed("x", "urn:new-x")},
+			oldRoot: []xml.Attr{
+				defaultNS("urn:old"), prefixed("x", "urn:old-x"), prefixed("y", "urn:y"),
+			},
+			want: `<sld xmlns="urn:new" xmlns:x="urn:new-x" xmlns:y="urn:y"></sld>`,
+		},
+		{
+			name:  "first old declaration wins duplicates",
+			input: `<sld/>`,
+			oldRoot: []xml.Attr{
+				prefixed("x", "urn:first"), prefixed("x", "urn:second"),
+				defaultNS("urn:first-default"), defaultNS("urn:second-default"),
+			},
+			want: `<sld xmlns:x="urn:first" xmlns="urn:first-default"/>`,
+		},
+		{
+			name:    "ordinary attributes do not declare or reserve prefixes",
+			input:   `<sld x="ordinary"/>`,
+			newRoot: []xml.Attr{{Name: xml.Name{Local: "x"}, Value: "ordinary"}},
+			oldRoot: []xml.Attr{
+				{Name: xml.Name{Local: "ignored"}, Value: "ordinary"},
+				{Name: xml.Name{Space: "urn:other", Local: "xmlns"}, Value: "ordinary"},
+				prefixed("x", "urn:x"),
+			},
+			want: `<sld x="ordinary" xmlns:x="urn:x"/>`,
+		},
+		{
+			name:    "escape namespace URIs",
+			input:   `<sld/>`,
+			oldRoot: []xml.Attr{defaultNS(`urn:&<>"'`), prefixed("x", `urn:&<>"'`)},
+			want:    `<sld xmlns="urn:&amp;&lt;&gt;&quot;&apos;" xmlns:x="urn:&amp;&lt;&gt;&quot;&apos;"/>`,
+		},
+		{
+			name:    "XML declaration before root",
+			input:   `<?xml version="1.0"?><sld></sld>`,
+			oldRoot: []xml.Attr{prefixed("x", "urn:x")},
+			want:    `<?xml version="1.0"?><sld xmlns:x="urn:x"></sld>`,
+		},
+		{
+			name:    "self closing root",
+			input:   `<sld />`,
+			oldRoot: []xml.Attr{prefixed("x", "urn:x")},
+			want:    `<sld  xmlns:x="urn:x"/>`,
+		},
+		{
+			name:    "existing declarations preserve bytes",
+			input:   "<sld  xmlns:x='urn:new' >\n</sld>",
+			newRoot: []xml.Attr{prefixed("x", "urn:new")},
+			oldRoot: []xml.Attr{prefixed("x", "urn:old")},
+			want:    "<sld  xmlns:x='urn:new' >\n</sld>",
+		},
+		{
+			name:  "no namespaces preserve bytes",
+			input: "<sld  ordinary='value' />\n",
+			want:  "<sld  ordinary='value' />\n",
+		},
+		{
+			name:    "missing tag terminator falls back",
+			input:   `<sld`,
+			oldRoot: []xml.Attr{prefixed("x", "urn:x")},
+			want:    `<sld`,
+		},
+		{
+			name:    "declaration without root terminator falls back",
+			input:   `<?xml version="1.0"?><sld`,
+			oldRoot: []xml.Attr{prefixed("x", "urn:x")},
+			want:    `<?xml version="1.0"?><sld`,
+		},
+		{
+			name:    "scan still stops at greater than inside attribute",
+			input:   `<sld value=">"></sld>`,
+			oldRoot: []xml.Attr{prefixed("x", "urn:x")},
+			want:    `<sld value=" xmlns:x="urn:x">"></sld>`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backing := bytes.Repeat([]byte{0xa5}, len(tt.input)+64)
+			copy(backing, tt.input)
+			input := backing[:len(tt.input)]
+			before := bytes.Clone(backing)
+			newRoot, oldRoot := slices.Clone(tt.newRoot), slices.Clone(tt.oldRoot)
+			got := unionRootNamespaces(input, tt.newRoot, tt.oldRoot)
+			if string(got) != tt.want {
+				t.Errorf("unionRootNamespaces = %q, want %q", got, tt.want)
+			}
+			if !bytes.Equal(backing, before) {
+				t.Error("input backing array was mutated")
+			}
+			if !slices.Equal(tt.newRoot, newRoot) || !slices.Equal(tt.oldRoot, oldRoot) {
+				t.Error("root attributes were mutated")
+			}
+			if tt.want == tt.input && &got[0] != &input[0] {
+				t.Error("no-op did not return the original slice")
+			}
+		})
+	}
+}
 
 func renderSlideForTest(title, body string) []byte {
 	s := &Slide{
