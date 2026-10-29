@@ -11,7 +11,8 @@ func TestImageSignaturesEquivalent(t *testing.T) {
 		{"distance four", imageSignature{PHash: 0x80}, imageSignature{PHash: 0x8f}, true},
 		{"distance five", imageSignature{PHash: 0x80}, imageSignature{PHash: 0x9f}, false},
 		{"changed link", imageSignature{PHash: 1, Link: "old"}, imageSignature{PHash: 1, Link: "new"}, false},
-		{"digest takes precedence", imageSignature{Digest: "svg", PHash: 1, Checksum: 1}, imageSignature{Digest: "svg", PHash: 2, Checksum: 2}, true},
+		{"digest takes precedence over perceptual hash", imageSignature{Digest: "svg", PHash: 0x80}, imageSignature{Digest: "svg", PHash: 0x9f}, true},
+		{"digest takes precedence over checksum", imageSignature{Digest: "svg", Checksum: 1}, imageSignature{Digest: "svg", Checksum: 2}, true},
 		{"changed digest", imageSignature{Digest: "old", PHash: 1}, imageSignature{Digest: "new", PHash: 1}, false},
 		{"missing digest", imageSignature{Digest: "svg", PHash: 1}, imageSignature{PHash: 1}, false},
 		{"equal checksums", imageSignature{Checksum: 7}, imageSignature{Checksum: 7}, true},
@@ -34,7 +35,7 @@ func TestImageSetsEquivalentDistinctMatches(t *testing.T) {
 		a, b []imageSignature
 		want bool
 	}{
-		{"different counts", []imageSignature{{Checksum: 1}}, nil, false},
+		{"matching subset has different count", []imageSignature{{Checksum: 1}}, []imageSignature{{Checksum: 1}, {Checksum: 2}}, false},
 		{"two distinct copies", []imageSignature{{Checksum: 1}, {Checksum: 1}}, []imageSignature{{Checksum: 1}, {Checksum: 1}}, true},
 		{"counterpart cannot be reused", []imageSignature{{Checksum: 1}, {Checksum: 1}}, []imageSignature{{Checksum: 1}, {Checksum: 2}}, false},
 	} {
