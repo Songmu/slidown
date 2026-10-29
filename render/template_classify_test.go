@@ -9,132 +9,93 @@ import (
 	"github.com/Songmu/slidown/pptx"
 )
 
-func TestClassifyPlaceholdersPrefersRealSubTitle(t *testing.T) {
-	l := &pptx.LayoutInfo{
-		Placeholders: []*pptx.PlaceholderInfo{
-			{Type: "title", Name: "Title 1"},
-			{Type: "subTitle", Idx: 1, Name: "Subtitle 1"},
-			{Type: "body", Idx: 2, Name: "Content 1"},
+func TestClassifyPlaceholders(t *testing.T) {
+	type subtitleExpectation struct {
+		kind     string
+		idx      int
+		fromHint bool
+	}
+	for _, tc := range []struct {
+		name         string
+		placeholders []*pptx.PlaceholderInfo
+		subtitles    []subtitleExpectation
+		bodies       []int
+	}{
+		{
+			name: "PrefersRealSubTitle",
+			placeholders: []*pptx.PlaceholderInfo{
+				{Type: "subTitle", Idx: 1, Name: "Subtitle 1"},
+				{Type: "body", Idx: 2, Name: "Content 1"},
+			},
+			subtitles: []subtitleExpectation{{"subTitle", 1, false}},
+			bodies:    []int{2},
 		},
-	}
-	title, subs, bodies := classifyPlaceholders(l)
-	if title == nil || title.Type != "title" {
-		t.Errorf("title = %+v, want type=title", title)
-	}
-	if len(subs) != 1 || subs[0].ph.Type != "subTitle" {
-		t.Fatalf("subs = %+v, want one type=subTitle", subs)
-	}
-	if subs[0].fromHint {
-		t.Errorf("fromHint = true; expected real subTitle to not be marked as hint-derived")
-	}
-	if len(bodies) != 1 || bodies[0].Idx != 2 {
-		t.Errorf("bodies = %+v, want one entry with idx=2", bodies)
-	}
-}
-
-func TestClassifyPlaceholdersPromotesSubtitleHintByName(t *testing.T) {
-	l := &pptx.LayoutInfo{
-		Placeholders: []*pptx.PlaceholderInfo{
-			{Type: "title", Name: "Title 1"},
-			{Type: "body", Idx: 1, Name: "Subtitle 1"}, // hinted via Selection Pane name
-			{Type: "body", Idx: 2, Name: "Content Placeholder 2"},
+		{
+			name: "PromotesSubtitleHintByName",
+			placeholders: []*pptx.PlaceholderInfo{
+				{Type: "body", Idx: 1, Name: "Subtitle 1"},
+				{Type: "body", Idx: 2, Name: "Content Placeholder 2"},
+			},
+			subtitles: []subtitleExpectation{{"body", 1, true}},
+			bodies:    []int{2},
 		},
-	}
-	title, subs, bodies := classifyPlaceholders(l)
-	if title == nil || title.Type != "title" {
-		t.Errorf("title = %+v", title)
-	}
-	if len(subs) != 1 || subs[0].ph.Idx != 1 {
-		t.Fatalf("subs = %+v, want hint-promoted body with idx=1", subs)
-	}
-	if !subs[0].fromHint {
-		t.Errorf("fromHint = false; expected hint-promoted sub")
-	}
-	if len(bodies) != 1 || bodies[0].Idx != 2 {
-		t.Errorf("bodies = %+v, want one entry with idx=2", bodies)
-	}
-}
-
-func TestClassifyPlaceholdersPromotesSubtitleHintByPrompt(t *testing.T) {
-	l := &pptx.LayoutInfo{
-		Placeholders: []*pptx.PlaceholderInfo{
-			{Type: "title", Name: "Title 1"},
-			{Type: "body", Idx: 1, Name: "Text Placeholder 2", Prompt: "Please enter the SUBTITLE here"},
+		{
+			name: "PromotesSubtitleHintByPrompt",
+			placeholders: []*pptx.PlaceholderInfo{
+				{Type: "body", Idx: 1, Name: "Text Placeholder 2", Prompt: "Please enter the SUBTITLE here"},
+			},
+			subtitles: []subtitleExpectation{{"body", 1, true}},
 		},
-	}
-	_, subs, bodies := classifyPlaceholders(l)
-	if len(subs) != 1 || subs[0].ph.Idx != 1 {
-		t.Fatalf("subs = %+v, want hint-promoted body via prompt", subs)
-	}
-	if !subs[0].fromHint {
-		t.Errorf("fromHint = false; expected hint-derived sub")
-	}
-	if len(bodies) != 0 {
-		t.Errorf("bodies = %+v, want empty (only one candidate, consumed by hint)", bodies)
-	}
-}
-
-func TestClassifyPlaceholdersNoSubtitleHint(t *testing.T) {
-	l := &pptx.LayoutInfo{
-		Placeholders: []*pptx.PlaceholderInfo{
-			{Type: "title", Name: "Title 1"},
-			{Type: "body", Idx: 1, Name: "Content Placeholder 1", Prompt: "Click to edit"},
+		{
+			name: "NoSubtitleHint",
+			placeholders: []*pptx.PlaceholderInfo{
+				{Type: "body", Idx: 1, Name: "Content Placeholder 1", Prompt: "Click to edit"},
+			},
+			bodies: []int{1},
 		},
-	}
-	_, subs, bodies := classifyPlaceholders(l)
-	if len(subs) != 0 {
-		t.Errorf("subs = %+v, want none with no hint", subs)
-	}
-	if len(bodies) != 1 || bodies[0].Idx != 1 {
-		t.Errorf("bodies = %+v, want one entry with idx=1", bodies)
-	}
-}
-
-func TestClassifyPlaceholdersMultipleBodies(t *testing.T) {
-	l := &pptx.LayoutInfo{
-		Placeholders: []*pptx.PlaceholderInfo{
-			{Type: "title", Name: "Title 1"},
-			{Type: "body", Idx: 1, Name: "Content Placeholder 1"},
-			{Type: "body", Idx: 2, Name: "Content Placeholder 2"},
+		{
+			name: "MultipleBodies",
+			placeholders: []*pptx.PlaceholderInfo{
+				{Type: "body", Idx: 1, Name: "Content Placeholder 1"},
+				{Type: "body", Idx: 2, Name: "Content Placeholder 2"},
+			},
+			bodies: []int{1, 2},
 		},
-	}
-	_, subs, bodies := classifyPlaceholders(l)
-	if len(subs) != 0 {
-		t.Errorf("subs = %+v, want none", subs)
-	}
-	if len(bodies) != 2 {
-		t.Fatalf("bodies = %+v, want 2 entries", bodies)
-	}
-	if bodies[0].Idx != 1 || bodies[1].Idx != 2 {
-		t.Errorf("bodies idx = %d, %d; want 1, 2", bodies[0].Idx, bodies[1].Idx)
-	}
-}
-
-// TestClassifyPlaceholdersMultipleSubtitleSlots verifies that a real subTitle
-// placeholder and a hint-named body placeholder can coexist as multiple
-// subtitle slots, preserving the layout's shape-tree order, while unrelated
-// body placeholders remain bodies.
-func TestClassifyPlaceholdersMultipleSubtitleSlots(t *testing.T) {
-	l := &pptx.LayoutInfo{
-		Placeholders: []*pptx.PlaceholderInfo{
-			{Type: "title", Name: "Title 1"},
-			{Type: "subTitle", Idx: 1, Name: "Subtitle 1"},
-			{Type: "body", Idx: 2, Name: "Subtitle 2"}, // hint-promoted
-			{Type: "body", Idx: 3, Name: "Content Placeholder 3"},
+		{
+			name: "MultipleSubtitleSlots",
+			placeholders: []*pptx.PlaceholderInfo{
+				{Type: "subTitle", Idx: 1, Name: "Subtitle 1"},
+				{Type: "body", Idx: 2, Name: "Subtitle 2"},
+				{Type: "body", Idx: 3, Name: "Content Placeholder 3"},
+			},
+			subtitles: []subtitleExpectation{{"subTitle", 1, false}, {"body", 2, true}},
+			bodies:    []int{3},
 		},
-	}
-	_, subs, bodies := classifyPlaceholders(l)
-	if len(subs) != 2 {
-		t.Fatalf("subs = %+v, want 2 slots", subs)
-	}
-	if subs[0].ph.Idx != 1 || subs[0].fromHint {
-		t.Errorf("subs[0] = %+v, want real subTitle idx=1", subs[0])
-	}
-	if subs[1].ph.Idx != 2 || !subs[1].fromHint {
-		t.Errorf("subs[1] = %+v, want hint body idx=2", subs[1])
-	}
-	if len(bodies) != 1 || bodies[0].Idx != 3 {
-		t.Errorf("bodies = %+v, want one entry with idx=3", bodies)
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			placeholders := append([]*pptx.PlaceholderInfo{{Type: "title", Name: "Title 1"}}, tc.placeholders...)
+			title, subs, bodies := classifyPlaceholders(&pptx.LayoutInfo{Placeholders: placeholders})
+			if title == nil || title.Type != "title" {
+				t.Errorf("title = %+v, want type=title", title)
+			}
+			if len(subs) != len(tc.subtitles) {
+				t.Fatalf("subs = %+v, want %d slots", subs, len(tc.subtitles))
+			}
+			for i, want := range tc.subtitles {
+				got := subtitleExpectation{subs[i].ph.Type, subs[i].ph.Idx, subs[i].fromHint}
+				if got != want {
+					t.Errorf("subs[%d] = %+v, want %+v", i, got, want)
+				}
+			}
+			if len(bodies) != len(tc.bodies) {
+				t.Fatalf("bodies = %+v, want %d entries", bodies, len(tc.bodies))
+			}
+			for i, want := range tc.bodies {
+				if bodies[i].Idx != want {
+					t.Errorf("bodies[%d].Idx = %d, want %d", i, bodies[i].Idx, want)
+				}
+			}
+		})
 	}
 }
 
