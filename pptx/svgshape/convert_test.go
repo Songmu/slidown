@@ -22,6 +22,7 @@ func testConvertFallbacks(t *testing.T, cases map[string]string) {
 	t.Helper()
 	for name, svg := range cases {
 		t.Run(name, func(t *testing.T) {
+			t.Helper()
 			if _, ok := Convert([]byte(svg)); ok {
 				t.Error("expected fallback")
 			}
