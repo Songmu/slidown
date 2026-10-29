@@ -12,6 +12,7 @@ import (
 	"github.com/Songmu/slidown"
 	"github.com/Songmu/slidown/internal/testutil"
 	"github.com/Songmu/slidown/pptx"
+	"github.com/google/go-cmp/cmp"
 )
 
 // buildTemplateFile generates a .pptx with the built-in design and returns its
@@ -247,10 +248,7 @@ func TestDistributeBodyContent(t *testing.T) {
 				t.Fatal("existing shape was removed or reordered")
 			}
 			if got := sl.Shapes[1:]; !reflect.DeepEqual(got, tt.want) && !(len(got) == 0 && len(tt.want) == 0) {
-				t.Errorf("content shapes = %#v, want %#v", got, tt.want)
-				for i, shape := range got {
-					t.Logf("shape %d: %+v; paragraphs: %+v", i, shape, shape.Paragraphs)
-				}
+				t.Errorf("content shapes mismatch (-want +got):\n%s", cmp.Diff(tt.want, got))
 			}
 			for _, b := range tt.slide.SubtitleBodies {
 				for _, p := range b.Paragraphs {
