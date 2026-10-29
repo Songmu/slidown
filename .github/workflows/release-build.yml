@@ -1,0 +1,51 @@
+name: release build
+
+on:
+  workflow_call:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out source code
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build release artifacts
+        uses: goreleaser/goreleaser-action@v7.3.0
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean --skip=publish
+
+      - name: Collect release artifacts
+        run: |
+          mkdir -p "$RUNNER_TEMP/release"
+          cp dist/*.tar.gz dist/*.zip dist/*.deb dist/*.rpm dist/*.apk \
+            dist/checksums.txt "$RUNNER_TEMP/release/"
+
+      - name: Attest build provenance
+        uses: actions/attest@v4.2.2
+        with:
+          subject-path: "${{ runner.temp }}/release/*"
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: release-${{ github.ref_name }}
+          path: "${{ runner.temp }}/release/*"
+          if-no-files-found: error
+          retention-days: 1

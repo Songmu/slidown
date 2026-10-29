@@ -70,7 +70,7 @@ nfpms:
   -
     id: slidown-nfpms
     file_name_template: "{{ .ProjectName }}_{{ .Version }}-1_{{ .Arch }}"
-    builds:
+    ids:
       - slidown-linux
     homepage: https://github.com/Songmu/slidown
     maintainer: Songmu <y.songmu@gmail.com>
@@ -82,5 +82,3 @@ nfpms:
       - apk
     bindir: /usr/bin
     epoch: 1
-release:
-  use_existing_draft: true
