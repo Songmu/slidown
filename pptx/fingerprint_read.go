@@ -46,10 +46,7 @@ func ReadSlideMetasAndCoreTitle(path string) ([]SlideMeta, string, error) {
 // the deck title from already-parsed package parts, so callers that have read
 // the .pptx once can reuse the parsed parts instead of inflating it again.
 func slideMetasAndCoreTitle(parts map[string][]byte) ([]SlideMeta, string) {
-	slideNames := slideNamesFromPresentationOrder(parts)
-	if len(slideNames) == 0 {
-		slideNames = slideNamesByFileName(parts)
-	}
+	slideNames := orderedSlideNames(parts)
 
 	metas := make([]SlideMeta, 0, len(slideNames))
 	for _, name := range slideNames {
@@ -90,6 +87,15 @@ func coreTitle(coreXML []byte) string {
 		return ""
 	}
 	return c.Title
+}
+
+// orderedSlideNames uses presentation order when usable and non-empty,
+// otherwise falling back to numeric slide filename order for the whole deck.
+func orderedSlideNames(parts map[string][]byte) []string {
+	if names := slideNamesFromPresentationOrder(parts); len(names) > 0 {
+		return names
+	}
+	return slideNamesByFileName(parts)
 }
 
 func slideNamesFromPresentationOrder(parts map[string][]byte) []string {

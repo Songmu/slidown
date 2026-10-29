@@ -21,10 +21,7 @@ func StampShapeKeys(pptxBytes []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	slideNames := slideNamesFromPresentationOrder(parts)
-	if len(slideNames) == 0 {
-		slideNames = slideNamesByFileName(parts)
-	}
+	slideNames := orderedSlideNames(parts)
 	changed := false
 	for _, name := range slideNames {
 		cur := parts[name]
