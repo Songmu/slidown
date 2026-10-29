@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.0.13](https://github.com/Songmu/slidown/compare/v0.0.12...v0.0.13) - 2026-10-29
+
+### Other Changes
+- ci: separate release build and publication with Actions lockfiles by @Songmu in https://github.com/Songmu/slidown/pull/140
+
 ## [v0.0.12](https://github.com/Songmu/slidown/compare/v0.0.11...v0.0.12) - 2026-10-29
 
 ### Other Changes
