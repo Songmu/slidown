@@ -94,15 +94,27 @@ func TestImageJSONErrors(t *testing.T) {
 	for _, tt := range []struct {
 		name, data, prefix string
 		rawJSON            bool
+		checkCause         func(error) bool
 	}{
-		{"malformed JSON", `{"Data":`, "failed to unmarshal image data: ", true},
-		{"wrong JSON field type", `{"Data":1}`, "failed to unmarshal image data: ", true},
-		{"missing data URI prefix", "image/png;base64,AAAA", "invalid image data: ", false},
-		{"missing base64 separator", "data:image/png,AAAA", "invalid image data: ", false},
-		{"invalid base64", "data:image/png;base64,!", "failed to decode base64 image data: ", false},
-		{"invalid raster", dataURI(MIMETypeImagePNG, []byte("not an image")), "failed to decode image: ", false},
-		{"invalid SVG root", dataURI(MIMETypeImageSVG, []byte(`<html><svg/></html>`)), "invalid SVG image data", false},
-		{"MIME mismatch", dataURI(MIMETypeImageJPEG, dummyPNG(t).Bytes()), "image MIME type mismatch: expected image/jpeg, got png", false},
+		{"malformed JSON", `{"Data":`, "failed to unmarshal image data: ", true, func(err error) bool {
+			var cause *json.SyntaxError
+			return errors.As(err, &cause)
+		}},
+		{"wrong JSON field type", `{"Data":1}`, "failed to unmarshal image data: ", true, func(err error) bool {
+			var cause *json.UnmarshalTypeError
+			return errors.As(err, &cause)
+		}},
+		{"missing data URI prefix", "image/png;base64,AAAA", "invalid image data: ", false, nil},
+		{"missing base64 separator", "data:image/png,AAAA", "invalid image data: ", false, nil},
+		{"invalid base64", "data:image/png;base64,!", "failed to decode base64 image data: ", false, func(err error) bool {
+			var cause base64.CorruptInputError
+			return errors.As(err, &cause)
+		}},
+		{"invalid raster", dataURI(MIMETypeImagePNG, []byte("not an image")), "failed to decode image: ", false, func(err error) bool {
+			return errors.Is(err, image.ErrFormat)
+		}},
+		{"invalid SVG root", dataURI(MIMETypeImageSVG, []byte(`<html><svg/></html>`)), "invalid SVG image data", false, nil},
+		{"MIME mismatch", dataURI(MIMETypeImageJPEG, dummyPNG(t).Bytes()), "image MIME type mismatch: expected image/jpeg, got png", false, nil},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			data := []byte(tt.data)
@@ -119,26 +131,8 @@ func TestImageJSONErrors(t *testing.T) {
 			if err == nil || !strings.HasPrefix(err.Error(), tt.prefix) {
 				t.Fatalf("UnmarshalJSON() = %v, want %q prefix", err, tt.prefix)
 			}
-			switch tt.name {
-			case "malformed JSON":
-				var cause *json.SyntaxError
-				if !errors.As(err, &cause) {
-					t.Errorf("error lost JSON syntax cause: %v", err)
-				}
-			case "wrong JSON field type":
-				var cause *json.UnmarshalTypeError
-				if !errors.As(err, &cause) {
-					t.Errorf("error lost JSON type cause: %v", err)
-				}
-			case "invalid base64":
-				var cause base64.CorruptInputError
-				if !errors.As(err, &cause) {
-					t.Errorf("error lost base64 cause: %v", err)
-				}
-			case "invalid raster":
-				if !errors.Is(err, image.ErrFormat) {
-					t.Errorf("error lost image format cause: %v", err)
-				}
+			if tt.checkCause != nil && !tt.checkCause(err) {
+				t.Errorf("error lost expected wrapped cause: %v", err)
 			}
 		})
 	}
