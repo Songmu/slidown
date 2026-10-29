@@ -11,6 +11,7 @@ func TestImageSignaturesEquivalent(t *testing.T) {
 		{"distance four", imageSignature{PHash: 0x80}, imageSignature{PHash: 0x8f}, true},
 		{"distance five", imageSignature{PHash: 0x80}, imageSignature{PHash: 0x9f}, false},
 		{"changed link", imageSignature{PHash: 1, Link: "old"}, imageSignature{PHash: 1, Link: "new"}, false},
+		{"changed SVG link", imageSignature{Digest: "svg", Link: "old"}, imageSignature{Digest: "svg", Link: "new"}, false},
 		{"digest takes precedence over perceptual hash", imageSignature{Digest: "svg", PHash: 0x80}, imageSignature{Digest: "svg", PHash: 0x9f}, true},
 		{"digest takes precedence over checksum", imageSignature{Digest: "svg", Checksum: 1}, imageSignature{Digest: "svg", Checksum: 2}, true},
 		{"changed digest", imageSignature{Digest: "old", PHash: 1}, imageSignature{Digest: "new", PHash: 1}, false},
