@@ -221,32 +221,10 @@ func (i *Image) Dimensions() (w, h int, err error) {
 		return i.width, i.height, nil
 	}
 	if i.IsSVG() {
-		// An explicit zero width/height disables rendering; report a zero size
-		// so the render pipeline skips the image entirely.
-		if svgHasExplicitZeroSize(i.b) {
-			i.width, i.height, i.dimensionsOK = 0, 0, true
-			return 0, 0, nil
+		w, h, err = i.svgDimensions()
+		if err != nil {
+			return 0, 0, err
 		}
-		// Prefer the SVG's declared width/height (its intrinsic size); the
-		// viewBox is only the coordinate window and may have a different aspect
-		// ratio, which would mis-size the native fallback picture.
-		var fw, fh float64
-		if ew, eh, ok := svgExplicitSize(i.b); ok {
-			fw, fh = ew, eh
-		} else {
-			icon, err := i.parseSVG()
-			if err != nil {
-				return 0, 0, fmt.Errorf("failed to parse SVG: %w", err)
-			}
-			fw, fh = icon.ViewBox.W, icon.ViewBox.H
-			if fw <= 0 {
-				fw = 300
-			}
-			if fh <= 0 {
-				fh = 150
-			}
-		}
-		w, h = capDimensions(fw, fh)
 	} else {
 		cfg, _, err := image.DecodeConfig(bytes.NewReader(i.b))
 		if err != nil {
@@ -255,6 +233,35 @@ func (i *Image) Dimensions() (w, h int, err error) {
 		w, h = cfg.Width, cfg.Height
 	}
 	i.width, i.height, i.dimensionsOK = w, h, true
+	return w, h, nil
+}
+
+func (i *Image) svgDimensions() (w, h int, err error) {
+	// An explicit zero width/height disables rendering; report a zero size
+	// so the render pipeline skips the image entirely.
+	if svgHasExplicitZeroSize(i.b) {
+		return 0, 0, nil
+	}
+	// Prefer the SVG's declared width/height (its intrinsic size); the
+	// viewBox is only the coordinate window and may have a different aspect
+	// ratio, which would mis-size the native fallback picture.
+	var fw, fh float64
+	if ew, eh, ok := svgExplicitSize(i.b); ok {
+		fw, fh = ew, eh
+	} else {
+		icon, err := i.parseSVG()
+		if err != nil {
+			return 0, 0, fmt.Errorf("failed to parse SVG: %w", err)
+		}
+		fw, fh = icon.ViewBox.W, icon.ViewBox.H
+		if fw <= 0 {
+			fw = 300
+		}
+		if fh <= 0 {
+			fh = 150
+		}
+	}
+	w, h = capDimensions(fw, fh)
 	return w, h, nil
 }
 

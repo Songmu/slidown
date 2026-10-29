@@ -3,9 +3,11 @@ package slidown
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"image/png"
 	"math"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -108,6 +110,12 @@ func TestSVGDimensions(t *testing.T) {
 		wantH int
 	}{
 		{
+			name:  "default without usable size",
+			svg:   `<svg xmlns="http://www.w3.org/2000/svg"></svg>`,
+			wantW: 300,
+			wantH: 150,
+		},
+		{
 			name:  "viewBox",
 			svg:   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50"></svg>`,
 			wantW: 100,
@@ -134,16 +142,43 @@ func TestSVGDimensions(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			img, err := newImageFromBuffer(bytes.NewReader([]byte(tt.svg)))
+			assertSVGDimensions(t, tt.svg, tt.wantW, tt.wantH)
+		})
+	}
+}
+
+func TestSVGRasterSizingLimits(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		w, h         int
+		scale        float64
+		wantW, wantH int
+	}{
+		{"zero scale defaults to one", 24, 12, 0, 24, 12},
+		{"negative scale defaults to one", 24, 12, -2, 24, 12},
+		{"fractional scale rounds", 24, 12, 0.1, 2, 1},
+		{"wide raster cap", 100, 1, 50, 4096, 41},
+		{"tall raster cap", 1, 100, 50, 41, 4096},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svg := fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d"></svg>`, tc.w, tc.h)
+			img, err := newImageFromBuffer(strings.NewReader(svg))
 			if err != nil {
-				t.Fatalf("newImageFromBuffer() error = %v", err)
+				t.Fatal(err)
 			}
-			w, h, err := img.Dimensions()
+			b, err := img.RasterPNG(tc.scale)
 			if err != nil {
-				t.Fatalf("Dimensions() error = %v", err)
+				t.Fatal(err)
 			}
-			if w != tt.wantW || h != tt.wantH {
-				t.Fatalf("Dimensions() = %dx%d, want %dx%d", w, h, tt.wantW, tt.wantH)
+			cfg, err := png.DecodeConfig(bytes.NewReader(b))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Width != tc.wantW || cfg.Height != tc.wantH {
+				t.Fatalf("raster = %dx%d, want %dx%d", cfg.Width, cfg.Height, tc.wantW, tc.wantH)
+			}
+			if w, h, err := img.Dimensions(); err != nil || w != tc.w || h != tc.h {
+				t.Fatalf("raster scaling changed intrinsic size: %dx%d, %v", w, h, err)
 			}
 		})
 	}
@@ -300,17 +335,7 @@ func TestSVGDimensionRules(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			img, err := newImageFromBuffer(bytes.NewReader([]byte(tc.svg)))
-			if err != nil {
-				t.Fatalf("newImageFromBuffer: %v", err)
-			}
-			w, h, err := img.Dimensions()
-			if err != nil {
-				t.Fatalf("Dimensions: %v", err)
-			}
-			if w != tc.wantW || h != tc.wantH {
-				t.Fatalf("Dimensions = %dx%d, want %dx%d", w, h, tc.wantW, tc.wantH)
-			}
+			assertSVGDimensions(t, tc.svg, tc.wantW, tc.wantH)
 		})
 	}
 }
@@ -339,6 +364,31 @@ func TestCapDimensionsPreservesAspect(t *testing.T) {
 	// Integer dimensions are unchanged.
 	if iw, ih := capDimensions(800, 600); iw != 800 || ih != 600 {
 		t.Fatalf("cap(800,600) = %dx%d, want 800x600", iw, ih)
+	}
+}
+
+func TestCapDimensionsLimits(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		w, h         float64
+		wantW, wantH int
+	}{
+		{"NaN width", math.NaN(), 20, 300, 20},
+		{"NaN height", 20, math.NaN(), 20, 150},
+		{"infinite width", math.Inf(1), 20, 300, 20},
+		{"infinite height", 20, math.Inf(-1), 20, 150},
+		{"non-positive axes", 0, -1, 300, 150},
+		{"wide intrinsic cap", 200000, 100000, 100000, 50000},
+		{"tall intrinsic cap", 100000, 200000, 50000, 100000},
+		{"extreme wide ratio", 1e9, 1, 100000, 1},
+		{"extreme tall ratio", 1, 1e9, 1, 100000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w, h := capDimensions(tc.w, tc.h)
+			if w != tc.wantW || h != tc.wantH {
+				t.Fatalf("capDimensions(%v, %v) = %dx%d, want %dx%d", tc.w, tc.h, w, h, tc.wantW, tc.wantH)
+			}
+		})
 	}
 }
 
@@ -410,22 +460,17 @@ func TestNormalizeSVGRootSizeIgnoresComment(t *testing.T) {
 
 func TestSVGSingleDimensionNoViewBox(t *testing.T) {
 	// width only, no viewBox: keep width, default height to 150.
-	img, err := newImageFromBuffer(bytes.NewReader([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="200"></svg>`)))
-	if err != nil {
-		t.Fatalf("newImageFromBuffer: %v", err)
-	}
-	w, h, err := img.Dimensions()
-	if err != nil {
-		t.Fatalf("Dimensions: %v", err)
-	}
-	if w != 200 || h != 150 {
-		t.Fatalf("expected 200x150, got %dx%d", w, h)
-	}
+	assertSVGDimensions(t, `<svg xmlns="http://www.w3.org/2000/svg" width="200"></svg>`, 200, 150)
 }
 
 func TestSVGFractionalDimensionRatio(t *testing.T) {
 	// A 0.1x100 viewBox must keep its 1:1000 ratio (not become 1x100).
-	img, err := newImageFromBuffer(bytes.NewReader([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 0.1 100"></svg>`)))
+	assertSVGDimensions(t, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 0.1 100"></svg>`, 1, 1000)
+}
+
+func assertSVGDimensions(t *testing.T, svg string, wantW, wantH int) {
+	t.Helper()
+	img, err := newImageFromBuffer(bytes.NewReader([]byte(svg)))
 	if err != nil {
 		t.Fatalf("newImageFromBuffer: %v", err)
 	}
@@ -433,7 +478,7 @@ func TestSVGFractionalDimensionRatio(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dimensions: %v", err)
 	}
-	if w != 1 || h != 1000 {
-		t.Fatalf("expected 1x1000 (ratio preserved), got %dx%d", w, h)
+	if w != wantW || h != wantH {
+		t.Fatalf("Dimensions = %dx%d, want %dx%d", w, h, wantW, wantH)
 	}
 }
