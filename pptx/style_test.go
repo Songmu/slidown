@@ -1,6 +1,9 @@
 package pptx
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestLoadStyleLayoutParsesSyntaxStylesAndTableStyle(t *testing.T) {
 	xmlData := []byte(`<?xml version="1.0" encoding="UTF-8"?>
@@ -122,10 +125,9 @@ func TestParseTableStyleRequiresTwoByTwoTable(t *testing.T) {
 	}
 }
 
-func TestLoadStyleLayoutResolvesThemeSchemeAndSystemColors(t *testing.T) {
-	const layoutPart = "ppt/slideLayouts/slideLayout9.xml"
-
+func themeStyleFixture(layoutPart string) (*Template, []byte) {
 	tmpl := &Template{
+		themePart: "ppt/theme/fallback.xml",
 		designParts: map[string][]byte{
 			relsPath(layoutPart): []byte(`<?xml version="1.0" encoding="UTF-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
@@ -160,6 +162,7 @@ func TestLoadStyleLayoutResolvesThemeSchemeAndSystemColors(t *testing.T) {
 </a:theme>`),
 		},
 	}
+	tmpl.designParts[tmpl.themePart] = []byte(strings.ReplaceAll(string(tmpl.designParts["ppt/theme/theme1.xml"]), "AA0001", "BB0001"))
 
 	xmlData := []byte(`<?xml version="1.0" encoding="UTF-8"?>
 <p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
@@ -206,24 +209,76 @@ func TestLoadStyleLayoutResolvesThemeSchemeAndSystemColors(t *testing.T) {
   </p:cSld>
 </p:sldLayout>`)
 
-	tmpl.loadStyleLayoutPart(layoutPart, xmlData)
+	return tmpl, xmlData
+}
 
-	if got := tmpl.SyntaxStyles["code"].Color; got != "AA0001" {
-		t.Fatalf("code color = %q, want AA0001", got)
-	}
-	if got := tmpl.SyntaxStyles["code"].BgColor; got != "101112" {
-		t.Fatalf("code highlight = %q, want mapped tx1->dk1 color 101112", got)
-	}
-	if got := tmpl.SyntaxStyles["sys"].Color; got != "ABCDEF" {
-		t.Fatalf("sys color = %q, want sysClr lastClr", got)
-	}
-	if got := tmpl.TableStyle.HeaderFirstCol.BgColor; got != "AA0002" {
-		t.Fatalf("table header fill = %q, want AA0002", got)
-	}
-	if got := tmpl.TableStyle.HeaderFirstCol.Color; got != "AA0003" {
-		t.Fatalf("table header text = %q, want accent3 sysClr lastClr AA0003", got)
-	}
-	if got := tmpl.TableStyle.HeaderFirstColRight.Color; got != "AA0004" {
-		t.Fatalf("table border color = %q, want AA0004", got)
+func TestLoadStyleLayoutResolvesThemeSchemeAndSystemColors(t *testing.T) {
+	const layoutPart = "ppt/slideLayouts/slideLayout9.xml"
+	const masterPart = "ppt/slideMasters/slideMaster1.xml"
+	for _, tt := range []struct {
+		name         string
+		masterAccent string
+		override     string
+		change       func(*Template)
+		want         [6]string
+	}{
+		{
+			name: "master theme wins over fallback",
+			want: [6]string{"AA0001", "101112", "ABCDEF", "AA0002", "AA0003", "AA0004"},
+		},
+		{
+			name:         "master color mapping",
+			masterAccent: "accent2",
+			want:         [6]string{"AA0002", "101112", "ABCDEF", "AA0002", "AA0003", "AA0004"},
+		},
+		{
+			name:         "layout mapping wins over master",
+			masterAccent: "accent2",
+			override:     `<p:clrMapOvr><a:overrideClrMapping bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent3" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/></p:clrMapOvr>`,
+			want:         [6]string{"AA0003", "101112", "ABCDEF", "AA0002", "AA0003", "AA0004"},
+		},
+		{
+			name: "template theme fallback",
+			change: func(tmpl *Template) {
+				delete(tmpl.designParts, relsPath(masterPart))
+			},
+			want: [6]string{"BB0001", "101112", "ABCDEF", "AA0002", "AA0003", "AA0004"},
+		},
+		{
+			name: "malformed referenced theme does not use fallback",
+			change: func(tmpl *Template) {
+				tmpl.designParts["ppt/theme/theme1.xml"] = []byte("<")
+			},
+			want: [6]string{"", "", "ABCDEF", "", "", ""},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpl, xmlData := themeStyleFixture(layoutPart)
+			if tt.masterAccent != "" {
+				tmpl.designParts[masterPart] = []byte(strings.ReplaceAll(string(tmpl.designParts[masterPart]),
+					`accent1="accent1"`, `accent1="`+tt.masterAccent+`"`))
+			}
+			if tt.override != "" {
+				xmlData = []byte(strings.Replace(string(xmlData), "</p:sldLayout>", tt.override+"</p:sldLayout>", 1))
+			}
+			if tt.change != nil {
+				tt.change(tmpl)
+			}
+			tmpl.loadStyleLayoutPart(layoutPart, xmlData)
+			if tmpl.TableStyle == nil {
+				t.Fatal("table style is missing")
+			}
+			got := [6]string{
+				tmpl.SyntaxStyles["code"].Color,
+				tmpl.SyntaxStyles["code"].BgColor,
+				tmpl.SyntaxStyles["sys"].Color,
+				tmpl.TableStyle.HeaderFirstCol.BgColor,
+				tmpl.TableStyle.HeaderFirstCol.Color,
+				tmpl.TableStyle.HeaderFirstColRight.Color,
+			}
+			if got != tt.want {
+				t.Errorf("colors (code, highlight, system, table fill, table text, border) = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
