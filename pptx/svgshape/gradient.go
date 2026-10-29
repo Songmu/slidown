@@ -227,56 +227,65 @@ func (c *conv) gradientStops(n *node) ([]pptx.GradientStop, bool) {
 		if ch.Name != "stop" {
 			continue
 		}
-		if hasUnsupportedAttrs(ch) {
-			return nil, false
-		}
-		st, ok := c.resolveStyle(ch, base)
-		if !ok {
-			return nil, false
-		}
-		off, ok := parseOffset(ch.Attrs["offset"])
+		stop, ok := c.gradientStop(ch, base)
 		if !ok {
 			return nil, false
 		}
 		// SVG clamps each offset to be >= the previous stop's offset.
-		if off < prevOff {
-			off = prevOff
+		if stop.Pos < prevOff {
+			stop.Pos = prevOff
 		}
-		prevOff = off
-		// CSS cascade: a resolved style value (matched stylesheet rule or inline
-		// style) overrides the presentation attribute.
-		color := ch.Attrs["stop-color"]
-		if v := st.get("stop-color"); v != "" {
-			color = v
-		}
-		if color == "" {
-			color = "black"
-		}
-		if strings.EqualFold(strings.TrimSpace(color), "currentcolor") {
-			color = st.get("color")
-		}
-		op := ch.Attrs["stop-opacity"]
-		if v := st.get("stop-opacity"); v != "" {
-			op = v
-		}
-		alpha, ok := parseUnit(op, 1)
-		if !ok {
-			return nil, false
-		}
-		var col string
-		if strings.EqualFold(strings.TrimSpace(color), "transparent") {
-			// transparent means fully transparent regardless of stop-opacity.
-			col, alpha = "000000", 0
-		} else {
-			col, ok = parseColor(color)
-			if !ok {
-				return nil, false
-			}
-		}
-		out = append(out, pptx.GradientStop{Pos: off, Color: col, Alpha: alpha})
+		prevOff = stop.Pos
+		out = append(out, stop)
 	}
 	return out, true
 }
+
+func (c *conv) gradientStop(n *node, base style) (pptx.GradientStop, bool) {
+	if hasUnsupportedAttrs(n) {
+		return pptx.GradientStop{}, false
+	}
+	st, ok := c.resolveStyle(n, base)
+	if !ok {
+		return pptx.GradientStop{}, false
+	}
+	off, ok := parseOffset(n.Attrs["offset"])
+	if !ok {
+		return pptx.GradientStop{}, false
+	}
+	// CSS cascade: a resolved style value (matched stylesheet rule or inline
+	// style) overrides the presentation attribute.
+	color := n.Attrs["stop-color"]
+	if v := st.get("stop-color"); v != "" {
+		color = v
+	}
+	if color == "" {
+		color = "black"
+	}
+	if strings.EqualFold(strings.TrimSpace(color), "currentcolor") {
+		color = st.get("color")
+	}
+	op := n.Attrs["stop-opacity"]
+	if v := st.get("stop-opacity"); v != "" {
+		op = v
+	}
+	alpha, ok := parseUnit(op, 1)
+	if !ok {
+		return pptx.GradientStop{}, false
+	}
+	var col string
+	if strings.EqualFold(strings.TrimSpace(color), "transparent") {
+		// transparent means fully transparent regardless of stop-opacity.
+		col, alpha = "000000", 0
+	} else {
+		col, ok = parseColor(color)
+		if !ok {
+			return pptx.GradientStop{}, false
+		}
+	}
+	return pptx.GradientStop{Pos: off, Color: col, Alpha: alpha}, true
+}
+
 func parseOffset(s string) (float64, bool) {
 	if strings.TrimSpace(s) == "" {
 		return 0, false
