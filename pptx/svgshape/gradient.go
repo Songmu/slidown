@@ -332,35 +332,39 @@ func (c *conv) expandUse(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 	c.resolvingUse[id] = true
 	defer delete(c.resolvingUse, id)
 	if ref.Name == "symbol" {
-		// A symbol renders only through <use>; walk its children directly since
-		// the symbol element itself is skipped during a normal tree walk. Apply
-		// the same checks walk() would (foreign/attrs/display/transform/opacity).
-		if ref.foreign || hasUnsupportedAttrs(ref) {
-			return false
-		}
-		cst, ok := c.resolveStyle(ref, st)
+		return c.expandSymbol(ref, st, m, g)
+	}
+	return c.walk(ref, st, m, g, false)
+}
+
+func (c *conv) expandSymbol(ref *node, st style, m matrix, g *pptx.GroupShape) bool {
+	// A symbol renders only through <use>; walk its children directly since
+	// the symbol element itself is skipped during a normal tree walk. Apply
+	// the same checks walk() would (foreign/attrs/display/transform/opacity).
+	if ref.foreign || hasUnsupportedAttrs(ref) {
+		return false
+	}
+	cst, ok := c.resolveStyle(ref, st)
+	if !ok {
+		return false
+	}
+	if displayNone(cst) {
+		return true
+	}
+	if tr := ref.Attrs["transform"]; tr != "" {
+		tm, ok := parseTransform(tr)
 		if !ok {
 			return false
 		}
-		if displayNone(cst) {
-			return true
-		}
-		if tr := ref.Attrs["transform"]; tr != "" {
-			tm, ok := parseTransform(tr)
-			if !ok {
-				return false
-			}
-			m = m.mul(tm)
-		}
-		if op, ok := containerOpacity(cst); !ok || op < 1 {
+		m = m.mul(tm)
+	}
+	if op, ok := containerOpacity(cst); !ok || op < 1 {
+		return false
+	}
+	for _, ch := range ref.Children {
+		if !c.walk(ch, cst, m, g, false) {
 			return false
 		}
-		for _, ch := range ref.Children {
-			if !c.walk(ch, cst, m, g, false) {
-				return false
-			}
-		}
-		return true
 	}
-	return c.walk(ref, st, m, g, false)
+	return true
 }
