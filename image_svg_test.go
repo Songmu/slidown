@@ -142,17 +142,7 @@ func TestSVGDimensions(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			img, err := newImageFromBuffer(bytes.NewReader([]byte(tt.svg)))
-			if err != nil {
-				t.Fatalf("newImageFromBuffer() error = %v", err)
-			}
-			w, h, err := img.Dimensions()
-			if err != nil {
-				t.Fatalf("Dimensions() error = %v", err)
-			}
-			if w != tt.wantW || h != tt.wantH {
-				t.Fatalf("Dimensions() = %dx%d, want %dx%d", w, h, tt.wantW, tt.wantH)
-			}
+			assertSVGDimensions(t, tt.svg, tt.wantW, tt.wantH)
 		})
 	}
 }
@@ -345,17 +335,7 @@ func TestSVGDimensionRules(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			img, err := newImageFromBuffer(bytes.NewReader([]byte(tc.svg)))
-			if err != nil {
-				t.Fatalf("newImageFromBuffer: %v", err)
-			}
-			w, h, err := img.Dimensions()
-			if err != nil {
-				t.Fatalf("Dimensions: %v", err)
-			}
-			if w != tc.wantW || h != tc.wantH {
-				t.Fatalf("Dimensions = %dx%d, want %dx%d", w, h, tc.wantW, tc.wantH)
-			}
+			assertSVGDimensions(t, tc.svg, tc.wantW, tc.wantH)
 		})
 	}
 }
@@ -480,22 +460,17 @@ func TestNormalizeSVGRootSizeIgnoresComment(t *testing.T) {
 
 func TestSVGSingleDimensionNoViewBox(t *testing.T) {
 	// width only, no viewBox: keep width, default height to 150.
-	img, err := newImageFromBuffer(bytes.NewReader([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="200"></svg>`)))
-	if err != nil {
-		t.Fatalf("newImageFromBuffer: %v", err)
-	}
-	w, h, err := img.Dimensions()
-	if err != nil {
-		t.Fatalf("Dimensions: %v", err)
-	}
-	if w != 200 || h != 150 {
-		t.Fatalf("expected 200x150, got %dx%d", w, h)
-	}
+	assertSVGDimensions(t, `<svg xmlns="http://www.w3.org/2000/svg" width="200"></svg>`, 200, 150)
 }
 
 func TestSVGFractionalDimensionRatio(t *testing.T) {
 	// A 0.1x100 viewBox must keep its 1:1000 ratio (not become 1x100).
-	img, err := newImageFromBuffer(bytes.NewReader([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 0.1 100"></svg>`)))
+	assertSVGDimensions(t, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 0.1 100"></svg>`, 1, 1000)
+}
+
+func assertSVGDimensions(t *testing.T, svg string, wantW, wantH int) {
+	t.Helper()
+	img, err := newImageFromBuffer(bytes.NewReader([]byte(svg)))
 	if err != nil {
 		t.Fatalf("newImageFromBuffer: %v", err)
 	}
@@ -503,7 +478,7 @@ func TestSVGFractionalDimensionRatio(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dimensions: %v", err)
 	}
-	if w != 1 || h != 1000 {
-		t.Fatalf("expected 1x1000 (ratio preserved), got %dx%d", w, h)
+	if w != wantW || h != wantH {
+		t.Fatalf("Dimensions = %dx%d, want %dx%d", w, h, wantW, wantH)
 	}
 }
