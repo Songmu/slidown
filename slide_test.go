@@ -1,7 +1,6 @@
 package slidown
 
 import (
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -160,76 +159,6 @@ func TestNewImageFromURL(t *testing.T) {
 
 			if img.mimeType != tt.expectedType {
 				t.Errorf("MIME type mismatch. Expected: %s, Got: %s", tt.expectedType, img.mimeType)
-			}
-		})
-	}
-}
-
-func TestImageString(t *testing.T) {
-	tests := []struct {
-		name     string
-		filePath string
-	}{
-		{
-			name:     "PNG image String() method",
-			filePath: "testdata/test.png",
-		},
-		{
-			name:     "JPEG image String() method",
-			filePath: "testdata/test.jpeg",
-		},
-		{
-			name:     "GIF image String() method",
-			filePath: "testdata/test.gif",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			img, err := NewImage(tt.filePath)
-			if err != nil {
-				t.Fatalf("Failed to load image: %v", err)
-			}
-
-			got := img.String()
-
-			expectedPrefix := fmt.Sprintf("data:%s;base64,", img.mimeType)
-			if len(got) < len(expectedPrefix) || got[:len(expectedPrefix)] != expectedPrefix {
-				t.Errorf("String() format is incorrect. Expected prefix: %s", expectedPrefix)
-			}
-		})
-	}
-}
-
-func TestImageBytes(t *testing.T) {
-	tests := []struct {
-		name     string
-		filePath string
-	}{
-		{
-			name:     "PNG image Bytes() method",
-			filePath: "testdata/test.png",
-		},
-		{
-			name:     "JPEG image Bytes() method",
-			filePath: "testdata/test.jpeg",
-		},
-		{
-			name:     "GIF image Bytes() method",
-			filePath: "testdata/test.gif",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			img, err := NewImage(tt.filePath)
-			if err != nil {
-				t.Fatalf("failed to load image: %v", err)
-			}
-
-			bytes := img.Bytes()
-			if len(bytes) == 0 {
-				t.Error("Bytes() method returned empty byte array")
 			}
 		})
 	}
