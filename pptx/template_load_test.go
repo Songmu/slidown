@@ -131,6 +131,35 @@ func addDefaultStyleReference(parts map[string][]byte, id string) {
 	parts["ppt/presentation.xml"] = bytes.Replace(parts["ppt/presentation.xml"], []byte("</p:presentation>"), []byte(style+"</p:presentation>"), 1)
 }
 
+func TestDefaultStyleRelationshipErrorState(t *testing.T) {
+	for _, tc := range []struct {
+		name, second, want string
+		rewritten          bool
+	}{
+		{"missing relationship during scan", "missing", `missing relationship "missing"`, false},
+		{"missing dependency after scan", "rId900", `missing related part "ppt/media/bullet.png"`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parts := defaultStylePictureBulletParts(t)
+			delete(parts, "ppt/media/bullet.png")
+			style := `<style xmlns:r="` + nsRelationships + `" r:embed='rId1' r:link="` + tc.second + `"/>`
+			tmpl := &Template{defaultTextStyle: style, designParts: map[string][]byte{}}
+			err := tmpl.loadDefaultStyleRelationships(parts)
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("error = %v, want %s", err, tc.want)
+			}
+			wantStyle, wantRels := style, 1
+			if tc.rewritten {
+				wantStyle = strings.ReplaceAll(strings.ReplaceAll(style, "rId1", "rIdDefaultStyle1"), "rId900", "rIdDefaultStyle2")
+				wantRels = 2
+			}
+			if tmpl.defaultTextStyle != wantStyle || len(tmpl.defaultStyleRels) != wantRels || len(tmpl.designParts) != 0 {
+				t.Fatalf("unexpected state after error: style=%q rels=%+v parts=%v", tmpl.defaultTextStyle, tmpl.defaultStyleRels, tmpl.designParts)
+			}
+		})
+	}
+}
+
 func TestLoadTemplateDefaultDeclarations(t *testing.T) {
 	parts := minimalTemplateParts(t)
 	declarations := `<Default Extension="EMF" ContentType="first"/>` +

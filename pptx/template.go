@@ -514,8 +514,15 @@ func (t *Template) loadDefaultStyleRelationships(parts map[string][]byte) error 
 			return err
 		}
 	}
-	byID := make(map[string]templateStyleRel, len(source.Items))
-	for _, rel := range source.Items {
+	if err := t.rewriteDefaultStyleRelationships(source.Items); err != nil {
+		return err
+	}
+	return t.retainDefaultStyleDependencies(parts)
+}
+
+func (t *Template) rewriteDefaultStyleRelationships(rels []templateStyleRel) error {
+	byID := make(map[string]templateStyleRel, len(rels))
+	for _, rel := range rels {
 		byID[rel.ID] = rel
 	}
 	remapped := map[string]string{}
@@ -561,7 +568,10 @@ func (t *Template) loadDefaultStyleRelationships(parts map[string][]byte) error 
 	}
 	out.WriteString(t.defaultTextStyle[pos:])
 	t.defaultTextStyle = out.String()
+	return nil
+}
 
+func (t *Template) retainDefaultStyleDependencies(parts map[string][]byte) error {
 	var pending []string
 	for _, rel := range t.defaultStyleRels {
 		if !strings.EqualFold(rel.TargetMode, "External") {

@@ -157,6 +157,54 @@ func TestTemplatePreservesDefaultStylePictureBullets(t *testing.T) {
 	}
 }
 
+func TestTemplateDefaultStyleDependencies(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		related  map[string]string
+		retained []string
+	}{
+		{
+			name: "transitive shared target and cycle",
+			related: map[string]string{
+				"ppt/media/_rels/bullet.png.rels":  `<Relationships><Relationship Target="../related/child.xml"/><Relationship Target="../related/shared.xml"/></Relationships>`,
+				"ppt/related/child.xml":            `<child/>`,
+				"ppt/related/_rels/child.xml.rels": `<Relationships><Relationship Target="shared.xml"/><Relationship Target="../media/bullet.png"/><Relationship Target="https://example.com/ignored" TargetMode="External"/></Relationships>`,
+				"ppt/related/shared.xml":           `<shared/>`,
+			},
+			retained: []string{"ppt/media/_rels/bullet.png.rels", "ppt/related/child.xml", "ppt/related/_rels/child.xml.rels", "ppt/related/shared.xml"},
+		},
+		{
+			name: "already retained target is not traversed",
+			related: map[string]string{
+				"ppt/media/_rels/bullet.png.rels": `<Relationships><Relationship Target="../theme/theme1.xml"/></Relationships>`,
+				"ppt/theme/_rels/theme1.xml.rels": `<Relationships><Relationship Target="../related/ignored.xml"/></Relationships>`,
+				"ppt/related/ignored.xml":         `<ignored/>`,
+			},
+			retained: []string{"ppt/media/_rels/bullet.png.rels", "ppt/theme/theme1.xml", "ppt/theme/_rels/theme1.xml.rels"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parts := defaultStylePictureBulletParts(t)
+			for name, data := range tc.related {
+				parts[name] = []byte(data)
+			}
+			p := samplePresentation()
+			p.Template = loadTemplateParts(t, parts)
+			got := writeToParts(t, p)
+			for _, name := range tc.retained {
+				if got[name] != string(parts[name]) {
+					t.Errorf("changed or lost dependency %s", name)
+				}
+			}
+			if _, ok := got["ppt/related/ignored.xml"]; ok {
+				t.Error("traversed an already retained target")
+			}
+			assertPictureBulletAssets(t, got)
+			assertDefaultStylePictureBulletReferences(t, got)
+		})
+	}
+}
+
 func assertPictureBulletAssets(t *testing.T, got map[string]string) {
 	t.Helper()
 	if got["ppt/media/bullet.png"] != "picture-bullet-image" {
