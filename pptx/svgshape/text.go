@@ -109,7 +109,19 @@ func (c *conv) text(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 	// sized outside the viewport would render outside the placed image. SVG text
 	// is single-line (no wrap); estimate its extent so it can't wrap or overflow
 	// the viewport, and fall back otherwise.
-	//
+	boxY, boxW, boxH := textRunBounds(runs, fs, yemu)
+	const tol = 16
+	if xemu < -tol || boxY < -tol || boxY+boxH > c.chH+tol || xemu+boxW > c.chW+tol {
+		return false
+	}
+	c.textCount++
+	sh := &pptx.Shape{Name: shapeName(n, "Text", c.textCount), X: xemu, Y: boxY, W: boxW, H: boxH, NoInset: true, NoWrap: true, Paragraphs: []*pptx.Paragraph{{Align: align, Runs: runs}}}
+	g.Texts = append(g.Texts, sh)
+	g.Children = append(g.Children, pptx.GroupChild{Text: sh})
+	return true
+}
+
+func textRunBounds(runs []*pptx.Run, fs float64, yemu int64) (boxY, boxW, boxH int64) {
 	// Vertical bounds use the largest run size (a tspan may be larger than the
 	// parent), so a big child can't overflow the box.
 	maxUnits := fs
@@ -128,22 +140,15 @@ func (c *conv) text(n *node, st style, m matrix, g *pptx.GroupShape) bool {
 		// over-estimate so near-edge text falls back instead of overflowing.
 		estW += float64(len([]rune(r.Text))) * runUnits * emuPerUnit
 	}
-	boxY := yemu - round(maxUnits*emuPerUnit)
-	boxH := round(maxUnits * emuPerUnit * 1.5)
-	const tol = 16
-	est := round(estW)
-	if est <= 0 {
-		est = round(maxUnits * emuPerUnit)
+	boxY = yemu - round(maxUnits*emuPerUnit)
+	boxH = round(maxUnits * emuPerUnit * 1.5)
+	boxW = round(estW)
+	if boxW <= 0 {
+		boxW = round(maxUnits * emuPerUnit)
 	}
-	if xemu < -tol || boxY < -tol || boxY+boxH > c.chH+tol || xemu+est > c.chW+tol {
-		return false
-	}
-	c.textCount++
-	sh := &pptx.Shape{Name: shapeName(n, "Text", c.textCount), X: xemu, Y: boxY, W: est, H: boxH, NoInset: true, NoWrap: true, Paragraphs: []*pptx.Paragraph{{Align: align, Runs: runs}}}
-	g.Texts = append(g.Texts, sh)
-	g.Children = append(g.Children, pptx.GroupChild{Text: sh})
-	return true
+	return boxY, boxW, boxH
 }
+
 func (c *conv) textRuns(n *node, st style, pt float64, color, family string) ([]*pptx.Run, bool) {
 	var stream textRunStream
 	if !stream.emit(collapseSpace(n.Text), color, pt, family) {
