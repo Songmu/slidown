@@ -10,7 +10,7 @@ workflows:
     '.github/workflows/fuzz.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
-        - 'shogo82148/actions-go-fuzz@v1.2.6'
+        - 'shogo82148/actions-go-fuzz@v1.2.7'
     '.github/workflows/release-build.yml':
         - 'actions/attest@v4.2.2'
         - 'actions/checkout@v7.0.1'
@@ -74,9 +74,9 @@ dependencies:
         uses:
             - 'actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3'
             - 'k1low/gh-setup@5fb38d34ea857e5a942b6fe10f1723e55055f6c0'
-    'shogo82148/actions-go-fuzz@v1.2.6':
-        ref: 'v1.2.6'
-        commit: 'sha1-0d0b84304d01c5a83a1b4453eb138fec74c1f662'
+    'shogo82148/actions-go-fuzz@v1.2.7':
+        ref: 'v1.2.7'
+        commit: 'sha1-f5addfafb428396a1321238d916c421eb25a1136'
         owner_id: 1157344
         repo_id: 658286023
     'songmu/tagpr@v1.21.4':
