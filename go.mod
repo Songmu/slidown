@@ -16,8 +16,8 @@ require (
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
 	github.com/tenntenn/golden v0.5.5
-	github.com/yuin/goldmark v1.8.6
-	golang.org/x/sync v0.24.0
+	github.com/yuin/goldmark v1.8.7
+	golang.org/x/sync v0.25.0
 )
 
 require (
